@@ -1,0 +1,9 @@
+/*
+ * The web app's stylesheet is the design system — tokens, type scale, motion utilities — imported
+ * rather than copied, so the landing page cannot drift from the product it shows. `@source` points
+ * Tailwind at the web components reused here as well as this app's own files.
+ */
+@import '../../../web/src/app/globals.css';
+@import './landing.css';
+@source '../../../web/src/components';
+@source '../';

@@ -1,0 +1,10 @@
+{
+  "extends": "@vehicle-os/tsconfig/react.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["react"],
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "exclude": ["node_modules"]
+}

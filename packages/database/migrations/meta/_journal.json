@@ -1,0 +1,174 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788788289412,
+      "tag": "0000_initial_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788822615072,
+      "tag": "0001_slim_zzzax",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788852827355,
+      "tag": "0002_productive_zemo",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788854141897,
+      "tag": "0003_equal_klaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788869451357,
+      "tag": "0004_far_moondragon",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789316429475,
+      "tag": "0005_expense_activity_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789460387074,
+      "tag": "0006_condition_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789722077616,
+      "tag": "0007_expense_fuel_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789817383864,
+      "tag": "0008_notification_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789817680586,
+      "tag": "0009_recall_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789817871898,
+      "tag": "0010_share_link_sections",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789818190475,
+      "tag": "0011_trip_mileage",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789818480391,
+      "tag": "0012_garage_cost_reporting",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789899528200,
+      "tag": "0013_plans_and_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789899937583,
+      "tag": "0014_energy_quantity_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789900748370,
+      "tag": "0015_vehicle_income",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789902240198,
+      "tag": "0016_fill_location",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790121072375,
+      "tag": "0017_app_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790123248589,
+      "tag": "0018_usage_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790173483521,
+      "tag": "0019_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790589378972,
+      "tag": "0020_drop_redundant_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790590620317,
+      "tag": "0021_outbox_available_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790592171754,
+      "tag": "0022_outbox_job_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791049989059,
+      "tag": "0023_vehicle_drivers",
+      "breakpoints": true
+    }
+  ]
+}

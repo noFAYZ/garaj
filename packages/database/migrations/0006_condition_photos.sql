@@ -1,0 +1,2 @@
+ALTER TABLE "vehicle_photos" ADD COLUMN "condition_assessment_id" uuid;--> statement-breakpoint
+CREATE INDEX "vehicle_photos_condition_assessment_idx" ON "vehicle_photos" USING btree ("condition_assessment_id");

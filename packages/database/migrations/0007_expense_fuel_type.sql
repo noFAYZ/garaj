@@ -1,0 +1,2 @@
+CREATE TYPE "public"."fuel_type" AS ENUM('GASOLINE', 'DIESEL', 'LPG', 'CNG', 'ELECTRIC_SLOW', 'ELECTRIC_FAST', 'DEF');--> statement-breakpoint
+ALTER TABLE "expenses" ADD COLUMN "fuel_type" "fuel_type";

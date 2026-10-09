@@ -1,0 +1,7 @@
+/*
+ * The web app's stylesheet is the design system — tokens, type scale, motion utilities — imported
+ * rather than copied, so the docs cannot drift from the product they describe.
+ */
+@import '../../../web/src/app/globals.css';
+@source '../../../web/src/components';
+@source '../';

@@ -1,0 +1,34 @@
+{
+  "name": "@vehicle-os/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --turbopack -p 3004",
+    "build": "next build",
+    "start": "next start -p 3004",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@vehicle-os/domain": "workspace:*",
+    "@vehicle-os/ui": "workspace:*",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.469.0",
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vehicle-os/eslint-config": "workspace:*",
+    "@vehicle-os/tsconfig": "workspace:*",
+    "eslint": "^9.17.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2"
+  }
+}

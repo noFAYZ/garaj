@@ -1,0 +1,13 @@
+{
+  "extends": "@vehicle-os/tsconfig/react.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["../web/src/*"],
+      "next/link": ["./src/shims/next-link.tsx"],
+      "next/image": ["./src/shims/next-image.tsx"]
+    }
+  },
+  "include": ["src"]
+}

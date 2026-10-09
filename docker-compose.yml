@@ -1,0 +1,76 @@
+# Local development infrastructure (Architecture.md §68).
+# Nothing here is production configuration: credentials are fixed on purpose so a
+# fresh clone runs with no secrets and no cloud account.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vehicleos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vehicleos
+      POSTGRES_PASSWORD: vehicleos
+      POSTGRES_DB: vehicleos
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` returns success while the server is still replaying WAL, so the
+      # migration step can race it. A real query cannot run until the DB accepts writes.
+      test: ['CMD-SHELL', "psql -U vehicleos -d vehicleos -c 'select 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: vehicleos-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: vehicleos-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: vehicleos
+      MINIO_ROOT_PASSWORD: vehicleos-secret
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: creates the bucket the API expects, then exits. Without it the first
+  # upload fails with NoSuchBucket on every fresh volume.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 vehicleos vehicleos-secret &&
+      mc mb --ignore-existing local/vehicleos &&
+      mc anonymous set none local/vehicleos
+      "
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

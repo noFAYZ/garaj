@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Integration tests run on PGlite in-process, so no Postgres service is needed here.
+  # These only satisfy the startup config validation.
+  DATABASE_URL: postgresql://vehicleos:vehicleos@localhost:5432/vehicleos
+  REDIS_URL: redis://localhost:6379
+  AUTH_SECRET: ci-secret-at-least-thirty-two-characters-long
+  OBJECT_STORAGE_ENDPOINT: http://localhost:9000
+  OBJECT_STORAGE_BUCKET: vehicleos
+  OBJECT_STORAGE_ACCESS_KEY: ci
+  OBJECT_STORAGE_SECRET_KEY: ci-secret
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Build
+        run: pnpm build
+
+      # Catches a schema edit that was committed without its migration — the failure mode
+      # is a deploy that typechecks, boots, and then 500s on the first query.
+      - name: Migrations are up to date
+        run: |
+          pnpm db:generate
+          if [ -n "$(git status --porcelain packages/database/migrations)" ]; then
+            echo "::error::Schema changed without a migration. Run 'pnpm db:generate' and commit the result."
+            git status --porcelain packages/database/migrations
+            exit 1
+          fi

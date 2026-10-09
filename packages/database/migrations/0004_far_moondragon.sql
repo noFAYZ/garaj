@@ -1,0 +1,1 @@
+ALTER TABLE "vehicle_photos" ADD COLUMN "cutout_key" text;

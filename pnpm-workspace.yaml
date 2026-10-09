@@ -1,0 +1,31 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'workers/*'
+  - 'tooling/*'
+
+# pnpm blocks dependency postinstall scripts by default. These ship platform binaries and
+# need theirs; anything not listed here stays blocked, and an unreviewed addition to this
+# list is a supply-chain decision, not a build fix.
+allowBuilds:
+  esbuild: true
+  sharp: true
+  '@tailwindcss/oxide': true
+  unrs-resolver: true
+  msgpackr-extract: true
+
+# One copy of React's types across the workspace.
+#
+# Next (and its bundled styled-jsx) import "react" types without declaring `@types/react`, so
+# they resolve through pnpm's hoisted virtual-store slot — whichever single copy pnpm put
+# there. The moment the mobile app pinned the 18 types to match Expo SDK 52's React 18, that
+# slot became 18 and the *web* build started seeing two React type identities: the famous
+# "ReactNode is not assignable to ReactNode".
+#
+# Pinning to 19 keeps web correct. The cost is that the mobile app typechecks React 18 code
+# against React 19 types — the direction that matters is covered, since 19's types are a
+# superset for everything this app uses, but a React 19-only API would typecheck there and
+# fail at runtime. Worth knowing before reaching for `use()` or ref-as-a-prop on mobile.
+overrides:
+  '@types/react': ^19.2.0
+

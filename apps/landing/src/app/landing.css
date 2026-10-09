@@ -1,0 +1,833 @@
+/*
+ * The landing page's motion and texture — all CSS, all on tokens.
+ *
+ * One idea runs through it: a vehicle's whole life, kept in one place. The product swings in beside
+ * the headline, a pile of receipts sorts itself into a logbook as you scroll, one window answers three questions, and the page ends on a push-start button whose tach
+ * revs under the pointer.
+ *
+ * Every moving part is gated on the reader allowing motion — the OS setting and the app's own
+ * `data-reduce-motion` — and every one has a still state that says the same thing. Scroll-driven
+ * parts sit behind `@supports (animation-timeline: …)`: elsewhere the finished state is simply there.
+ */
+
+html {
+  scroll-behavior: smooth;
+  /* Anchors land below the sticky header, not under it. */
+  scroll-padding-top: 5rem;
+}
+
+html[data-reduce-motion] {
+  scroll-behavior: auto;
+}
+
+/* ── Ground ─────────────────────────────────────────────────────────────────────────────────────
+ * Engineering paper behind the hero, the product's greeting ground at page scale: dots in the
+ * strong border token, fading out before the edges so nothing frames it.
+ */
+.landing-ground {
+  background-image: radial-gradient(var(--color-border-strong) 1px, transparent 1.25px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 32%, #000 18%, transparent 72%);
+  opacity: 0.6;
+}
+
+/* ── Headline drum ──────────────────────────────────────────────────────────────────────────────
+ * "Every vehicle." rolls once through every type Garaj knows — on a real drum, each word turning
+ * up from below and over the top — and comes to rest on "vehicle". The other words are
+ * pseudo-content, so the heading's text for search engines and screen readers is only ever "Every
+ * vehicle. Its whole story." They still size the drum, as wide as its widest word from the first
+ * paint: nothing around it moves.
+ */
+.drum {
+  display: inline-grid;
+  overflow: clip;
+  perspective: 4em;
+  /* Room for ascenders and descenders inside the clip, given back so the line box is unchanged. */
+  padding-block: 0.12em 0.16em;
+  margin-block: -0.12em -0.16em;
+}
+
+.drum > * {
+  grid-area: 1 / 1;
+  /* The drum's axle sits behind the type, so a word turns around it rather than on its face. */
+  transform-origin: 50% 50% -0.55em;
+  backface-visibility: hidden;
+}
+
+.drum > [data-word] {
+  opacity: 0;
+}
+
+.drum > [data-word]::before {
+  content: attr(data-word);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .drum > .drum-home {
+    /* Out with the first word, back in after the last: ten 1.05s beats and one turn. */
+    animation: drum-home 10.85s cubic-bezier(0.3, 0.7, 0.2, 1) 1.6s both;
+  }
+
+  .drum > [data-word] {
+    animation: drum-pass 1.4s cubic-bezier(0.3, 0.7, 0.2, 1) both;
+    animation-delay: calc(1.6s + (var(--i) - 1) * 1.05s);
+  }
+}
+
+@keyframes drum-home {
+  0% {
+    opacity: 1;
+    transform: rotateX(0deg);
+  }
+  3.2% {
+    opacity: 0;
+    transform: rotateX(90deg);
+  }
+  3.3%,
+  96.8% {
+    opacity: 0;
+    transform: rotateX(-90deg);
+  }
+  100% {
+    opacity: 1;
+    transform: rotateX(0deg);
+  }
+}
+
+@keyframes drum-pass {
+  0% {
+    opacity: 0;
+    transform: rotateX(-90deg);
+  }
+  25%,
+  75% {
+    opacity: 1;
+    transform: rotateX(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: rotateX(90deg);
+  }
+}
+
+/* ── Hero ───────────────────────────────────────────────────────────────────────────────────────
+ * The product beside the headline, turned a few degrees toward it — the window and the phone on one
+ * plane — and facing the reader under the pointer. It swings in on arrival; the phone, in front,
+ * pops in after it and drifts up a little faster as the page scrolls. Without motion it simply
+ * rests, turned; on a phone, where it sits under the headline, it faces you.
+ */
+@media (min-width: 64rem) {
+  .hero-stage {
+    transform: perspective(2200px) rotateY(-12deg) rotateX(4deg);
+    transform-origin: 20% 50%;
+    transition: transform 900ms var(--ease-out-quint);
+  }
+
+  @media (hover: hover) {
+    .hero-stage:hover {
+      transform: perspective(2200px) rotateY(0deg) rotateX(0deg);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero-stage {
+    animation: hero-arrive 1200ms var(--ease-out-quint) 150ms backwards;
+  }
+
+  .hero-pop {
+    animation: hero-pop 800ms var(--ease-out-quint) backwards;
+    animation-delay: var(--delay, 650ms);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .hero-drift {
+      animation: hero-drift linear both;
+      animation-timeline: view();
+      animation-range: entry 0% exit 100%;
+    }
+  }
+}
+
+@keyframes hero-arrive {
+  from {
+    opacity: 0;
+    transform: perspective(2200px) rotateY(-26deg) rotateX(10deg) translateY(36px);
+  }
+}
+
+@keyframes hero-pop {
+  from {
+    opacity: 0;
+    translate: 0 24px;
+    scale: 0.94;
+  }
+}
+
+@keyframes hero-drift {
+  to {
+    translate: 0 var(--drift, -60px);
+  }
+}
+
+/* ── Trip meter ─────────────────────────────────────────────────────────────────────────────────
+ * The header's trip: tenths of a kilometre, driven by how far down the page you are. No script —
+ * the scroll position animates an integer, and counters print it. Where scroll timelines are not
+ * supported it is not shown at all, rather than stuck on zero.
+ */
+@property --trip {
+  syntax: '<integer>';
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --trip-km {
+  syntax: '<integer>';
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --trip-tenth {
+  syntax: '<integer>';
+  inherits: false;
+  initial-value: 0;
+}
+
+@counter-style trip-pad {
+  system: extends decimal;
+  pad: 3 '0';
+}
+
+/* Its breakpoint lives here, not in utilities: this unlayered rule would beat Tailwind's `hidden`. */
+.trip {
+  display: none;
+}
+
+@supports (animation-timeline: scroll()) and (width: calc(mod(7px, 2px))) {
+  /* A number that runs as you scroll is still motion: it sits out a request for less. */
+  @media (min-width: 80rem) and (prefers-reduced-motion: no-preference) {
+    .trip {
+      display: inline-flex;
+    }
+  }
+
+  .trip {
+    animation: trip linear both;
+    animation-timeline: scroll(root);
+  }
+
+  .trip-reading::before {
+    --trip-km: round(down, var(--trip) / 10, 1);
+    --trip-tenth: mod(var(--trip), 10);
+    counter-reset: km var(--trip-km) tenth var(--trip-tenth);
+    content: counter(km, trip-pad) '.' counter(tenth);
+  }
+}
+
+@keyframes trip {
+  to {
+    --trip: 742;
+  }
+}
+
+/* ── Bay lines ──────────────────────────────────────────────────────────────────────────────────
+ * Each section opens on a painted line, the way bays are marked on a garage floor, drawn in as it
+ * scrolls into view.
+ */
+.bay-line {
+  height: 2px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--color-border-strong) 0 18px,
+    transparent 18px 30px
+  );
+}
+
+/* ── Scroll-driven entrances ────────────────────────────────────────────────────────────────────
+ * Only where the browser drives animation from scroll itself; elsewhere everything is simply there.
+ */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .landing-reveal {
+      animation: landing-reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 55%;
+    }
+
+    .bay-line {
+      transform-origin: left;
+      animation: bay-draw linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 35%;
+    }
+
+    /* The two phones open like a hand of cards as they come into view. */
+    .fan-left {
+      animation: fan-left linear both;
+      animation-timeline: view();
+      animation-range: entry 5% cover 45%;
+    }
+
+    .fan-right {
+      animation: fan-right linear both;
+      animation-timeline: view();
+      animation-range: entry 5% cover 45%;
+    }
+
+    /* The footer's wordmark, rising letter by letter out of the floor. */
+    .wordmark > span {
+      animation: wordmark-rise linear both;
+      animation-timeline: view();
+      animation-range: entry calc(var(--i) * 6%) entry calc(60% + var(--i) * 6%);
+    }
+  }
+}
+
+@keyframes landing-reveal {
+  from {
+    opacity: 0;
+    translate: 0 28px;
+  }
+}
+
+@keyframes bay-draw {
+  from {
+    scale: 0 1;
+  }
+}
+
+@keyframes fan-left {
+  from {
+    rotate: 0deg;
+    translate: 18% 4%;
+  }
+}
+
+@keyframes fan-right {
+  from {
+    rotate: 0deg;
+    translate: -18% -4%;
+  }
+}
+
+@keyframes wordmark-rise {
+  from {
+    translate: 0 45%;
+    opacity: 0;
+  }
+}
+
+/* ── The glovebox, sorted ───────────────────────────────────────────────────────────────────────
+ * Five receipts lie in a heap — rotated, overlapping, torn paper — and as the stage scrolls up to
+ * the middle of the screen each one flies to its line in the logbook, its paper falls away to
+ * the clean row underneath, and the dates, the rail and the month headings arrive last. Driven by
+ * the stage's own view timeline, so it plays forwards and backwards with the scroll.
+ *
+ * `--px`, `--py`, `--pr` are each receipt's place in the heap, relative to its line.
+ */
+.receipt {
+  /* A torn top and bottom edge: two rows of teeth cut by conic gradients. */
+  --tooth: 9px;
+  mask:
+    conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / var(--tooth) 51%
+      repeat-x,
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / var(--tooth)
+      51% repeat-x;
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .sort-stage {
+      view-timeline: --sort block;
+    }
+
+    .sort-item {
+      animation: sort-in linear both;
+      animation-timeline: --sort;
+      animation-range: cover calc(6% + var(--i) * 2.5%) cover calc(38% + var(--i) * 2.5%);
+    }
+
+    .sort-paper {
+      animation: paper-off linear both;
+      animation-timeline: --sort;
+      animation-range: cover calc(30% + var(--i) * 2.5%) cover calc(44% + var(--i) * 2.5%);
+    }
+
+    .sort-late {
+      animation: sort-late linear both;
+      animation-timeline: --sort;
+      animation-range: cover 40% cover 52%;
+    }
+  }
+}
+
+@keyframes sort-in {
+  from {
+    translate: var(--px) var(--py);
+    rotate: var(--pr);
+    scale: 0.96;
+  }
+}
+
+@keyframes paper-off {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes sort-late {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Where the heap cannot be scrolled through, there is no heap: the paper is already gone. */
+@supports not (animation-timeline: view()) {
+  .sort-paper {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sort-paper {
+    opacity: 0;
+  }
+}
+
+/* ── Story spotlight ────────────────────────────────────────────────────────────────────────────
+ * One lit window over the screenshot, gliding to whatever the step's question is answered by. The
+ * rest of the screen dims around it: a shadow the size of the screen, clipped by the frame.
+ */
+.spotlight {
+  position: absolute;
+  border-radius: 1rem;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 2px var(--color-ring),
+    0 0 0 200vmax color-mix(in oklab, var(--color-background) 58%, transparent);
+  transition:
+    left 750ms var(--ease-out-quint),
+    top 750ms var(--ease-out-quint),
+    width 750ms var(--ease-out-quint),
+    height 750ms var(--ease-out-quint);
+}
+
+/* The story's slides cross over: the old one sinks and softens as the new one sharpens. */
+.story-slide {
+  transition:
+    opacity 600ms var(--ease-out-quint),
+    translate 700ms var(--ease-out-quint),
+    filter 600ms var(--ease-out-quint);
+}
+
+/* The steps' rail fills as you read down it — only where scroll can drive it; the lit dot says
+   where you are everywhere else. */
+.rail-fill {
+  visibility: hidden;
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .rail-fill {
+      visibility: visible;
+      transform-origin: top;
+      animation: rail-fill linear both;
+      animation-timeline: --steps;
+      animation-range: contain 0% contain 100%;
+    }
+
+    .steps {
+      view-timeline: --steps block;
+    }
+  }
+}
+
+@keyframes rail-fill {
+  from {
+    scale: 1 0;
+  }
+}
+
+/* ── Features ───────────────────────────────────────────────────────────────────────────────────
+ * Each card demonstrates its one idea, slowly enough to be read and never all at once.
+ */
+
+/* Reminders: the newest lands on top and the stack shuffles down, one every three seconds. */
+.notif {
+  translate: 0 calc(var(--slot) * 80px);
+}
+
+/* Four in the loop, three on screen: the fourth waits off the bottom. */
+.notif[data-slot='3'] {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .notif {
+    animation: notif-cycle 12s var(--ease-out-quint) infinite;
+    animation-delay: calc(var(--slot) * -3s);
+  }
+}
+
+@keyframes notif-cycle {
+  0% {
+    opacity: 0;
+    translate: 0 -30px;
+    scale: 0.95;
+  }
+  4%,
+  25% {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+  29%,
+  50% {
+    opacity: 0.75;
+    translate: 0 80px;
+    scale: 0.97;
+  }
+  54%,
+  75% {
+    opacity: 0.45;
+    translate: 0 160px;
+    scale: 0.94;
+  }
+  79%,
+  100% {
+    opacity: 0;
+    translate: 0 240px;
+    scale: 0.91;
+  }
+}
+
+/* Whichever comes first: three intervals race; the first to the end turns amber and is due.
+   Clipped rather than scaled, so the bars keep their round ends all the way. */
+.race-bar {
+  clip-path: inset(0 calc(100% - var(--to) * 100%) 0 0 round 9999px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .race-bar {
+    animation: race 6.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .race-due {
+    animation: race-due 6.5s linear infinite;
+  }
+
+  .race-due-chip {
+    animation: race-due-chip 6.5s var(--ease-out-quint) infinite;
+  }
+}
+
+@keyframes race {
+  0% {
+    clip-path: inset(0 100% 0 0 round 9999px);
+  }
+  55%,
+  86% {
+    clip-path: inset(0 calc(100% - var(--to) * 100%) 0 0 round 9999px);
+  }
+  96%,
+  100% {
+    clip-path: inset(0 100% 0 0 round 9999px);
+  }
+}
+
+@keyframes race-due {
+  0%,
+  54% {
+    opacity: 0;
+  }
+  56%,
+  86% {
+    opacity: 1;
+  }
+  94%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes race-due-chip {
+  0%,
+  55% {
+    opacity: 0;
+    scale: 0.6;
+  }
+  60%,
+  86% {
+    opacity: 1;
+    scale: 1;
+  }
+  92%,
+  100% {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+
+/* Health, value and roles draw themselves as their card scrolls in. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .scrub-ring {
+      animation: scrub-ring linear both;
+      animation-timeline: view();
+      animation-range: entry 30% cover 50%;
+    }
+
+    .scrub-line {
+      animation: scrub-line linear both;
+      animation-timeline: view();
+      animation-range: entry 30% cover 50%;
+    }
+
+    .scrub-in {
+      animation: scrub-in linear both;
+      animation-timeline: view();
+      animation-range: entry calc(30% + var(--i, 0) * 8%) cover calc(40% + var(--i, 0) * 4%);
+    }
+
+    .scrub-dot {
+      animation: scrub-dot linear both;
+      animation-timeline: view();
+      animation-range: entry calc(20% + var(--i, 0) * 7%) cover calc(30% + var(--i, 0) * 4%);
+    }
+
+    .stamp-thump {
+      animation: stamp-thump linear both;
+      animation-timeline: view();
+      animation-range: entry 60% cover 50%;
+    }
+  }
+}
+
+@keyframes scrub-ring {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+
+@keyframes scrub-line {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes scrub-in {
+  from {
+    opacity: 0;
+    translate: 16px 0;
+  }
+}
+
+@keyframes scrub-dot {
+  from {
+    scale: 0;
+    opacity: 0;
+  }
+}
+
+/* A rubber stamp coming down: large and faint, then hard on the paper. */
+@keyframes stamp-thump {
+  0%,
+  40% {
+    opacity: 0;
+    scale: 1.8;
+  }
+  80% {
+    opacity: 1;
+    scale: 0.94;
+  }
+  100% {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+/* Your data: the files lift and fan out under the pointer. */
+.file-fan > * {
+  transition:
+    translate 400ms var(--ease-out-quint),
+    rotate 400ms var(--ease-out-quint);
+}
+
+.group:hover .file-fan > :nth-child(1) {
+  translate: -10px -6px;
+  rotate: -6deg;
+}
+
+.group:hover .file-fan > :nth-child(2) {
+  translate: 0 -10px;
+}
+
+.group:hover .file-fan > :nth-child(3) {
+  translate: 10px -6px;
+  rotate: 6deg;
+}
+
+/* A slow belt of the MCP tool names; it stops when the pointer rests on it. */
+.marquee {
+  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .marquee-track {
+    animation: marquee 48s linear infinite;
+  }
+
+  .marquee:hover .marquee-track {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes marquee {
+  to {
+    translate: -50% 0;
+  }
+}
+
+/* The Ask replay's caret. */
+@media (prefers-reduced-motion: no-preference) {
+  .landing-caret {
+    animation: landing-blink 1s steps(1) infinite;
+  }
+}
+
+@keyframes landing-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── Plans ──────────────────────────────────────────────────────────────────────────────────────
+ * Each plan is drawn as the floor it buys. Under the pointer, the bays light up one after another
+ * like parking sensors, and go out in the reverse order.
+ */
+.bay {
+  transition: background-color 220ms ease;
+  transition-delay: calc((var(--n) - var(--i)) * var(--step) * 0.4);
+}
+
+.group:hover .bay {
+  background-color: var(--color-primary-soft);
+  transition-delay: calc(var(--i) * var(--step));
+}
+
+/* ── FAQ ────────────────────────────────────────────────────────────────────────────────────────
+ * Answers open to their height rather than snapping, where the browser can animate to `auto`.
+ */
+.faq-item summary {
+  list-style: none;
+}
+
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq-plus {
+  transition: rotate 300ms var(--ease-out-quint);
+}
+
+.faq-item[open] .faq-plus {
+  rotate: 45deg;
+}
+
+@supports selector(::details-content) {
+  @media (prefers-reduced-motion: no-preference) {
+    .faq {
+      interpolate-size: allow-keywords;
+    }
+
+    .faq-item::details-content {
+      block-size: 0;
+      overflow: clip;
+      transition:
+        block-size 450ms var(--ease-out-quint),
+        content-visibility 450ms allow-discrete;
+    }
+
+    .faq-item[open]::details-content {
+      block-size: auto;
+    }
+  }
+}
+
+/* ── Push to start ──────────────────────────────────────────────────────────────────────────────
+ * A tach around the button. Under the pointer the ticks light one after another, round to the
+ * redline; let go and they fall back, last first.
+ */
+.tach-tick {
+  transition:
+    stroke 160ms ease,
+    opacity 160ms ease;
+  transition-delay: calc((40 - var(--i)) * 7ms);
+}
+
+.start:hover .tach-tick,
+.start:focus-visible .tach-tick {
+  stroke: var(--color-foreground);
+  transition-delay: calc(var(--i) * 14ms);
+}
+
+.start:hover .tach-tick.redline,
+.start:focus-visible .tach-tick.redline {
+  stroke: var(--color-destructive);
+}
+
+/* ── The app's own reduce-motion switch, for anything above that the OS query let through. ──── */
+html[data-reduce-motion]
+  :is(
+    .drum > *,
+    .hero-stage,
+    .hero-pop,
+    .hero-drift,
+    .landing-reveal,
+    .bay-line,
+    .fan-left,
+    .fan-right,
+    .wordmark > span,
+    .sort-item,
+    .sort-late,
+    .rail-fill,
+    .notif,
+    .race-bar,
+    .race-due,
+    .race-due-chip,
+    .scrub-ring,
+    .scrub-line,
+    .scrub-in,
+    .scrub-dot,
+    .stamp-thump,
+    .marquee-track,
+    .landing-caret
+  ) {
+  animation: none !important;
+}
+
+html[data-reduce-motion] .drum > [data-word] {
+  opacity: 0;
+}
+
+html[data-reduce-motion] .sort-paper {
+  animation: none !important;
+  opacity: 0;
+}
+
+html[data-reduce-motion] .trip {
+  display: none;
+}
+
+html[data-reduce-motion] :is(.story-slide, .spotlight, .bay, .tach-tick, .hero-stage) {
+  transition: none !important;
+}
+
+/* The OS setting shortens every transition but keeps its delay; a sequence should not survive it. */
+@media (prefers-reduced-motion: reduce) {
+  :is(.bay, .tach-tick) {
+    transition-delay: 0s !important;
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "extends": "@vehicle-os/tsconfig/react.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

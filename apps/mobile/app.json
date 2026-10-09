@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Garaj",
+    "slug": "vehicle-os",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "vehicleos",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.vehicleos.app"
+    },
+    "android": {
+      "package": "dev.vehicleos.app"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Garaj uses your photos to attach receipts, documents and pictures of your vehicles.",
+          "cameraPermission": "Garaj uses the camera to photograph receipts, documents and your vehicles."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "reminders"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

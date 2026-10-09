@@ -1,0 +1,28 @@
+{
+  "name": "@vehicle-os/utils",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test:unit": "vitest run",
+    "build": "echo \"consumed as TypeScript source; no build step\""
+  },
+  "dependencies": {
+    "uuidv7": "^1.0.2"
+  },
+  "devDependencies": {
+    "@vehicle-os/eslint-config": "workspace:*",
+    "@vehicle-os/tsconfig": "workspace:*",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

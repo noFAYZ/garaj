@@ -1,0 +1,10 @@
+# Source documents, not source code. Prettier rewrites Markdown bullet markers and list
+# numbering, which produces noisy diffs on files nobody is formatting for.
+docs/
+
+node_modules/
+dist/
+.next/
+.turbo/
+packages/database/migrations/
+pnpm-lock.yaml

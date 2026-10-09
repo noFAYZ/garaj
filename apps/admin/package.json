@@ -1,0 +1,41 @@
+{
+  "name": "@vehicle-os/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3002 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --port 3002",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test:unit": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.11",
+    "@vehicle-os/api-client": "workspace:*",
+    "@vehicle-os/contracts": "workspace:*",
+    "@vehicle-os/domain": "workspace:*",
+    "@vehicle-os/ui": "workspace:*",
+    "better-auth": "^1.1.8",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.469.0",
+    "motion": "^11.15.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vehicle-os/eslint-config": "workspace:*",
+    "@vehicle-os/tsconfig": "workspace:*",
+    "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^9.17.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^7.0.0",
+    "vitest": "^2.1.9"
+  }
+}
