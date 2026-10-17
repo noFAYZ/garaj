@@ -497,7 +497,7 @@ const TONES = {
 
 /**
  * A figure on the plate: label over a mono value with its note beside it, one line tall. The
- * compact cousin of `Readings`, for a header that has two figures and no room for a cluster.
+ * compact cousin of a report's key-figure strip, for a header that has two figures and no room for one.
  */
 function Stat({
   label,

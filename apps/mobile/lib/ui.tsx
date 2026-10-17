@@ -26,13 +26,18 @@ import { figure, lift, radius, rimmed, spacing, typeScale, useTheme } from './th
  * key, the muted secondary, the field with its ring and halo — carried into `StyleSheet` objects.
  */
 
-/** Someone's face: the DiceBear picture they chose, else the one their account id draws. */
+/**
+ * Someone's face: the DiceBear picture they chose, else the one their account id draws. Round,
+ * unless `radius` squares it off — an ID photo.
+ */
 export function Face({
   user,
   size,
+  radius: corner,
 }: {
   user: { id: string; image: string | null } | undefined;
   size: number;
+  radius?: number;
 }) {
   const theme = useTheme();
   return (
@@ -41,7 +46,7 @@ export function Face({
       style={{
         width: size,
         height: size,
-        borderRadius: size / 2,
+        borderRadius: corner ?? size / 2,
         backgroundColor: theme.primarySoft,
       }}
       contentFit="cover"

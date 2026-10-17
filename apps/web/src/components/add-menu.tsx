@@ -18,7 +18,7 @@ import { readIntent } from '@/lib/add-intent';
 import { eventEmoji } from '@/lib/event-emoji';
 import { formatDate, formatMoney, humanise, toMinorUnits } from '@/lib/format';
 import { openHere } from '@/lib/open-add';
-import { parseDone } from '@/lib/quick-entry';
+import { parseDone } from '@vehicle-os/ui';
 import { openUpgrade, useOwnPlanGoverns, usePlan } from '@/lib/upgrade';
 import { cn } from '@/lib/utils';
 
@@ -43,9 +43,9 @@ function money(amount: string, currency: string | null) {
  *
  * A question — "what did the Mazda cost this year?" — is asked of Ask and answered here, from the
  * person's own records. Anything else is something to put on a vehicle's record: read as it is
- * typed (`lib/quick-entry`), the vehicle it names found (`lib/add-intent`), and Enter opens that
- * vehicle's add dialog with the line already in it to check — "remind me to…", or an interval,
- * opens it on Reminder. Nothing is saved from here; the dialog is where it is confirmed.
+ * typed (`quick-entry`, shared with the phone), the vehicle it names found (`lib/add-intent`), and
+ * Enter opens that vehicle's add dialog with the line already in it to check — "remind me to…", or
+ * an interval, opens it on Reminder. Nothing is saved from here; the dialog is where it is confirmed.
  *
  * What Enter will do is said under the line before it does it. `aside` sits at the line's end.
  */
@@ -101,7 +101,7 @@ export function QuickLine({
            * panel, a firmer one under the pointer, and the focus ring in ink with a soft halo of it
            * while typing — box shadows rather than a border, so nothing inside moves between them.
            */
-          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl bg-input p-1.5 pl-2 shadow-[inset_0_0_0_1px_var(--color-border-strong)] transition-shadow duration-200 hover:shadow-[inset_0_0_0_1px_var(--color-muted-foreground)] focus-within:shadow-[inset_0_0_0_2px_var(--color-ring),0_0_0_5px_color-mix(in_oklab,var(--color-ring)_16%,transparent)] focus-within:hover:shadow-[inset_0_0_0_2px_var(--color-ring),0_0_0_5px_color-mix(in_oklab,var(--color-ring)_16%,transparent)]"
+          className="flex max-w-sm flex-1 items-center gap-2.5 rounded-2xl bg-input p-1.5 pl-2 shadow-[inset_0_0_0_1px_var(--color-border-strong)] transition-shadow duration-200 hover:shadow-[inset_0_0_0_1px_var(--color-muted-foreground)] "
         >
           <span
             aria-hidden="true"
@@ -123,7 +123,7 @@ export function QuickLine({
             spellCheck={false}
             aria-label="Type something to log, or a question"
             placeholder="Log anything, or ask…"
-            className="h-9 min-w-0 flex-1 bg-transparent text-[0.9375rem] font-medium text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-9 max-w-sm flex-1 bg-transparent text-[0.9375rem] font-medium text-foreground outline-none placeholder:text-muted-foreground"
           />
           <button
             type="submit"
@@ -224,7 +224,7 @@ export function QuickLine({
 const TILES = [
   { key: 'garage', emoji: 'garage', label: 'Garage', hint: 'Group vehicles' },
   { key: 'vehicle', emoji: 'vehicle', label: 'Vehicle', hint: 'Car, bike, boat' },
-  { key: 'activity', emoji: 'logbook', label: 'Activity', hint: 'Done or planned' },
+  { key: 'activity', emoji: 'logbook', label: 'Activity', hint: 'Done, or a reminder' },
 ] as const satisfies readonly { key: string; emoji: EmojiName; label: string; hint: string }[];
 
 /**
@@ -278,7 +278,7 @@ export function AddMenu({ vehicles }: { vehicles: readonly Vehicle[] }) {
           <button
             type="button"
             aria-label={open ? 'Close the add menu' : 'Add'}
-            className="key group grid size-12 shrink-0 place-items-center rounded-full"
+            className="key group grid size-11 shrink-0 place-items-center rounded-full"
           >
             <Plus
               aria-hidden="true"

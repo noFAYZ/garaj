@@ -30,7 +30,7 @@ import {
   groupByMonth,
   startsDay,
 } from '@/components/timeline';
-import { fillQuantity } from '@/lib/quick-entry';
+import { fillQuantity } from '@vehicle-os/ui';
 import { AddEntryDialog, isAddMode, type AddMode } from '@/components/vehicle/add-entry';
 import {
   EntryDetails,

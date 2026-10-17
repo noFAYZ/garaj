@@ -1,16 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { avatarSeeds, avatarUrl } from '@vehicle-os/contracts';
 import { dashboardQuery } from '@vehicle-os/api-client/react';
-import { Group, pad, Row, SettingsPage, useProfileUpdate } from '@/components/settings-kit';
+import {
+  Group,
+  pad,
+  Row,
+  SettingsPage,
+  useProfileUpdate,
+  useSignOut,
+} from '@/components/settings-kit';
 import { api } from '@/lib/api';
-import { signOut, useSession } from '@/lib/auth';
 import { ToneChip } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
-import { clearQueue, pendingCount } from '@/lib/offline';
+import { pendingCount } from '@/lib/offline';
 import { useProfile } from '@/lib/vehicle-units';
 import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
 import { MenuSheet } from '@/lib/pickers';
@@ -24,8 +30,6 @@ import { Button, Face, Skeleton } from '@/lib/ui';
 export default function AccountScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const { refresh } = useSession();
   const profile = useProfile();
   const dashboard = useQuery(dashboardQuery(api));
   const update = useProfileUpdate();
@@ -51,29 +55,11 @@ export default function AccountScreen() {
     }, []),
   );
   const [confirming, setConfirming] = useState(false);
-  const [leaving, setLeaving] = useState(false);
+  const { leave, leaving } = useSignOut();
 
   const trimmed = name.trim();
   const valid = trimmed.length >= 1 && trimmed.length <= 120;
   const changed = Boolean(me) && trimmed !== me?.name;
-
-  const leave = async () => {
-    setLeaving(true);
-    try {
-      await signOut();
-      /*
-       * The queue is this account's unsent writes. Left behind, it would go out under the next
-       * person's session on this phone — rejected and lost, or recorded as theirs.
-       */
-      await clearQueue();
-      // The cache is on disk and outlives the session.
-      queryClient.clear();
-      await refresh();
-      router.replace('/sign-in');
-    } finally {
-      setLeaving(false);
-    }
-  };
 
   return (
     <SettingsPage>

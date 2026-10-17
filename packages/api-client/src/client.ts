@@ -19,7 +19,9 @@ import type {
   AiModels,
   AddGarageMember,
   AskQuestion,
+  DraftEntry,
   DraftVehicle,
+  EntryDraft,
   LookUpVehicle,
   CompleteMaintenance,
   ConditionAssessment,
@@ -519,6 +521,8 @@ export function createApiClient(options: ClientOptions) {
       /** Searches for the factory specs of a vehicle already identified. Writes nothing. */
       lookUpVehicle: (body: LookUpVehicle) =>
         request<VehicleLookup>('POST', '/ai/vehicle-lookup', body),
+      /** Reads a receipt or a dashboard photo into a quick entry's fields. Writes nothing. */
+      draftEntry: (body: DraftEntry) => request<EntryDraft>('POST', '/ai/entry-draft', body),
     },
 
     /** Personal API keys for scripts and AI clients. Creating and revoking need a session. */

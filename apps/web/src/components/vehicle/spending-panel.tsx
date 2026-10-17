@@ -17,9 +17,9 @@ import { DateField } from '@/components/ui/date-picker';
 import { Icon } from '@/components/icons';
 import { FormError, Modal, ModalActions } from '@/components/ui/modal';
 import { ConfirmDelete, RowMenu } from '@/components/ui/row-actions';
-import { Button, Field, SectionCard } from '@/components/ui/primitives';
+import { buttonClass } from '@/components/ui/button-class';
+import { Button, Field } from '@/components/ui/primitives';
 import { SelectField } from '@/components/ui/select-field';
-import { ListSkeleton, Loading } from '@/components/ui/skeleton';
 import {
   formatDate,
   formatDistance,
@@ -28,6 +28,7 @@ import {
   humanise,
   toMinorUnits,
 } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 /**
  * The start of a window, as midnight UTC on the day.
@@ -45,17 +46,15 @@ export function windowStart(months: number | null): string | undefined {
   ).toISOString();
 }
 
-/** Rows shown before "Show all": a report tab reads, it is not a spreadsheet. */
-const FIRST = 6;
-
 type Sheet =
   { kind: 'new' } | { kind: 'edit'; expense: Expense } | { kind: 'delete'; expense: Expense };
 
 /**
  * A report tab's own entries, newest first — the one place on the web an amount is recorded or
  * corrected. Each tab passes its slice of the one ledger the report is built from, so a row here
- * is always a row in the figures above it. Recording and correcting open a dialog; deleting takes
- * a second press.
+ * is always a row in the figures above it. Folded by default under the charts it adds up to, as
+ * the phone's is; Record is on its head either way. Recording and correcting open a dialog;
+ * deleting takes a second press.
  */
 export function ExpenseLedger({
   vehicleId,
@@ -63,8 +62,6 @@ export function ExpenseLedger({
   currency,
   unitLabel,
   defaultCategory,
-  title,
-  description,
   pending,
 }: {
   vehicleId: string;
@@ -73,13 +70,11 @@ export function ExpenseLedger({
   unitLabel: string;
   /** What "Record" starts as on this tab: a fill on Refueling, a service on Services. */
   defaultCategory: ExpenseCategory;
-  title: string;
-  description: string;
   pending: boolean;
 }) {
   const queryClient = useQueryClient();
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [all, setAll] = useState(false);
+  const [open, setOpen] = useState(false);
   const close = () => setSheet(null);
 
   // An expense moves the totals, the report, the activity and — with an odometer — the header.
@@ -95,89 +90,95 @@ export function ExpenseLedger({
   });
 
   const list = rows ?? [];
-  const shown = all ? list : list.slice(0, FIRST);
 
   return (
-    <SectionCard
-      title={title}
-      description={description}
-      icon={<Icon name="timeline" size={20} />}
-      action={
-        <Button size="sm" onClick={() => setSheet({ kind: 'new' })}>
-          <Plus className="size-4" aria-hidden="true" />
-          Record
-        </Button>
-      }
-    >
-      {pending && !rows ? (
-        <Loading label="Loading entries">
-          <ListSkeleton rows={3} />
-        </Loading>
-      ) : list.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing recorded in this period.</p>
-      ) : (
-        <>
-          <ol className="flex flex-col gap-2">
-            {shown.map((item) => (
-              <li key={item.id} className="flex items-center gap-3 rounded-xl bg-card p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-foreground">
-                    {item.description}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    <time dateTime={item.occurredAt} className="tabular-nums">
-                      {formatDate(item.occurredAt)}
-                    </time>
-                    {` · ${humanise(item.category)}`}
-                    {item.vendor ? ` · ${item.vendor}` : ''}
-                    {item.quantity
-                      ? ` · ${quantity(item.quantity)} ${quantityLabel(item.quantityUnit)}`
-                      : ''}
-                    {item.energyKwh ? ` · ${quantity(item.energyKwh)} kWh` : ''}
-                  </div>
-                </div>
-                <div className="shrink-0 text-right">
-                  <div className="font-mono text-sm font-semibold tabular-nums text-foreground">
-                    {formatMoney(item.amount)}
-                  </div>
-                  {item.odometer !== null ? (
-                    <div className="font-mono text-xs tabular-nums text-muted-foreground">
-                      {formatDistance(item.odometer, item.odometerUnit)}
-                    </div>
-                  ) : null}
-                </div>
-                <RowMenu
-                  label={`More for ${item.description}`}
-                  items={[
-                    {
-                      label: 'Correct entry',
-                      icon: 'edit',
-                      onSelect: () => setSheet({ kind: 'edit', expense: item }),
-                    },
-                    {
-                      label: 'Delete entry',
-                      icon: 'trash',
-                      destructive: true,
-                      onSelect: () => setSheet({ kind: 'delete', expense: item }),
-                    },
-                  ]}
-                />
-              </li>
-            ))}
-          </ol>
-          {list.length > FIRST ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-3"
-              aria-expanded={all}
-              onClick={() => setAll((open) => !open)}
-            >
-              {all ? 'Show fewer' : `Show all ${list.length}`}
-            </Button>
+    <section className="flex flex-col gap-3 rounded-2xl bg-card/50 p-5">
+      <header className="flex min-h-7 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((shown) => !shown)}
+          aria-expanded={open}
+          disabled={list.length === 0}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left text-label uppercase text-muted-foreground transition-colors hover:text-foreground disabled:hover:text-muted-foreground"
+        >
+          <span className="flex-1">Entries</span>
+          {pending && !rows ? null : (
+            <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-xs tabular-nums normal-case tracking-normal">
+              {String(list.length).padStart(2, '0')}
+            </span>
+          )}
+          {list.length > 0 ? (
+            <Icon
+              name="chevronRight"
+              size={14}
+              className={cn('transition-transform', open && 'rotate-90')}
+            />
           ) : null}
-        </>
-      )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSheet({ kind: 'new' })}
+          aria-label="Record an expense"
+          title="Record an expense"
+          className={buttonClass(
+            'secondary',
+            'icon-sm',
+            'size-7 shrink-0 rounded-full print:hidden',
+          )}
+        >
+          <Plus className="size-3.5" aria-hidden="true" />
+        </button>
+      </header>
+      {open && list.length > 0 ? (
+        <ol className="flex flex-col gap-2">
+          {list.map((item) => (
+            <li key={item.id} className="flex items-center gap-3 rounded-xl bg-card p-3">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-foreground">
+                  {item.description}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  <time dateTime={item.occurredAt} className="tabular-nums">
+                    {formatDate(item.occurredAt)}
+                  </time>
+                  {` · ${humanise(item.category)}`}
+                  {item.vendor ? ` · ${item.vendor}` : ''}
+                  {item.quantity
+                    ? ` · ${quantity(item.quantity)} ${quantityLabel(item.quantityUnit)}`
+                    : ''}
+                  {item.energyKwh ? ` · ${quantity(item.energyKwh)} kWh` : ''}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                  {formatMoney(item.amount)}
+                </div>
+                {item.odometer !== null ? (
+                  <div className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {formatDistance(item.odometer, item.odometerUnit)}
+                  </div>
+                ) : null}
+              </div>
+              <RowMenu
+                label={`More for ${item.description}`}
+                items={[
+                  {
+                    label: 'Correct entry',
+                    icon: 'edit',
+                    onSelect: () => setSheet({ kind: 'edit', expense: item }),
+                  },
+                  {
+                    label: 'Delete entry',
+                    icon: 'trash',
+                    destructive: true,
+                    onSelect: () => setSheet({ kind: 'delete', expense: item }),
+                  },
+                ]}
+              />
+            </li>
+          ))}
+        </ol>
+      ) : null}
 
       {sheet?.kind === 'new' || sheet?.kind === 'edit' ? (
         <Modal
@@ -217,7 +218,7 @@ export function ExpenseLedger({
           onClose={close}
         />
       ) : null}
-    </SectionCard>
+    </section>
   );
 }
 

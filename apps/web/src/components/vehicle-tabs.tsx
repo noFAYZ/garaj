@@ -66,12 +66,15 @@ const TABS: readonly {
   segment: string;
   label: string;
   icon: IconName;
+  /** Worn while the tab is open: the solid twin of an outlined `icon`. */
+  activeIcon?: IconName;
   prefetch: (client: QueryClient, vehicleId: string) => void;
 }[] = [
   {
     segment: '',
     label: 'Logs',
-    icon: 'timeline',
+    icon: 'logbook',
+    activeIcon: 'logbookActive',
     prefetch: (client, id) => {
       void client.prefetchQuery(activityQuery(api, id));
       void client.prefetchQuery(maintenancePlansQuery(api, id));
@@ -80,7 +83,8 @@ const TABS: readonly {
   {
     segment: 'reminders',
     label: 'Reminders',
-    icon: 'calendar',
+    icon: 'reminder',
+    activeIcon: 'reminderActive',
     // The planned items ride on the activity entry, which Logs reads too.
     prefetch: (client, id) => {
       void client.prefetchQuery(activityQuery(api, id));
@@ -89,7 +93,8 @@ const TABS: readonly {
   {
     segment: 'statistics',
     label: 'Stats',
-    icon: 'chart',
+    icon: 'analytics',
+    activeIcon: 'analyticsActive',
     // The report opens on Overview, last 12 months: its ledger and readings for that window.
     prefetch: (client, id) => {
       void client.prefetchQuery(costQuery(api, id, { from: windowStart(12) }));
@@ -101,7 +106,8 @@ const TABS: readonly {
   {
     segment: 'documents',
     label: 'Docs',
-    icon: 'document',
+    icon: 'papers',
+    activeIcon: 'papersActive',
     prefetch: (client, id) => {
       void client.prefetchQuery(documentsQuery(api, id));
       void client.prefetchQuery(eventsQuery(api, id));
@@ -233,7 +239,7 @@ export function VehicleTabs({ vehicleId }: { vehicleId: string }) {
                 >
                   {active ? <StripPill layoutId="vehicle-tab-active" /> : null}
 
-                  <Icon name={tab.icon} size={16} />
+                  <Icon name={active ? (tab.activeIcon ?? tab.icon) : tab.icon} size={16} />
                   <span className={cn(iconOnly && 'max-sm:sr-only')}>{tab.label}</span>
 
                   {count > 0 ? (

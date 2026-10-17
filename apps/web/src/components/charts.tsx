@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /*
@@ -8,15 +8,15 @@ import { cn } from '@/lib/utils';
  *
  * Not a charting library: Recharts is ~90 kB gzipped and brings its own layout engine to draw a
  * few dozen rectangles, and its defaults are the first thing that would have to be styled back
- * to these tokens. The mobile app draws the same five forms with react-native-svg
+ * to these tokens. The mobile app draws the same forms with react-native-svg
  * (`apps/mobile/components/charts.tsx`); the two follow one set of rules:
  *
  * - Colour carries identity only: each report group owns one hue (`CHART`) on every screen.
  *   Text stays in ink; a swatch beside it carries the series.
  * - Thin marks, a 2px gap of card between touching fills, bars rounded at the data end only.
  * - One recessive grid, one axis. Two measures of different scale get two charts.
- * - Hover (or tap) reads any mark out in words, and every chart has a table behind it for a
- *   screen reader — a chart with no text alternative is a picture of data.
+ * - Hover (or tap) reads any mark out, and every chart has a table behind it for a screen
+ *   reader — a chart with no text alternative is a picture of data.
  */
 
 /** The series hues, as the tokens that theme them. */
@@ -44,6 +44,16 @@ export interface ColumnBucket {
   values: Record<string, number>;
 }
 
+export interface Slice {
+  key: string;
+  label: string;
+  value: number;
+  display: string;
+  color: string;
+}
+
+const share = (value: number, total: number) => `${Math.round((value / (total || 1)) * 100)}%`;
+
 function useWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(0);
@@ -61,18 +71,18 @@ function Swatch({ color, className }: { color: string; className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={cn('inline-block size-2.5 shrink-0 rounded-[3px]', className)}
+      className={cn('inline-block size-2 shrink-0 rounded-[2.5px]', className)}
       style={{ backgroundColor: color }}
     />
   );
 }
 
 /**
- * Columns over time: one series, several stacked, or two side by side (`group`).
- *
- * The readout above is the tooltip — the hovered column's period, its total and, with more than
- * one series, each series' figure beside its swatch. At rest it names the window's total, so the
- * chart always says a number. Columns are not focus stops; the table under it is the same data.
+ * Columns over time, headed by their own figure: one series, several stacked, or two side by side
+ * (`group`). At rest the head says `label` and the window's total (or `total`); hovering a column
+ * turns it into that column's period and figure, each series beside its swatch. A quiet period
+ * is a hairline, not a gap: nothing spent and nothing known are opposites. The columns rise from
+ * the axis in a wave from the oldest. Columns are not focus stops; the table under it is the data.
  */
 export function ColumnChart({
   buckets,
@@ -80,16 +90,28 @@ export function ColumnChart({
   mode = 'stack',
   format,
   formatAxis = format,
-  caption,
-  height = 176,
+  label,
+  total,
+  trailing,
+  legend = true,
+  large = true,
+  height = 168,
 }: {
   buckets: readonly ColumnBucket[];
   series: readonly ChartSeries[];
   mode?: 'stack' | 'group';
   format: (value: number) => string;
   formatAxis?: (value: number) => string;
-  /** What the resting readout says the total is of: "12 months, running spend". */
-  caption: string;
+  /** What the resting figure is: "Running cost". */
+  label: string;
+  /** The resting figure, when it is not the sum of the columns (an average, say). */
+  total?: number;
+  /** Beside the label: a count, an action. */
+  trailing?: ReactNode;
+  /** The series key; off where a split under the chart names them instead. */
+  legend?: boolean;
+  /** The card's headline figure, or a smaller one inside a card that has its own. */
+  large?: boolean;
   height?: number;
 }) {
   const [active, setActive] = useState<number | null>(null);
@@ -106,23 +128,35 @@ export function ColumnChart({
   const shown = active === null ? null : buckets[active]!;
   // Every label while they fit; past eight, every other one or so, or they run into a smear.
   const every = buckets.length > 8 ? Math.ceil(buckets.length / 7) : 1;
-  const grand = totals.reduce((sum, value) => sum + value, 0);
+  const headline =
+    mode === 'group' && shown
+      ? (shown.values[series[0]!.key] ?? 0)
+      : shown
+        ? totals[active!]!
+        : (total ?? totals.reduce((sum, value) => sum + value, 0));
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex min-h-12 flex-wrap items-end justify-between gap-x-4 gap-y-1">
-        <div className="min-w-0">
-          <p aria-live="polite" className="text-xs text-muted-foreground">
-            {shown ? shown.long : caption}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-0.5">
+        <div className="flex min-h-6 items-center gap-2">
+          <p
+            aria-live="polite"
+            className="min-w-0 flex-1 truncate text-label uppercase text-muted-foreground"
+          >
+            {shown ? shown.long : label}
           </p>
-          <p className="font-mono text-2xl font-semibold tabular-nums tracking-tight text-foreground">
-            {mode === 'group' && shown
-              ? format(shown.values[series[0]!.key] ?? 0)
-              : format(shown ? totals[active!]! : grand)}
-          </p>
+          {trailing}
         </div>
-        {series.length > 1 ? (
-          <ul className="flex flex-wrap gap-x-4 gap-y-1">
+        <p
+          className={cn(
+            'truncate font-mono font-semibold tabular-nums tracking-tight text-foreground',
+            large ? 'text-[2rem] leading-10' : 'text-xl',
+          )}
+        >
+          {format(headline)}
+        </p>
+        {legend && series.length > 1 ? (
+          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
             {series.map((line) => (
               <li
                 key={line.key}
@@ -143,15 +177,15 @@ export function ColumnChart({
 
       <div className="relative" aria-hidden="true">
         {/* The grid: the peak and its half, labelled at the right, under the marks. */}
-        {[1, 0.5].map((share) => (
+        {[1, 0.5].map((part) => (
           <div
-            key={share}
+            key={part}
             className="pointer-events-none absolute inset-x-0 flex items-center gap-2"
-            style={{ top: `${(1 - share) * height}px` }}
+            style={{ top: `${(1 - part) * height}px` }}
           >
             <span className="h-px flex-1 bg-border/70" />
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-              {formatAxis(peak * share)}
+            <span className="w-10 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+              {formatAxis(peak * part)}
             </span>
           </div>
         ))}
@@ -172,19 +206,18 @@ export function ColumnChart({
               >
                 <div
                   className={cn(
-                    'flex h-full w-full max-w-7 items-end transition-opacity duration-150',
+                    'bar-grow flex h-full w-full max-w-7 items-end transition-opacity duration-150',
                     mode === 'stack' ? 'flex-col-reverse justify-start gap-[2px]' : 'gap-[2px]',
-                    dim && 'opacity-40',
+                    dim && 'opacity-35',
                   )}
+                  style={{ '--i': index } as CSSProperties}
                 >
                   {totals[index] === 0 ? (
-                    // A quiet period is a mark, not a gap: nothing spent and no data are opposites.
                     <span className="h-0.5 w-full rounded-full bg-border" />
                   ) : (
                     series.map((line, position) => {
                       const value = bucket.values[line.key] ?? 0;
                       if (mode === 'stack' && value <= 0) return null;
-                      const share = (value / peak) * 100;
                       const top =
                         mode === 'group' ||
                         series
@@ -200,7 +233,8 @@ export function ColumnChart({
                             top ? 'rounded-t-[4px]' : '',
                           )}
                           style={{
-                            height: value > 0 ? `max(3px, calc(${share}% - 2px))` : 0,
+                            height:
+                              value > 0 ? `max(3px, calc(${(value / peak) * 100}% - 2px))` : 0,
                             backgroundColor: line.color,
                           }}
                         />
@@ -231,7 +265,7 @@ export function ColumnChart({
       </div>
 
       <table className="sr-only">
-        <caption>{caption}</caption>
+        <caption>{label}</caption>
         <thead>
           <tr>
             <th scope="col">Period</th>
@@ -257,136 +291,6 @@ export function ColumnChart({
   );
 }
 
-export interface Slice {
-  key: string;
-  label: string;
-  value: number;
-  display: string;
-  color: string;
-}
-
-/**
- * Part of a whole, as a ring with its key beside it. The key names every slice with its share
- * and figure, so no slice is told by colour alone; hovering either one lifts the slice and the
- * centre reads it. `onSelect` makes each key row the way into what it counts.
- */
-export function Donut({
-  slices,
-  total,
-  centre,
-  onSelect,
-  size = 168,
-  thickness = 20,
-}: {
-  slices: readonly Slice[];
-  total: string;
-  centre: string;
-  onSelect?: (key: string) => void;
-  size?: number;
-  thickness?: number;
-}) {
-  const [hovered, setHovered] = useState<string | null>(null);
-  const sum = slices.reduce((acc, slice) => acc + slice.value, 0) || 1;
-  const radius = (size - thickness) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const gap = slices.length > 1 ? 3 : 0;
-  const active = slices.find((slice) => slice.key === hovered) ?? null;
-  const share = (value: number) => `${Math.round((value / sum) * 100)}%`;
-
-  let offset = 0;
-  const arcs = slices.map((slice) => {
-    const length = (slice.value / sum) * circumference;
-    const arc = { slice, dash: Math.max(0.5, length - gap), offset };
-    offset += length;
-    return arc;
-  });
-
-  return (
-    <div className="flex flex-col items-center gap-6 sm:flex-row">
-      <div className="relative shrink-0" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
-          {arcs.map(({ slice, dash, offset: start }) => (
-            <circle
-              key={slice.key}
-              cx={size / 2}
-              cy={size / 2}
-              r={radius}
-              fill="none"
-              stroke={slice.color}
-              strokeWidth={active?.key === slice.key ? thickness + 4 : thickness}
-              strokeDasharray={`${dash} ${circumference}`}
-              strokeDashoffset={-start}
-              className="transition-[stroke-width,opacity] duration-150"
-              opacity={active && active.key !== slice.key ? 0.35 : 1}
-              onMouseEnter={() => setHovered(slice.key)}
-              onMouseLeave={() => setHovered(null)}
-            />
-          ))}
-        </svg>
-        <div className="pointer-events-none absolute inset-0 grid place-content-center px-7 text-center">
-          <span className="truncate text-label uppercase text-muted-foreground">
-            {active?.label ?? centre}
-          </span>
-          <span className="truncate font-mono text-lg font-semibold tabular-nums tracking-tight text-foreground">
-            {active?.display ?? total}
-          </span>
-          {active ? (
-            <span className="font-mono text-xs tabular-nums text-muted-foreground">
-              {share(active.value)}
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      <ul className="flex w-full min-w-0 flex-1 flex-col gap-1">
-        {slices.map((slice) => {
-          const body = (
-            <>
-              <Swatch color={slice.color} />
-              <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground">
-                {slice.label}
-              </span>
-              <span className="font-mono text-sm tabular-nums text-foreground">
-                {slice.display}
-              </span>
-              <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                {share(slice.value)}
-              </span>
-            </>
-          );
-          const shared = {
-            onMouseEnter: () => setHovered(slice.key),
-            onMouseLeave: () => setHovered(null),
-            className: cn(
-              'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-colors',
-              active?.key === slice.key ? 'bg-muted' : '',
-            ),
-          };
-          return (
-            <li key={slice.key}>
-              {onSelect ? (
-                <button
-                  type="button"
-                  {...shared}
-                  onFocus={() => setHovered(slice.key)}
-                  onBlur={() => setHovered(null)}
-                  onClick={() => onSelect(slice.key)}
-                  aria-label={`${slice.label}: ${slice.display}, ${share(slice.value)}. Open ${slice.label}`}
-                  className={cn(shared.className, 'hover:bg-muted')}
-                >
-                  {body}
-                </button>
-              ) : (
-                <div {...shared}>{body}</div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
 export interface LineSeries {
   key: string;
   label: string;
@@ -399,7 +303,7 @@ export interface LineSeries {
  * Lines over time on one axis. The pointer moves a crosshair to the nearest moment and the
  * readout names every series there; at rest it reads the latest. The scale fits the data rather
  * than starting at zero — lines are read by their shape — and an optional `reference` draws a
- * level (an average) as a dashed rule, labelled.
+ * level (an average) as a dashed rule.
  */
 export function LineChart({
   series,
@@ -407,7 +311,7 @@ export function LineChart({
   formatX,
   formatAxis = formatY,
   reference,
-  height = 180,
+  height = 150,
   area = false,
 }: {
   series: readonly LineSeries[];
@@ -441,13 +345,21 @@ export function LineChart({
   const toX = (x: number) =>
     maxX === minX ? plotWidth / 2 : ((x - minX) / (maxX - minX)) * plotWidth;
   const toY = (y: number) => top + (1 - (y - minY) / (maxY - minY)) * plotHeight;
-  const ticks = [high, (high + low) / 2, low];
+  const ticks = [high, low];
+  const path = (points: readonly { x: number; y: number }[]) =>
+    points
+      .map(
+        (point, index) =>
+          `${index === 0 ? 'M' : 'L'}${toX(point.x).toFixed(1)} ${toY(point.y).toFixed(1)}`,
+      )
+      .join(' ');
 
   const at = cursor ?? maxX;
   const reading = series.map((line) => {
     const upTo = line.points.filter((point) => point.x <= at);
     return { line, point: upTo[upTo.length - 1] ?? line.points[0] };
   });
+  const only = series.length === 1 ? series[0]! : null;
 
   const move = (clientX: number, left: number) => {
     const x =
@@ -462,14 +374,14 @@ export function LineChart({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1" aria-live="polite">
-        <span className="font-mono text-xs font-semibold uppercase tabular-nums text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-live="polite">
+        <span className="font-mono text-[10px] font-semibold uppercase tabular-nums text-muted-foreground">
           {formatX(at)}
         </span>
         {reading.map(({ line, point }) => (
           <span key={line.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Swatch color={line.color} />
-            {line.label}
+            {series.length > 1 ? line.label : null}
             <span className="font-mono font-semibold tabular-nums text-foreground">
               {point ? formatY(point.y) : '—'}
             </span>
@@ -491,7 +403,7 @@ export function LineChart({
         aria-hidden="true"
       >
         {width > 0 ? (
-          <svg width={width} height={height} className="overflow-visible">
+          <svg width={width} height={height} className="trail-wipe overflow-visible">
             {ticks.map((tick) => (
               <line
                 key={tick}
@@ -514,17 +426,11 @@ export function LineChart({
                 strokeDasharray="3 4"
               />
             ) : null}
-            {area && series.length === 1 && series[0]!.points.length > 1 ? (
+            {only && only.points.length > 1 ? (
               <path
-                d={`${series[0]!.points
-                  .map(
-                    (point, index) => `${index === 0 ? 'M' : 'L'}${toX(point.x)} ${toY(point.y)}`,
-                  )
-                  .join(
-                    ' ',
-                  )} L${toX(series[0]!.points.at(-1)!.x)} ${top + plotHeight} L${toX(series[0]!.points[0]!.x)} ${top + plotHeight} Z`}
-                fill={series[0]!.color}
-                opacity={0.12}
+                d={`${path(only.points)} L${toX(only.points.at(-1)!.x)} ${top + plotHeight} L${toX(only.points[0]!.x)} ${top + plotHeight} Z`}
+                fill={only.color}
+                opacity={area ? 0.14 : 0.07}
               />
             ) : null}
             {cursor !== null ? (
@@ -540,12 +446,7 @@ export function LineChart({
             {series.map((line) => (
               <path
                 key={line.key}
-                d={line.points
-                  .map(
-                    (point, index) =>
-                      `${index === 0 ? 'M' : 'L'}${toX(point.x).toFixed(1)} ${toY(point.y).toFixed(1)}`,
-                  )
-                  .join(' ')}
+                d={path(line.points)}
                 fill="none"
                 stroke={line.color}
                 strokeWidth={2}
@@ -609,79 +510,206 @@ export function LineChart({
   );
 }
 
-/** Magnitudes compared, largest first: label and figure, then a bar against the largest or `max`. */
+/**
+ * Magnitudes compared, largest first: the name and its count, the figure, and a bar against the
+ * largest (or `max`). `columns={2}` sets short bars side by side, for scores out of a hundred.
+ */
 export function RankBars({
   rows,
   color,
   max,
+  columns = 1,
 }: {
-  rows: readonly { key: string; label: string; note?: string; value: number; display: string }[];
-  color: string;
+  rows: readonly {
+    key: string;
+    label: string;
+    count?: number;
+    value: number;
+    display: string;
+    color?: string;
+  }[];
+  color?: string;
   max?: number;
+  columns?: 1 | 2;
 }) {
   const top = max ?? (Math.max(...rows.map((row) => row.value), 0) || 1);
   return (
-    <ul className="flex flex-col gap-3.5">
+    <ul className={cn('grid gap-x-6 gap-y-3', columns === 2 && 'grid-cols-2')}>
       {rows.map((row, index) => (
         <li
           key={row.key}
-          className="stagger animate-rise"
+          className="stagger min-w-0 animate-rise"
           style={{ '--i': index } as CSSProperties}
         >
           <div className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 truncate text-sm font-medium text-foreground">
               {row.label}
+              {row.count ? (
+                <span className="ml-2 font-mono text-xs tabular-nums text-muted-foreground">
+                  {String(row.count).padStart(2, '0')}
+                </span>
+              ) : null}
             </span>
-            <span className="shrink-0 font-mono text-sm tabular-nums text-foreground">
+            <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-foreground">
               {row.display}
             </span>
           </div>
-          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
             <div
               className="h-full rounded-full"
               style={{
                 width: `${Math.max(2, Math.min(100, (row.value / top) * 100))}%`,
-                backgroundColor: color,
+                backgroundColor: row.color ?? color,
               }}
             />
           </div>
-          {row.note ? (
-            <p className="mt-1 truncate text-xs text-muted-foreground">{row.note}</p>
-          ) : null}
         </li>
       ))}
     </ul>
   );
 }
 
-/** A whole in a few parts, side by side with a gap of card between, and a key with figures. */
-export function SplitBar({ parts }: { parts: readonly Slice[] }) {
-  const total = parts.reduce((sum, part) => sum + part.value, 0) || 1;
+/**
+ * A whole in a few parts: one bar of them side by side with a gap of card between, and a key of
+ * each part's share. `onSelect` makes each key the way into what it counts.
+ */
+export function SplitBar({
+  parts,
+  onSelect,
+}: {
+  parts: readonly Slice[];
+  onSelect?: (key: string) => void;
+}) {
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  const shown = parts.filter((part) => part.value > 0);
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex h-3 gap-[2px] overflow-hidden rounded-full" aria-hidden="true">
-        {parts
-          .filter((part) => part.value > 0)
-          .map((part) => (
-            <span
-              key={part.key}
-              style={{ flexGrow: part.value, backgroundColor: part.color }}
-              className="min-w-[3px]"
-            />
-          ))}
-      </div>
-      <ul className="flex flex-col gap-1.5">
-        {parts.map((part) => (
-          <li key={part.key} className="flex items-center gap-2.5 text-sm">
-            <Swatch color={part.color} />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">{part.label}</span>
-            <span className="font-mono tabular-nums text-foreground">{part.display}</span>
-            <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
-              {Math.round((part.value / total) * 100)}%
-            </span>
-          </li>
+      <div className="flex h-2 gap-[2px]" aria-hidden="true">
+        {shown.map((part) => (
+          <span
+            key={part.key}
+            style={{ flexGrow: part.value, backgroundColor: part.color }}
+            className="min-w-[3px] rounded-[3px]"
+          />
         ))}
+      </div>
+      <ul className="flex flex-wrap gap-1.5">
+        {shown.map((part) => {
+          const body = (
+            <>
+              <Swatch color={part.color} />
+              <span className="font-semibold text-foreground">{part.label}</span>
+              <span className="font-mono font-semibold tabular-nums text-muted-foreground">
+                {share(part.value, total)}
+              </span>
+            </>
+          );
+          return (
+            <li key={part.key}>
+              {onSelect ? (
+                <button
+                  type="button"
+                  onClick={() => onSelect(part.key)}
+                  aria-label={`${part.label}: ${part.display}, ${share(part.value, total)}. Open ${part.label}`}
+                  className="flex h-7 items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs transition-colors hover:bg-border"
+                >
+                  {body}
+                </button>
+              ) : (
+                <span className="mr-2 flex h-7 items-center gap-1.5 text-xs" title={part.display}>
+                  {body}
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
+  );
+}
+
+/** A trend at a glance: one line over a soft fill, its latest point marked. Oldest first. */
+export function Spark({
+  values,
+  color,
+  height = 40,
+}: {
+  values: readonly number[];
+  color: string;
+  height?: number;
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const high = Math.max(...values, 0) || 1;
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  const point = (value: number, index: number) =>
+    [index * step, 3 + (1 - value / high) * (height - 6)] as const;
+  const line = values
+    .map((value, index) => {
+      const [x, y] = point(value, index);
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const [lastX, lastY] = point(values.at(-1) ?? 0, values.length - 1);
+  return (
+    <div ref={ref} style={{ height }} aria-hidden="true">
+      {width > 0 && values.length > 1 ? (
+        <svg width={width} height={height} className="trail-wipe overflow-visible">
+          <path d={`${line} L${width} ${height} L0 ${height} Z`} fill={color} opacity={0.14} />
+          <path d={line} fill="none" stroke={color} strokeWidth={1.75} strokeLinejoin="round" />
+          <circle
+            cx={lastX}
+            cy={lastY}
+            r={3.5}
+            fill={color}
+            stroke="var(--color-card)"
+            strokeWidth={1.5}
+          />
+        </svg>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Prices side by side on one scale, cheapest to dearest: each place a dot on the span between
+ * them, the figure at the end. The cheapest wears the good-news colour.
+ */
+export function Ladder({
+  rows,
+  color,
+}: {
+  rows: readonly { key: string; label: string; value: number; display: string }[];
+  color: string;
+}) {
+  const low = Math.min(...rows.map((row) => row.value));
+  const high = Math.max(...rows.map((row) => row.value));
+  return (
+    <ul className="flex flex-col gap-3">
+      {rows.map((row, index) => {
+        const at = high === low ? 0.5 : (row.value - low) / (high - low);
+        const best = index === 0 && rows.length > 1;
+        return (
+          <li key={row.key} className="flex items-center gap-3">
+            <span className="w-1/3 min-w-0 truncate text-sm font-medium text-foreground">
+              {row.label}
+              {best ? <span className="sr-only">, cheapest</span> : null}
+            </span>
+            <span className="relative mx-1.5 flex h-3.5 flex-1 items-center" aria-hidden="true">
+              <span className="h-0.5 w-full rounded-full bg-border" />
+              <span
+                className={cn(
+                  'absolute size-3 -translate-x-1/2 rounded-full ring-2 ring-card',
+                  best && 'bg-success',
+                )}
+                style={{ left: `${at * 100}%`, backgroundColor: best ? undefined : color }}
+              />
+            </span>
+            <span className="min-w-12 text-right font-mono text-xs font-semibold tabular-nums text-foreground">
+              {row.display}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

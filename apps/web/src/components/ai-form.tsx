@@ -11,13 +11,13 @@
 
 import { Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useRef, useState, type ReactNode } from 'react';
+import { symbolOf } from '@vehicle-os/ui';
 import { Icon } from '@/components/icons';
 import { DatePicker } from '@/components/ui/date-picker';
 import { isImage } from '@/components/onboard-uploads';
 import { Button } from '@/components/ui/primitives';
 import { Select, type SelectOption } from '@/components/ui/select';
 import { useObjectUrl } from '@/lib/ai-files';
-import { symbolOf } from '@/lib/save-entry';
 import { cn } from '@/lib/utils';
 
 export type FieldSpec = {

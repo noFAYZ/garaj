@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'next/navigation';
+import { useParams, usePathname } from 'next/navigation';
 import { unstable_ViewTransition as ViewTransition, useState, type ReactNode } from 'react';
 import type { Vehicle } from '@vehicle-os/contracts';
 import {
@@ -17,13 +17,24 @@ import { Modal } from '@/components/ui/modal';
 import { VehicleTabs } from '@/components/vehicle-tabs';
 import { PhotoManager } from '@/components/vehicle/photo-manager';
 import { VehicleMenu } from '@/components/vehicle/vehicle-menu';
-import { VehicleHero, VehicleHeroSkeleton, vehicleTransitionName } from '@/components/vehicle-hero';
+import {
+  VehicleBar,
+  VehicleHero,
+  VehicleHeroSkeleton,
+  vehicleTransitionName,
+} from '@/components/vehicle-hero';
 import { Loading } from '@/components/ui/skeleton';
 import { windowStart } from '@/components/vehicle/spending-panel';
 
 export default function VehicleLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ vehicleId: string }>();
   const vehicleId = params.vehicleId;
+  /*
+   * Only Logs stands the vehicle up in full. Reminders, Stats, Docs and Drivers are about
+   * something the vehicle has, so it shrinks to a bar above them — its picture, name and plate,
+   * and its menu — and the section starts near the top, as on the phone.
+   */
+  const staged = usePathname() === `/vehicles/${vehicleId}`;
 
   const queryClient = useQueryClient();
 
@@ -81,22 +92,33 @@ export default function VehicleLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-col gap-6">
       {/*
-       * The vehicle itself, at the top of every one of its tabs. Same hero as the garage
-       * screen, so moving between the two is the same object staying still rather than two
-       * different presentations of it.
+       * The vehicle itself: the hero on Logs, the same hero as the garage screen, so moving
+       * between the two is the same object staying still; a bar of it on every other tab.
        */}
       {data ? (
         <ViewTransition name={vehicleTransitionName(data.id)}>
-          <VehicleHero
-            vehicle={data}
-            action={<VehicleMenu vehicle={data} />}
-            photos={photos.data}
-            onEditPhotos={() => setPhotosOpen(true)}
-            cost={spend.isPending ? undefined : (spend.data ?? null)}
-            monthly={monthly.isPending ? undefined : (monthly.data ?? null)}
-            trail={trail.data}
-          />
+          {staged ? (
+            <VehicleHero
+              vehicle={data}
+              action={<VehicleMenu vehicle={data} />}
+              photos={photos.data}
+              onEditPhotos={() => setPhotosOpen(true)}
+              cost={spend.isPending ? undefined : (spend.data ?? null)}
+              monthly={monthly.isPending ? undefined : (monthly.data ?? null)}
+              trail={trail.data}
+            />
+          ) : (
+            <VehicleBar
+              vehicle={data}
+              action={<VehicleMenu vehicle={data} />}
+              onEditPhotos={() => setPhotosOpen(true)}
+            />
+          )}
         </ViewTransition>
+      ) : !staged ? (
+        <Loading label="Loading vehicle">
+          <VehicleBar vehicle={undefined} />
+        </Loading>
       ) : (
         // The hero's own frame and figure labels, so the tab strip below does not jump when
         // the vehicle lands and nothing that is already known is drawn as a placeholder.

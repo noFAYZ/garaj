@@ -6,7 +6,9 @@ import {
   AiAnswer,
   AiModels,
   AskQuestion,
+  DraftEntry,
   DraftVehicle,
+  EntryDraft,
   LookUpVehicle,
   StandardErrors,
   VehicleDraft,
@@ -14,6 +16,7 @@ import {
 } from '@vehicle-os/contracts';
 import { localDateIn } from '../../../tasks/domain/buckets';
 import { ask } from '../../application/services/ask';
+import { draftEntry } from '../../application/services/draft-entry';
 import { draftVehicle, lookUpVehicle } from '../../application/services/draft-vehicle';
 import { AiUnavailableError, type AiProviderPort } from '../../infrastructure/ai-port';
 import { ServiceUnavailableError, ValidationError } from '../../../../infrastructure/errors';
@@ -29,9 +32,9 @@ async function timezoneFor(fastify: FastifyInstance, userId: string): Promise<st
 }
 
 /**
- * One feature's use of the model: refused here when AI is off, metered through a wrapper so
- * every turn is summed into one `ai_requests` row for the admin console, and the provider being
- * down reported as a 503 rather than a 500.
+ * One feature's use of the model: refused here when its flag is off — `ai`, or `ocr` for reading
+ * receipts — metered through a wrapper so every turn is summed into one `ai_requests` row for the
+ * admin console, and the provider being down reported as a 503 rather than a 500.
  */
 async function withAi<T>(
   fastify: FastifyInstance,
@@ -40,13 +43,19 @@ async function withAi<T>(
   feature: string,
   chosen: string | undefined,
   work: (provider: AiProviderPort) => Promise<T>,
+  flag: 'ai' | 'ocr' = 'ai',
 ): Promise<T> {
   /*
    * The flag is checked here as well as at startup (§94): a client that hides the UI
    * on a disabled flag is a courtesy, and this is the part that actually holds.
    */
-  if (!isEnabled(env(), 'ai')) {
-    throw new ServiceUnavailableError('AI is not configured on this deployment.', 'AI_UNAVAILABLE');
+  if (!isEnabled(env(), flag)) {
+    throw new ServiceUnavailableError(
+      flag === 'ocr'
+        ? 'Receipt reading is not on for this deployment.'
+        : 'AI is not configured on this deployment.',
+      'AI_UNAVAILABLE',
+    );
   }
 
   // `model` follows the turns, so a row answered by the fallback says so.
@@ -204,6 +213,40 @@ export const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
           attachments: request.body.attachments,
           today: localDateIn(timezone, new Date()),
         }),
+      );
+    },
+  );
+
+  fastify.post(
+    '/entry-draft',
+    {
+      schema: {
+        tags: ['ai'],
+        summary: 'Read a receipt or a dashboard into a quick entry',
+        description:
+          'One model turn reads the photo into the quick entry’s fields — the total, the ' +
+          'litres, the station or workshop, the day, the odometer — held to the event ' +
+          'contract’s bounds. Nothing is written: the form shows the draft to check before ' +
+          'the ordinary create request. Behind the `ocr` flag.',
+        body: DraftEntry,
+        response: { 200: EntryDraft, ...StandardErrors, 503: StandardErrors[400] },
+      },
+      // A paid model call each, like a question; a little looser, as a pump visit may retake one.
+      config: { rateLimit: { max: isProduction() ? 10 : 1000, timeWindow: '1 minute' } },
+      bodyLimit: 16_777_216,
+    },
+    async (request) => {
+      const actor = await fastify.requireAuth(request);
+      const timezone = await timezoneFor(fastify, actor.userId);
+      return withAi(
+        fastify,
+        request,
+        actor.userId,
+        'entry-draft',
+        undefined,
+        (provider) =>
+          draftEntry(provider, { ...request.body, today: localDateIn(timezone, new Date()) }),
+        'ocr',
       );
     },
   );

@@ -224,6 +224,83 @@ export function VehicleHero({
 }
 
 /**
+ * The vehicle as a bar, above every tab but Logs: its picture — the featured photo, or the make's
+ * badge without one — its name and its plate, and its menu. The hero shrunk to what says which
+ * vehicle this is, so the tab's own content starts near the top. `undefined` while it loads.
+ */
+export function VehicleBar({
+  vehicle,
+  action,
+  onEditPhotos,
+}: {
+  vehicle: Vehicle | undefined;
+  action?: ReactNode;
+  onEditPhotos?: () => void;
+}) {
+  if (!vehicle) {
+    return (
+      <section className="flex h-12 items-center gap-3">
+        <Skeleton className="size-11 rounded-xl" />
+        <Skeleton className="h-5 w-48 max-w-full" />
+      </section>
+    );
+  }
+  const photo = vehicle.primaryPhoto?.thumbnailUrl ? vehicle.primaryPhoto : null;
+  const plate = vehicle.registrationIdentifier;
+  const picture = photo ? (
+    <img
+      src={photo.thumbnailUrl!}
+      alt=""
+      className={cn('size-full', photo.isCutout ? 'object-contain p-0.5' : 'object-cover')}
+    />
+  ) : vehicle.make ? (
+    <BrandLogo make={vehicle.make} size={44} fill className="rounded-xl text-sm text-foreground" />
+  ) : (
+    <Icon name={typeIcon(vehicle.vehicleType)} size={20} />
+  );
+  const tile =
+    'grid size-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-muted-foreground';
+
+  return (
+    <section className="flex h-12 min-w-0 items-center gap-3">
+      {onEditPhotos ? (
+        <button
+          type="button"
+          onClick={onEditPhotos}
+          aria-label="Photos"
+          title="Photos"
+          className={cn(tile, 'transition-[scale] active:scale-95')}
+        >
+          {picture}
+        </button>
+      ) : (
+        <span aria-hidden="true" className={tile}>
+          {picture}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-lg font-semibold leading-tight tracking-tight text-foreground">
+          {vehicle.displayName}
+        </h2>
+        {plate || vehicle.status !== 'ACTIVE' ? (
+          <p className="truncate font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {plate ? (
+              <>
+                <span className="sr-only">Number plate </span>
+                {plate}
+              </>
+            ) : null}
+            {plate && vehicle.status !== 'ACTIVE' ? ' · ' : null}
+            {vehicle.status !== 'ACTIVE' ? humanise(vehicle.status) : null}
+          </p>
+        ) : null}
+      </div>
+      {action}
+    </section>
+  );
+}
+
+/**
  * The photo stage. A region that takes the arrow keys once focused and a swipe under a finger, so
  * the gallery moves the way every other gallery does, not only by its buttons.
  *

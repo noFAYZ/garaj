@@ -22,7 +22,7 @@ import { figure, radius, spacing, typeScale, useTheme } from './theme';
  * The instrument pieces, as the web draws them: the uppercase label, a section heading with its
  * count, filter chips, the segmented track with a copper pill that slides, readings panels with
  * hairlines between cells, the field a new entry's title is typed into, a tinted tile for a row's
- * glyph — and the glyph itself, in the web's own Twemoji artwork.
+ * glyph — and the glyph itself, in the web's own Fluent Emoji artwork.
  */
 
 export type Tone = 'destructive' | 'warning' | 'success' | 'neutral';
@@ -120,19 +120,24 @@ export function SectionLink({
   );
 }
 
-/** The web's filter chip: copper when chosen, muted when not, its count in figures. */
+/**
+ * The web's filter chip: copper when chosen, muted when not, its count in figures. `compact` is the
+ * small one, for a filter row over a list; its touch area still reaches 44pt tall.
+ */
 export function Chip({
   label,
   selected,
   onPress,
   leading,
   count,
+  compact = false,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
   leading?: ReactNode;
   count?: number;
+  compact?: boolean;
 }) {
   const theme = useTheme();
   const ink = selected ? theme.primaryForeground : theme.mutedForeground;
@@ -145,18 +150,36 @@ export function Chip({
       accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityLabel={count === undefined ? label : `${label}, ${count}`}
+      hitSlop={compact ? { top: 8, bottom: 8 } : undefined}
       scaleTo={0.94}
-      style={[styles.chip, { backgroundColor: selected ? theme.primary : theme.muted }]}
+      style={[
+        styles.chip,
+        compact ? styles.chipCompact : null,
+        { backgroundColor: selected ? theme.primary : theme.muted },
+      ]}
     >
       {leading}
       <Text
         numberOfLines={1}
-        style={[typeScale.label, { maxWidth: 160, color: selected ? ink : theme.foreground }]}
+        style={[
+          typeScale.label,
+          compact ? styles.chipCompactLabel : null,
+          { maxWidth: 160, color: selected ? ink : theme.foreground },
+        ]}
       >
         {label}
       </Text>
       {count !== undefined ? (
-        <Text style={[typeScale.caption, figure, { color: ink, opacity: 0.75 }]}>{count}</Text>
+        <Text
+          style={[
+            typeScale.caption,
+            figure,
+            compact ? styles.chipCompactCount : null,
+            { color: ink, opacity: 0.75 },
+          ]}
+        >
+          {count}
+        </Text>
       ) : null}
     </PressableScale>
   );
@@ -165,15 +188,18 @@ export function Chip({
 /**
  * The web's navigation track: one rounded track on a resting card, and a copper-wash pill that
  * glides to the chosen side on the web nav's spring, so the move reads as a change of place.
+ * `small` is the short one, for a track that sits beside another.
  */
 export function Segmented<T extends string>({
   value,
   options,
   onChange,
+  small = false,
 }: {
   value: T;
-  options: readonly { readonly value: T; readonly label: string }[];
+  options: readonly { readonly value: T; readonly label: string; readonly said?: string }[];
   onChange: (value: T) => void;
+  small?: boolean;
 }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
@@ -228,13 +254,15 @@ export function Segmented<T extends string>({
             }}
             accessibilityRole="button"
             accessibilityState={{ selected }}
-            accessibilityLabel={option.label}
+            accessibilityLabel={option.said ?? option.label}
             scaleTo={0.95}
-            style={styles.segment}
+            style={[styles.segment, small ? styles.segmentSmall : null]}
           >
             <Text
+              numberOfLines={1}
               style={[
                 typeScale.label,
+                small ? styles.segmentSmallLabel : null,
                 { color: selected ? theme.foreground : theme.mutedForeground },
               ]}
             >
@@ -567,7 +595,7 @@ export function Icon({ name, size = 20, color }: { name: IconName; size?: number
 }
 
 /**
- * An emoji, in the web's own artwork: the same Twemoji drawing the web inlines for every entry
+ * An emoji, in the web's own artwork: the same Fluent Emoji drawing the web inlines for every entry
  * kind, so a fill-up wears the same pump on both. A character outside that set — a one-off in a
  * notification — falls back to the phone's emoji font. Excluded from font scaling either way, so
  * it keeps to its tile.
@@ -680,6 +708,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 999,
   },
+  chipCompact: { height: 28, gap: 5, paddingHorizontal: 10 },
+  chipCompactLabel: { fontSize: 12.5, lineHeight: 16 },
+  chipCompactCount: { fontSize: 11, lineHeight: 14 },
   segmented: {
     flexDirection: 'row',
     padding: SEGMENT_PAD,
@@ -701,6 +732,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: spacing.md,
   },
+  segmentSmall: { minHeight: 30, paddingHorizontal: 4 },
+  segmentSmallLabel: { fontSize: 13, lineHeight: 17 },
   cell: { flex: 1, gap: 4, paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2 },
   inlineCell: {
     flexDirection: 'row',

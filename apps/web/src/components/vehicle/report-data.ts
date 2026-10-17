@@ -106,9 +106,9 @@ export const cents = (amountMinor: number, currency: string) =>
 
 export const compact = formatMoneyCompact;
 
-/** "1.759 EUR" — a pump's three places, and the code so it never rounds to a symbol. */
+/** "1.759" — a pump's three places; the currency is said once, beside it or in the label. */
 export const perUnit = (amountMinor: number, currency: string) =>
-  `${(amountMinor / 10 ** minorUnitExponent(currency)).toFixed(3)} ${currency}`;
+  (amountMinor / 10 ** minorUnitExponent(currency)).toFixed(3);
 
 export const UNIT_LABEL: Record<string, string> = {
   LITER: 'L',

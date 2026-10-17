@@ -1,9 +1,11 @@
 /**
- * Generates `src/components/emoji.tsx` from Twemoji.
+ * Generates `src/components/emoji.tsx` (and the phone's `lib/emoji-art.ts`) from Microsoft's
+ * Fluent Emoji, the "Color" style, fetched through the Iconify API.
  *
  * Activity entries are a list of very different things — a fill-up, a repair, an insurance
- * payment, a note — and a line-art set draws most of them with the same spanner. Twemoji's
- * artwork is recognisable at 20px and different from entry to entry, which is the whole job.
+ * payment, a note — and a line-art set draws most of them with the same spanner. Fluent's
+ * artwork is recognisable at 20px and different from entry to entry, which is the whole job, and
+ * its soft gradients and inner shading look finished rather than flat.
  *
  * Inlined rather than fetched: the same reasoning as the icon set. A CDN image per row is a
  * request per row and a flash of nothing while it loads, and the runtime library parses text to
@@ -24,90 +26,101 @@ const target = resolve(here, '../src/components/emoji.tsx');
 /** The phone app draws the same artwork, keyed by the character its entries already carry. */
 const mobileTarget = resolve(here, '../../mobile/lib/emoji-art.ts');
 
-/** Pinned: emoji artwork changes between releases, and a silent redraw is not a thing to inherit. */
-const VERSION = '15.1.0';
-const base = `https://cdn.jsdelivr.net/gh/jdecked/twemoji@${VERSION}/assets/svg`;
+// ponytail: the Iconify API is not versioned (the pinned npm set is a 100 MB JSON). The output is
+// committed, so a redraw upstream only lands when this is re-run, and shows in the diff.
+const API = 'https://api.iconify.design/fluent-emoji.json';
 
 /**
- * The vocabulary, as `localName: emoji`.
+ * The vocabulary, as `localName: [emoji, Fluent name]` — Fluent's name is the emoji's CLDR name,
+ * lower-case and hyphenated.
  *
  * Every one of these is mapped from a real value — an event type, or a word in a schedule's title.
  * Nothing here is decoration for its own sake.
  */
 const EMOJI = {
   // Event types
-  maintenance: '🔧',
-  repair: '🛠️',
-  fuel: '⛽',
-  charge: '🔌',
-  purchase: '🧾',
-  inspection: '🔍',
-  modification: '⚙️',
-  cleaning: '🧼',
-  registration: '📋',
-  insurance: '🛡️',
-  trip: '🗺️',
-  accident: '💥',
-  note: '📝',
-  expense: '💸',
+  maintenance: ['🧰', 'toolbox'],
+  repair: ['🛠️', 'hammer-and-wrench'],
+  fuel: ['⛽', 'fuel-pump'],
+  charge: ['🔌', 'electric-plug'],
+  purchase: ['🧾', 'receipt'],
+  inspection: ['🔍', 'magnifying-glass-tilted-left'],
+  modification: ['⚙️', 'gear'],
+  cleaning: ['🧼', 'soap'],
+  registration: ['📋', 'clipboard'],
+  insurance: ['🛡️', 'shield'],
+  trip: ['🗺️', 'world-map'],
+  accident: ['💥', 'collision'],
+  note: ['📝', 'memo'],
+  expense: ['💸', 'money-with-wings'],
   // Parts and jobs, matched from a schedule's title
-  oil: '🛢️',
-  tyre: '🛞',
-  brake: '🛑',
-  chain: '⛓️',
-  battery: '🔋',
-  filter: '🌬️',
-  coolant: '❄️',
-  spark: '⚡',
-  calendar: '🗓️',
+  oil: ['🛢️', 'oil-drum'],
+  tyre: ['🛞', 'wheel'],
+  brake: ['🛑', 'stop-sign'],
+  chain: ['⛓️', 'chains'],
+  battery: ['🔋', 'battery'],
+  filter: ['🌬️', 'wind-face'],
+  coolant: ['❄️', 'snowflake'],
+  spark: ['⚡', 'high-voltage'],
+  calendar: ['🗓️', 'spiral-calendar'],
   // The home screen's add menu: four unlike things to add, one glyph each.
-  garage: '🏠',
-  vehicle: '🚗',
-  logbook: '📒',
-  sparkles: '✨',
+  garage: ['🏠', 'house'],
+  vehicle: ['🚗', 'automobile'],
+  logbook: ['📒', 'ledger'],
+  sparkles: ['✨', 'sparkles'],
+  // The phone's vehicle form keeps the spanner for its catch-all type.
+  wrench: ['🔧', 'wrench'],
 };
 
-/**
- * Twemoji's filenames are the code points in hex, joined by `-`.
- *
- * The variation selector (`fe0f`) that makes an emoji render in colour is usually left out of the
- * filename but kept for a few, so the name with it is tried first and the name without it second.
- */
-function candidates(emoji) {
-  const points = [...emoji].map((char) => char.codePointAt(0).toString(16));
-  const withSelector = points.join('-');
-  const withoutSelector = points.filter((point) => point !== 'fe0f').join('-');
-  return withSelector === withoutSelector ? [withSelector] : [withSelector, withoutSelector];
-}
+const response = await fetch(`${API}?icons=${Object.values(EMOJI).map(([, name]) => name).join(',')}`);
+if (!response.ok) throw new Error(`Iconify answered ${response.status}`);
+const set = await response.json();
+if (set.not_found?.length) throw new Error(`No Fluent emoji named ${set.not_found.join(', ')}`);
 
-async function fetchSvg(emoji) {
-  for (const name of candidates(emoji)) {
-    const response = await fetch(`${base}/${name}.svg`);
-    if (response.ok) return { name, svg: await response.text() };
-  }
-  throw new Error(`No Twemoji SVG for ${emoji} (tried ${candidates(emoji).join(', ')})`);
+/**
+ * Every icon's ids get its own prefix: the web inlines many of these into one document, where two
+ * icons' gradients sharing an id would paint each other.
+ */
+const scopeIds = (body, key) =>
+  body.replace(/\b(id="|url\(#|href="#)([\w-]+)/g, (_, lead, id) => `${lead}${key}-${id}`);
+
+/**
+ * The phone gets no SVG filters at all. react-native-svg 15 cannot draw Fluent's inner shadows (no
+ * `feComposite`: the shadow spills outside its shape as a halo), its Android renderer crashes the
+ * app on Fluent's `feBlend`, which has no `mode`, and it runs filters per pixel on the CPU, in a long
+ * list. So inner-shadowed shapes are kept plain and the soft glows, which are only blurred
+ * highlights, are dropped. At 20pt the difference from the web's art is hard to see.
+ */
+function withoutFilters(body) {
+  const glows = new Set();
+  return body
+    .replace(/<filter id="([^"]+)"[\s\S]*?<\/filter>/g, (filter, id) => {
+      if (!filter.includes('feComposite')) glows.add(id);
+      return '';
+    })
+    .replace(/<g filter="url\(#([^)]+)\)">[\s\S]*?<\/g>/g, (group, id) => (glows.has(id) ? '' : group))
+    .replace(/ filter="url\(#[^)]+\)"/g, '');
 }
 
 const entries = [];
 const mobileEntries = [];
-for (const [key, emoji] of Object.entries(EMOJI)) {
-  const { name, svg } = await fetchSvg(emoji);
-  const viewBox = /viewBox="([^"]+)"/.exec(svg)?.[1];
-  const body = /<svg[^>]*>([\s\S]*)<\/svg>/.exec(svg)?.[1];
-  if (!viewBox || !body) throw new Error(`Unexpected SVG shape for ${emoji} (${name}.svg)`);
-  const art = `{ viewBox: '${viewBox}', body: "${body.replaceAll('"', "'").trim()}" }`;
-  entries.push(`  ${key}: ${art},`);
-  mobileEntries.push(`  '${emoji}': ${art},`);
+for (const [key, [emoji, name]] of Object.entries(EMOJI)) {
+  const icon = set.icons[name];
+  const viewBox = `${icon.left ?? 0} ${icon.top ?? 0} ${icon.width ?? set.width} ${icon.height ?? set.height}`;
+  const body = scopeIds(icon.body, key);
+  const art = (svg) => `{ viewBox: '${viewBox}', body: "${svg.replaceAll('"', "'").trim()}" }`;
+  entries.push(`  ${key}: ${art(body)},`);
+  mobileEntries.push(`  '${emoji}': ${art(withoutFilters(body))},`);
 }
 
 const output = `/**
  * Emoji set — GENERATED, do not edit.
  *
- * Twemoji ${VERSION} (https://github.com/jdecked/twemoji), graphics CC-BY 4.0 — attribution is in
+ * Fluent Emoji, Color (https://github.com/microsoft/fluentui-emoji), MIT — attribution is in
  * \`ATTRIBUTION.md\`. Run \`pnpm --filter @vehicle-os/web emoji\` after changing the list in
  * \`scripts/generate-emoji.mjs\`.
  *
- * Flat colour artwork, inlined. Unlike \`Icon\`, these do not take \`currentColor\`: the whole point
+ * Colour artwork, inlined. Unlike \`Icon\`, these do not take \`currentColor\`: the whole point
  * is that a fuel pump and a receipt look different from one another.
  */
 
@@ -153,9 +166,11 @@ export const EMOJI_NAMES = Object.keys(EMOJI) as EmojiName[];
 const mobileOutput = `/**
  * Emoji artwork — GENERATED by \`apps/web/scripts/generate-emoji.mjs\`, do not edit.
  *
- * Twemoji ${VERSION} (https://github.com/jdecked/twemoji), graphics CC-BY 4.0 — attribution is in
+ * Fluent Emoji, Color (https://github.com/microsoft/fluentui-emoji), MIT — attribution is in
  * \`apps/web/ATTRIBUTION.md\`. The same artwork the web draws, keyed by the character, so an entry
- * on the phone wears the glyph it wears on the web rather than the phone's own emoji font.
+ * on the phone wears the glyph it wears on the web rather than the phone's own emoji font. The
+ * SVG filters (inner shadows, soft glows) are left out: react-native-svg cannot draw them safely
+ * (see the generator).
  */
 
 export const EMOJI_ART: Readonly<Record<string, { viewBox: string; body: string }>> = {

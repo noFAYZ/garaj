@@ -159,30 +159,3 @@ export async function savePlanned(entry: PlannedEntry): Promise<void> {
     ...(entry.due ? { dueDate: entry.due } : {}),
   });
 }
-
-/** "€", "$", "£": how a currency is written in front of an amount. */
-export function symbolOf(currency: string): string {
-  try {
-    return (
-      new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency,
-        currencyDisplay: 'narrowSymbol',
-      })
-        .formatToParts(0)
-        .find((part) => part.type === 'currency')?.value ?? currency
-    );
-  } catch {
-    return currency;
-  }
-}
-
-/**
- * The currency a typed amount is in: "€62" is euros whatever the vehicle counts in. A bare "$"
- * is the vehicle's own dollar when it counts in one, else the US dollar; no sign at all is the
- * vehicle's currency.
- */
-export function currencyOfLine(written: string | null, vehicleCurrency: string): string | null {
-  if (written === '$') return symbolOf(vehicleCurrency).includes('$') ? vehicleCurrency : 'USD';
-  return written;
-}

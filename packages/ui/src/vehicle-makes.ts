@@ -280,3 +280,32 @@ export function domainForMake(make: string | null | undefined): string | null {
 export function makesForKind(kind: MakeKind): VehicleMake[] {
   return VEHICLE_MAKES.filter((make) => make.kinds.includes(kind));
 }
+
+/**
+ * The type a make answers on its own: a maker of only cars, or only motorcycles. One that builds
+ * both, or anything else, leaves the question open.
+ */
+export function typeForMake(make: string | null | undefined): 'CAR' | 'MOTORCYCLE' | null {
+  const kinds = make ? BY_NAME.get(make.trim().toLowerCase())?.kinds : undefined;
+  if (kinds?.length !== 1) return null;
+  return kinds[0] === 'car' ? 'CAR' : kinds[0] === 'moto' ? 'MOTORCYCLE' : null;
+}
+
+/**
+ * Which slice of the make list a vehicle type draws from. Vans and RVs are built by car makers,
+ * ATVs by motorcycle makers, so they borrow those lists rather than keep their own.
+ */
+export function makeKindFor(type: string): MakeKind {
+  switch (type) {
+    case 'MOTORCYCLE':
+    case 'SCOOTER':
+    case 'ATV':
+      return 'moto';
+    case 'BICYCLE':
+    case 'BOAT':
+    case 'TRAILER':
+      return 'other';
+    default:
+      return 'car';
+  }
+}

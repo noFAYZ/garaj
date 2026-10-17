@@ -112,16 +112,21 @@ export class CameraDeniedError extends Error {
  *
  * Required at the moment of use for the same reason as the document picker. Quality 0.8 re-encodes
  * to JPEG, so an iPhone's HEIC arrives as something every screen can draw; EXIF is not asked for,
- * because location in it is never shared unless someone opts in (§31).
+ * because location in it is never shared unless someone opts in (§31). A receipt that is going to
+ * be read asks for less: still sharp to read, and small enough to send to be read.
  */
-export async function pickPhoto(source: 'camera' | 'library'): Promise<PickedFile | null> {
-  return (await pickPhotos(source, 1))[0] ?? null;
+export async function pickPhoto(
+  source: 'camera' | 'library',
+  quality = 0.8,
+): Promise<PickedFile | null> {
+  return (await pickPhotos(source, 1, quality))[0] ?? null;
 }
 
 /** Up to `limit` at once from the library; the camera always gives one. */
 export async function pickPhotos(
   source: 'camera' | 'library',
   limit: number,
+  quality = 0.8,
 ): Promise<PickedFile[]> {
   let picker: ImagePickerModule;
   try {
@@ -133,7 +138,7 @@ export async function pickPhotos(
 
   const options: ImageOptions = {
     mediaTypes: ['images'],
-    quality: 0.8,
+    quality,
     exif: false,
     ...(source === 'library' && limit > 1
       ? { allowsMultipleSelection: true, selectionLimit: limit }
@@ -163,6 +168,17 @@ export async function pickPhotos(
       mimeType,
       size: asset.fileSize ?? 0,
     };
+  });
+}
+
+/** A file on the phone as base64, without the data-URL prefix: how a photo goes to be read. */
+export async function readBase64(uri: string): Promise<string> {
+  const blob = await (await fetch(uri)).blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(new Error('The photo could not be read.'));
+    reader.readAsDataURL(blob);
   });
 }
 

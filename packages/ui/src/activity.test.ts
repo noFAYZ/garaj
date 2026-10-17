@@ -35,7 +35,7 @@ describe('groupByMonth', () => {
 });
 
 describe('odometerDeltas', () => {
-  it('measures each rise from the previous reading, skipping gaps, drops and unit changes', () => {
+  it('measures each rise from the previous reading, skipping gaps and unit changes', () => {
     const deltas = odometerDeltas([
       entry('d', '2026-09-12', 42_800),
       entry('c', '2026-09-03', null),
@@ -44,6 +44,15 @@ describe('odometerDeltas', () => {
       entry('a', '2026-08-14', 41_900),
     ]);
     expect([...deltas]).toEqual([['d', 490]]);
+  });
+
+  it('keeps a drop as a negative change, and an unchanged reading as none', () => {
+    const deltas = odometerDeltas([
+      entry('c', '2026-09-20', 41_880),
+      entry('b', '2026-09-12', 41_880),
+      entry('a', '2026-09-03', 42_000),
+    ]);
+    expect([...deltas]).toEqual([['b', -120]]);
   });
 });
 

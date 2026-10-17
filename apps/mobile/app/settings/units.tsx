@@ -162,7 +162,7 @@ export default function UnitsScreen() {
           ) : null}
         </Row>
         <Row
-          icon="globe-outline"
+          icon="time-outline"
           label="Time zone"
           hint={
             me && phoneZone && phoneZone !== me.timezone

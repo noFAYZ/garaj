@@ -103,6 +103,37 @@ describe('ai', () => {
     });
   });
 
+  it('reads a receipt into a quick entry, held to the event contract', async () => {
+    ai.say({
+      text: null,
+      calls: [
+        {
+          name: 'fill_entry',
+          args: { total: '64.70', currency: 'usd', litres: 41.2, vendor: 'BP', work: 'Unleaded' },
+        },
+      ],
+    });
+
+    const response = await as(context, alice).post('/api/v1/ai/entry-draft', {
+      kind: 'fuel',
+      currency: 'USD',
+      attachments: [{ mimeType: 'image/jpeg', data: 'aGVsbG8=' }],
+    });
+
+    expect(response.status).toBe(200);
+    expect(ai.seen.at(-1)?.toolNames).toEqual(['fill_entry']);
+    // A fill-up has no work line, so the note stays the person's.
+    expect(response.body).toEqual({ amount: 64.7, currency: 'USD', litres: 41.2, provider: 'BP' });
+  });
+
+  it('refuses a quick entry with no photo to read', async () => {
+    const response = await as(context, alice).post('/api/v1/ai/entry-draft', {
+      kind: 'fuel',
+      attachments: [],
+    });
+    expect(response.status).toBe(400);
+  });
+
   it('answers straight from the model when it needs no tools', async () => {
     ai.say({ text: 'You have one vehicle on record.', calls: [] });
 

@@ -21,7 +21,7 @@ import {
   type TripPurpose,
   type VehicleType,
 } from '@vehicle-os/domain';
-import { stampForDay } from '@vehicle-os/ui';
+import { currencyOfLine, stampForDay } from '@vehicle-os/ui';
 import { Check } from 'lucide-react';
 import Link from 'next/link';
 import { useState, type ReactNode } from 'react';
@@ -42,7 +42,7 @@ import { scheduleEmoji } from '@/components/vehicle/schedule-row';
 import { api } from '@/lib/api';
 import { eventEmoji } from '@/lib/event-emoji';
 import { formatDate, formatMoney, humanise, toMinorUnits } from '@/lib/format';
-import { ATTACH_TYPES, attachFiles, currencyOfLine, saveDone, savePlanned } from '@/lib/save-entry';
+import { ATTACH_TYPES, attachFiles, saveDone, savePlanned } from '@/lib/save-entry';
 import { useVehicleUnits } from '@/lib/vehicle-units';
 
 export type ProposalStatus = 'open' | 'saved' | 'cancelled';

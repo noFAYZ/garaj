@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Albert_Sans,Urbanist } from 'next/font/google';
+import { Albert_Sans, Cascadia_Mono } from 'next/font/google';
 import type { ReactNode } from 'react';
 import { Providers } from './providers';
 import { AppShell } from '@/components/app-shell';
@@ -14,6 +14,16 @@ import './globals.css';
 const urbanist = Albert_Sans({
   subsets: ['latin'],
   variable: '--font-urbanist',
+  display: 'swap',
+});
+
+/*
+ * Figures: Cascadia Mono, the file the phone bundles too, so a number is the same shape on every
+ * screen. Left to the system's monospace it was Cascadia on Windows and SF Mono on a Mac.
+ */
+const mono = Cascadia_Mono({
+  subsets: ['latin'],
+  variable: '--font-figures',
   display: 'swap',
 });
 
@@ -35,7 +45,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" className={urbanist.variable} suppressHydrationWarning>
+    <html
+      lang="en"
+      data-theme="dark"
+      className={`${urbanist.variable} ${mono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

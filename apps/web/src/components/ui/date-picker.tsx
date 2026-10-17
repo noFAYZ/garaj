@@ -563,11 +563,14 @@ export function DatePicker({
   className,
   triggerClassName,
   hideIcon = false,
+  shown,
 }: PickerBase & {
   /** `YYYY-MM-DD`, or '' for none. */
   value: Day;
   onChange: (value: Day) => void;
   required?: boolean;
+  /** The day as the trigger says it, where the date in full is too long: "Today", "Sat 3 Oct". */
+  shown?: (day: Day) => string;
 }) {
   const [open, setOpen] = useState(false);
   const onClosed = useCallback(() => setOpen(false), []);
@@ -629,7 +632,7 @@ export function DatePicker({
             date ? 'text-foreground' : 'text-muted-foreground',
           )}
         >
-          {date ? SHOWN.format(date) : placeholder}
+          {date ? (shown?.(value) ?? SHOWN.format(date)) : placeholder}
         </span>
       </button>
 

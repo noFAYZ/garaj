@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { activityQuery, documentsQuery } from '@vehicle-os/api-client/react';
-import { AddSheet, type QuickContext } from '@/components/add-sheet';
+import type { ActivityMode, QuickAction } from '@/components/add-activity';
+import { AddSheet } from '@/components/add-sheet';
 import { Dock, type DockAction, type DockItem } from '@/components/dock';
-import type { QuickAction } from '@/components/quick-entry-form';
-import { expiry } from '@/components/vehicle-documents';
+import { pressingPapers } from '@/components/vehicle-documents';
 import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { haptic } from '@/lib/motion';
@@ -19,10 +18,10 @@ export type VehicleTab = 'activity' | 'planned' | 'statistics' | 'documents';
  */
 const TABS = [
   // The web's strip wears the same four icons.
-  { key: 'activity', label: 'Logs', icon: 'timeline' },
-  { key: 'planned', label: 'Reminders', icon: 'calendar' },
-  { key: 'statistics', label: 'Stats', icon: 'chart' },
-  { key: 'documents', label: 'Docs', icon: 'document' },
+  { key: 'activity', label: 'Logs', icon: 'logbook', activeIcon: 'logbookActive' },
+  { key: 'planned', label: 'Reminders', icon: 'reminder', activeIcon: 'reminderActive' },
+  { key: 'statistics', label: 'Stats', icon: 'analytics', activeIcon: 'analyticsActive' },
+  { key: 'documents', label: 'Docs', icon: 'papers', activeIcon: 'papersActive' },
 ] as const satisfies readonly (DockItem & { key: VehicleTab })[];
 
 /**
@@ -42,7 +41,6 @@ const TABS = [
 export function VehicleDock({
   vehicleId,
   vehicleName,
-  quickContext,
   quickRequest,
   onQuickHandled,
   value,
@@ -50,18 +48,29 @@ export function VehicleDock({
 }: {
   vehicleId: string;
   vehicleName: string | undefined;
-  /** The unit, currency and last reading a quick entry needs; absent until the vehicle lands. */
-  quickContext?: QuickContext;
   /** Set by the hero's odometer press, to open the sheet straight on that form. */
   quickRequest?: QuickAction | null;
   onQuickHandled?: () => void;
   value: VehicleTab;
   onChange: (value: VehicleTab) => void;
 }) {
-  const router = useRouter();
-  const [sheet, setSheet] = useState<{ file: PickedFile | null; quick: QuickAction | null } | null>(
-    null,
-  );
+  const [sheet, setSheet] = useState<{
+    file: PickedFile | null;
+    quick: QuickAction | null;
+    mode?: ActivityMode;
+  } | null>(null);
+
+  /*
+   * Where the dock says you are. It moves the moment a place is pressed, so the wash, the label and
+   * the icon's pop run while the section is still being built behind it; when the screen moves on
+   * its own (the hero's shortcuts), it follows `value`.
+   */
+  const [shown, setShown] = useState(value);
+  const [seenValue, setSeenValue] = useState(value);
+  if (value !== seenValue) {
+    setSeenValue(value);
+    setShown(value);
+  }
 
   /*
    * A press on the hero's odometer opens this sheet on that form. Adjusted during render rather
@@ -85,10 +94,9 @@ export function VehicleDock({
     (item) => item.kind === 'SCHEDULE' && item.schedule.status === 'DUE_SOON',
   ).length;
 
-  const docs = (documents.data?.data ?? []).filter((document) => document.uploadedAt !== null);
-  const docStates = docs.map(expiry);
-  const expired = docStates.filter((state) => state?.tone === 'destructive').length;
-  const expiring = docStates.filter((state) => state?.tone === 'warning').length;
+  const papers = pressingPapers(
+    (documents.data?.data ?? []).filter((document) => document.uploadedAt !== null),
+  );
 
   /*
    * What is waiting behind a section, as the web's count on its icon — so the section you are not
@@ -98,7 +106,7 @@ export function VehicleDock({
     activity: 0,
     planned: late + soon,
     statistics: 0,
-    documents: expired + expiring,
+    documents: papers.expired + papers.soon,
   };
 
   const camera = async () => {
@@ -114,41 +122,37 @@ export function VehicleDock({
 
   /*
    * Bound to this vehicle, the hand skips the question every form starts with. The pump-side three
-   * finish inside the sheet without leaving the vehicle; until the vehicle has loaded (and with it
-   * its unit and currency) they go to the full form instead of guessing.
+   * and a reminder finish inside the sheet without leaving the vehicle.
    */
-  const quick = (kind: QuickAction, eventType: string) => () =>
-    quickContext
-      ? setSheet({ file: null, quick: kind })
-      : router.push({ pathname: '/add/done', params: { vehicleId, kind: eventType } });
+  const quick = (kind: QuickAction) => () => setSheet({ file: null, quick: kind });
   const actions: DockAction[] = [
     {
       key: 'fuel',
       emoji: '⛽',
       label: 'Fill-up',
       hint: 'Litres, cost, odometer',
-      onPress: quick('fuel', 'FUEL'),
+      onPress: quick('fuel'),
     },
     {
       key: 'odometer',
       emoji: '🗺️',
       label: 'Odometer reading',
       hint: 'Just the number',
-      onPress: quick('odometer', 'NOTE'),
+      onPress: quick('odometer'),
     },
     {
       key: 'service',
-      emoji: '🔧',
+      emoji: '🧰',
       label: 'Service done',
       hint: 'What was done, and its cost',
-      onPress: quick('service', 'MAINTENANCE'),
+      onPress: quick('service'),
     },
     {
       key: 'planned',
       emoji: '🗓️',
       label: 'Reminder',
       hint: 'Once, or every so often',
-      onPress: () => router.push({ pathname: '/add/planned', params: { vehicleId } }),
+      onPress: () => setSheet({ file: null, quick: null, mode: 'planned' }),
     },
     {
       key: 'receipt',
@@ -176,14 +180,17 @@ export function VehicleDock({
             ? late > 0
               ? 'destructive'
               : 'warning'
-            : expired > 0
+            : papers.expired > 0
               ? 'destructive'
               : 'warning',
         a11yLabel:
           counts[tab.key] > 0 ? `${tab.label}, ${counts[tab.key]} need attention` : undefined,
       }))}
-      activeKey={value}
-      onSelect={(key) => onChange(key as VehicleTab)}
+      activeKey={shown}
+      onSelect={(key) => {
+        setShown(key as VehicleTab);
+        onChange(key as VehicleTab);
+      }}
       actions={actions}
       add={{
         a11yLabel: vehicleName ? `Add to ${vehicleName}` : 'Add to this vehicle',
@@ -196,9 +203,9 @@ export function VehicleDock({
         <AddSheet
           initialFile={sheet.file}
           initialQuick={sheet.quick}
+          initialMode={sheet.mode ?? null}
           vehicleId={vehicleId}
           subject={vehicleName}
-          quickContext={quickContext}
           onClose={() => {
             setSheet(null);
             onQuickHandled?.();

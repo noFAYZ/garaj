@@ -1,5 +1,5 @@
 import { composite, DARK_TOKENS, LIGHT_TOKENS, oklchToHex, toNativeTokens } from '@vehicle-os/ui';
-import { useColorScheme, type TextStyle } from 'react-native';
+import { StyleSheet, useColorScheme, type TextStyle } from 'react-native';
 
 /**
  * The phone's half of "Precision / Editorial", the web's design system.
@@ -36,6 +36,11 @@ export type Theme = { [K in keyof typeof DARK]: K extends 'dark' ? boolean : str
 
 const LIGHT: Theme = {
   ...SHARED_LIGHT,
+  // The phone's page is plain white (user asked); the web keeps its warm paper. Resting cards still
+  // mix against the paper, so they read as a faint warm tint on the white.
+  background: '#ffffff',
+  // Lighter than the web's muted (0.925), to sit softly on the white page (user asked).
+  muted: oklchToHex('oklch(0.96 0.006 78)'),
   card: resting(LIGHT_TOKENS),
   cardRaised: SHARED_LIGHT.card,
   hairline: 'rgba(40,30,20,0.08)',
@@ -87,11 +92,11 @@ export const typeScale = {
 
 /**
  * Figures — odometers, money, counts — in mono with tabular digits, as the web sets every number:
- * a reading that changes in place does not jitter, and a column of them lines up. `GeistMono` is a
- * role, resolved to the right weight's file by the patch in `fonts.tsx`.
+ * a reading that changes in place does not jitter, and a column of them lines up. Cascadia Mono, the
+ * file the web loads too; `Mono` is a role, resolved to the right weight's file by `fonts.tsx`.
  */
 export const figure: TextStyle = {
-  fontFamily: 'GeistMono',
+  fontFamily: 'Mono',
   fontVariant: ['tabular-nums'],
   letterSpacing: -0.3,
 };
@@ -117,3 +122,25 @@ export const rimmed = (theme: Theme) => ({
   borderColor: theme.hairline,
   borderTopColor: theme.dark ? theme.rim : theme.hairline,
 });
+
+/**
+ * A card on a detail page: white and lifted by a soft shadow by day; at night the resting card with
+ * a hairline edge and a little of the page through it.
+ */
+export const cardSurface = (theme: Theme) =>
+  theme.dark
+    ? {
+        backgroundColor: `${theme.card}E8`,
+        borderColor: theme.hairline,
+        borderWidth: StyleSheet.hairlineWidth,
+      }
+    : {
+        backgroundColor: theme.cardRaised,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.hairline,
+        shadowColor: theme.shadow,
+        shadowOpacity: 0.06,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 5 },
+        elevation: 2,
+      };

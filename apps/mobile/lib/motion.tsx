@@ -16,12 +16,23 @@ import {
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type PressableProps,
   type StyleProp,
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import Svg, {
+  Circle,
+  Defs,
+  Line,
+  LinearGradient,
+  Path,
+  Rect,
+  Stop,
+  Text as SvgText,
+} from 'react-native-svg';
 import { figure, useTheme } from './theme';
 
 /**
@@ -622,14 +633,257 @@ export function Ring({
   );
 }
 
+/*
+ * The web's 270° gauge (`components/ui/instruments.tsx`), point for point: zero at the bottom
+ * left, full at the bottom right, the open quarter at the bottom for the readout. Drawn on the
+ * web's 200-unit box so the two read the same at any size.
+ */
+const GAUGE_START = 135;
+const GAUGE_SWEEP = 270;
+const GAUGE_R = 84;
+const GAUGE_LENGTH = (GAUGE_R * GAUGE_SWEEP * Math.PI) / 180;
+const polar = (r: number, deg: number) => {
+  const rad = (deg * Math.PI) / 180;
+  return [100 + r * Math.cos(rad), 100 + r * Math.sin(rad)] as const;
+};
+const gaugeArc = (from: number, to: number) => {
+  const [x0, y0] = polar(GAUGE_R, from);
+  const [x1, y1] = polar(GAUGE_R, to);
+  return `M ${x0} ${y0} A ${GAUGE_R} ${GAUGE_R} 0 ${to - from > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+};
+const GAUGE_TRACK = gaugeArc(GAUGE_START, GAUGE_START + GAUGE_SWEEP);
+const GAUGE_TICKS = Array.from({ length: 41 }, (_, i) => GAUGE_START + (GAUGE_SWEEP * i) / 40);
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+
+/**
+ * A needle gauge — the web's `Gauge`. `progress` is 0–1 of the dial and pins at the stops; the
+ * needle turns on whatever drives it, the native driver included. `color` draws the reading's arc
+ * behind the needle, which is an SVG prop and so needs a JS-driven `progress` (`useIgnition`).
+ * `redlineFrom` paints the last stretch of the track; `marks` sets figures round the dial, evenly
+ * from zero to full, with the major ticks under them. `bare` drops the ticks and draws the rest
+ * heavier, for a dial small enough to sit beside its figure.
+ *
+ * The drawing is decoration: `label` is what a screen reader hears, and `children` — the readout
+ * in the open quarter — is real text for everyone else.
+ */
+export function Gauge({
+  progress,
+  size = 128,
+  color,
+  redlineFrom,
+  marks,
+  bare = false,
+  label,
+  children,
+}: {
+  progress: Animated.Value | Animated.AnimatedInterpolation<number>;
+  size?: number;
+  color?: string;
+  redlineFrom?: number;
+  marks?: readonly string[];
+  bare?: boolean;
+  label: string;
+  children?: ReactNode;
+}) {
+  const theme = useTheme();
+  const every = marks && marks.length > 1 ? 40 / (marks.length - 1) : 10;
+  // On the 200-unit box: a bare dial is drawn at a fifth of the size, so its lines are heavier.
+  const weight = bare ? 24 : 5;
+  const turn = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [`${GAUGE_START}deg`, `${GAUGE_START + GAUGE_SWEEP}deg`],
+    extrapolate: 'clamp',
+  });
+  return (
+    <View
+      accessible
+      accessibilityRole="image"
+      accessibilityLabel={label}
+      style={{ width: size, height: size }}
+    >
+      <Svg width={size} height={size} viewBox="0 0 200 200" style={StyleSheet.absoluteFill}>
+        {(bare ? [] : GAUGE_TICKS).map((deg, i) => {
+          const major = i % every === 0;
+          const [x1, y1] = polar(major ? 64 : 69, deg);
+          const [x2, y2] = polar(74, deg);
+          return (
+            <Line
+              key={i}
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke={major ? theme.mutedForeground : theme.borderStrong}
+              strokeWidth={major ? 1.75 : 1}
+              strokeLinecap="round"
+            />
+          );
+        })}
+        {marks?.map((mark, i) => {
+          const [x, y] = polar(50, GAUGE_START + (GAUGE_SWEEP * i) / (marks.length - 1));
+          const red = redlineFrom !== undefined && i / (marks.length - 1) >= redlineFrom;
+          return (
+            <SvgText
+              key={mark}
+              x={x}
+              y={y + 5}
+              fontSize={14}
+              fontFamily="CascadiaMono_600SemiBold"
+              textAnchor="middle"
+              fill={red ? theme.destructive : theme.mutedForeground}
+            >
+              {mark}
+            </SvgText>
+          );
+        })}
+        <Path
+          d={GAUGE_TRACK}
+          fill="none"
+          stroke={theme.muted}
+          strokeWidth={weight}
+          strokeLinecap="round"
+        />
+        {redlineFrom !== undefined ? (
+          <Path
+            d={gaugeArc(GAUGE_START + GAUGE_SWEEP * redlineFrom, GAUGE_START + GAUGE_SWEEP)}
+            fill="none"
+            stroke={theme.destructive}
+            strokeOpacity={0.55}
+            strokeWidth={weight}
+            strokeLinecap="round"
+          />
+        ) : null}
+        {color ? (
+          <AnimatedPath
+            d={GAUGE_TRACK}
+            fill="none"
+            stroke={color}
+            strokeWidth={weight}
+            strokeLinecap="round"
+            strokeDasharray={`${GAUGE_LENGTH} ${GAUGE_LENGTH}`}
+            strokeDashoffset={progress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [GAUGE_LENGTH, 0],
+              extrapolate: 'clamp',
+            })}
+          />
+        ) : null}
+      </Svg>
+      {/* The needle turns as a view, so a native-driven reading turns it on the UI thread. */}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { transform: [{ rotate: turn }] }]}
+      >
+        <Svg width={size} height={size} viewBox="0 0 200 200">
+          <Line
+            x1={100}
+            y1={100}
+            x2={158}
+            y2={100}
+            stroke={theme.foreground}
+            strokeWidth={bare ? 14 : 2.5}
+            strokeLinecap="round"
+          />
+          <Circle
+            cx={100}
+            cy={100}
+            r={bare ? 20 : 7}
+            fill={bare ? theme.foreground : theme.background}
+            stroke={theme.foreground}
+            strokeWidth={bare ? 0 : 2}
+          />
+        </Svg>
+      </Animated.View>
+      {children ? (
+        <View pointerEvents="none" style={[styles.gaugeReadout, { bottom: size * 0.03 }]}>
+          {children}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** The web's `gauge-ignite` curve: a cluster's needle has weight, slow off the stop and slow on. */
+const IGNITE = Easing.bezier(0.45, 0, 0.2, 1);
+
+/**
+ * A gauge's progress for its first reading, the way a cluster checks itself — the web's
+ * `gauge-ignite`: from 280ms, the needle sweeps to the stop and back to the reading over 1700ms,
+ * and the thumb feels it touch the stop. A later reading glides there. JS-driven, because the arc
+ * that follows the needle is an SVG prop; one gauge a screen.
+ */
+export function useIgnition(fraction: number) {
+  const reduce = useReduceMotion();
+  const target = Math.max(0, Math.min(1, fraction));
+  const [progress] = useState(() => new Animated.Value(reduce ? target : 0));
+  const lit = useRef(reduce);
+
+  useEffect(() => {
+    if (reduce) {
+      progress.setValue(target);
+      return;
+    }
+    if (lit.current) {
+      const glide = Animated.timing(progress, {
+        toValue: target,
+        duration: duration.dial,
+        easing: ease.out,
+        useNativeDriver: false,
+      });
+      glide.start();
+      return () => glide.stop();
+    }
+    lit.current = true;
+    let settle: Animated.CompositeAnimation | null = null;
+    const sweep = Animated.timing(progress, {
+      toValue: 1,
+      duration: 765,
+      delay: 280,
+      easing: IGNITE,
+      useNativeDriver: false,
+    });
+    sweep.start(({ finished }) => {
+      if (!finished) return;
+      haptic.light();
+      settle = Animated.timing(progress, {
+        toValue: target,
+        duration: 935,
+        easing: IGNITE,
+        useNativeDriver: false,
+      });
+      settle.start();
+    });
+    return () => {
+      sweep.stop();
+      settle?.stop();
+    };
+  }, [progress, target, reduce]);
+
+  return progress;
+}
+
 /**
  * A scroll position for the collapsing large-title header: hand `onScroll` to an
  * `Animated.ScrollView` / `FlatList` / `SectionList`, and `y` to `CompactHeader`.
+ *
+ * `listener` hears each offset on the JS thread — for a haptic, never for drawing, which rides `y`.
+ * Whether there is one is settled on the first render.
  */
-export function useScrollY() {
+export function useScrollY(listener?: (y: number) => void) {
   const [y] = useState(() => new Animated.Value(0));
+  const heard = useRef(listener);
+  useEffect(() => {
+    heard.current = listener;
+  });
   const [onScroll] = useState(() =>
-    Animated.event([{ nativeEvent: { contentOffset: { y } } }], { useNativeDriver: true }),
+    Animated.event([{ nativeEvent: { contentOffset: { y } } }], {
+      useNativeDriver: true,
+      listener: listener
+        ? (event: NativeSyntheticEvent<NativeScrollEvent>) =>
+            heard.current?.(event.nativeEvent.contentOffset.y)
+        : undefined,
+    }),
   );
   return { y, onScroll };
 }
@@ -654,4 +908,5 @@ export const haptic = {
 
 const styles = StyleSheet.create({
   odometer: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start' },
+  gaugeReadout: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
 });

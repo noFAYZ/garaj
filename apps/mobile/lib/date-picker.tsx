@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { localDay } from '@vehicle-os/ui';
@@ -60,6 +60,11 @@ export interface DateFieldProps {
   max?: string;
   label?: string;
   placeholder?: string;
+  /**
+   * Draws the trigger in place of the field's own — a chip in a row of facts. Given the words the
+   * field would say and the press that opens the calendar.
+   */
+  trigger?: (said: string, open: () => void) => ReactNode;
 }
 
 /** One day: a trigger that reads as a date, and the calendar behind it. */
@@ -70,16 +75,17 @@ export function DateField({
   max,
   label = 'Date',
   placeholder = 'Pick a date',
+  trigger,
 }: DateFieldProps) {
   const [open, setOpen] = useState(false);
+  const said = value ? TRIGGER_LABEL.format(asDate(value)) : placeholder;
   return (
     <>
-      <Trigger
-        text={value ? TRIGGER_LABEL.format(asDate(value)) : placeholder}
-        muted={!value}
-        label={label}
-        onPress={() => setOpen(true)}
-      />
+      {trigger ? (
+        trigger(said, () => setOpen(true))
+      ) : (
+        <Trigger text={said} muted={!value} label={label} onPress={() => setOpen(true)} />
+      )}
       {open ? (
         <Calendar
           start={value || localDay()}

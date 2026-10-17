@@ -158,6 +158,45 @@ export const VehicleDraft = Type.Object({
 });
 export type VehicleDraft = Static<typeof VehicleDraft>;
 
+/** The quick entries a photo can fill: a fill-up's receipt, a service's invoice, a dashboard. */
+export const ENTRY_DRAFT_KINDS = ['fuel', 'service', 'odometer'] as const;
+export type EntryDraftKind = (typeof ENTRY_DRAFT_KINDS)[number];
+
+/**
+ * A quick entry's photo, to be read into its fields. The vehicle's currency and unit go with it,
+ * for a receipt that prints only "Rs" or a dashboard that shows no unit.
+ */
+export const DraftEntry = Type.Object(
+  {
+    kind: Type.Union(ENTRY_DRAFT_KINDS.map((kind) => Type.Literal(kind))),
+    currency: Type.Optional(CurrencyCode),
+    unit: Type.Optional(DistanceUnit),
+    attachments: Type.Array(AiAttachment, { minItems: 1, maxItems: 2 }),
+  },
+  { additionalProperties: false },
+);
+export type DraftEntry = Static<typeof DraftEntry>;
+
+/**
+ * What the photo shows, in the quick entry's terms and already inside the event contract's
+ * bounds. Anything not shown is absent: the form fills only what was read.
+ */
+export const EntryDraft = Type.Object({
+  /** The total paid, in major units as printed: 64.7, not cents. */
+  amount: Type.Optional(Type.Number()),
+  currency: Type.Optional(CurrencyCode),
+  /** Fuel bought, in litres; a receipt in gallons is converted. */
+  litres: Type.Optional(Type.Number()),
+  /** Who was paid: the station or the workshop. */
+  provider: Type.Optional(Type.String()),
+  /** The day of the purchase or the work. */
+  date: Type.Optional(IsoDate),
+  odometer: Type.Optional(Type.Integer()),
+  /** What was done or bought, in a few words: "Oil and filter change". */
+  note: Type.Optional(Type.String()),
+});
+export type EntryDraft = Static<typeof EntryDraft>;
+
 /** A vehicle already identified, to look up the factory specs nobody typed. */
 export const LookUpVehicle = Type.Object(
   {

@@ -2,15 +2,16 @@
 
 Third-party artwork shipped in this app.
 
-## Twemoji
+## Fluent Emoji
 
-The emoji in activity entries are [Twemoji](https://github.com/jdecked/twemoji) 15.1.0, the
-community-maintained continuation of Twitter's set.
+The emoji in activity entries are Microsoft's [Fluent Emoji](https://github.com/microsoft/fluentui-emoji),
+the "Color" style, taken through [Iconify](https://iconify.design/).
 
-- Graphics: **CC-BY 4.0** (https://creativecommons.org/licenses/by/4.0/) — © Twitter, Inc and other
-  contributors. Attribution is required, which is what this file is.
-- The SVGs are inlined into `src/components/emoji.tsx` by `scripts/generate-emoji.mjs`
-  (`pnpm --filter @vehicle-os/web emoji`); nothing is fetched at runtime.
+- **MIT** licence — Copyright (c) Microsoft Corporation. Full text:
+  https://github.com/microsoft/fluentui-emoji/blob/main/LICENSE
+- The SVGs are inlined into `src/components/emoji.tsx` and `apps/mobile/lib/emoji-art.ts` by
+  `scripts/generate-emoji.mjs` (`pnpm --filter @vehicle-os/web emoji`); nothing is fetched at
+  runtime.
 
 ## Solar icons
 

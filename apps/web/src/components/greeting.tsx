@@ -127,7 +127,7 @@ export function Greeting({
 
       <div className="relative grid gap-x-6 gap-y-4 md:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0 self-center">
-          <p className="font-mono text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className=" text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             {DAY.format(now)}
             <span aria-hidden="true"> · </span>
             <time dateTime={now.toISOString()} className="tabular-nums">

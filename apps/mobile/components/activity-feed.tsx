@@ -20,31 +20,19 @@ import type { EventType } from '@vehicle-os/domain';
 import { activityQuery, queryKeys } from '@vehicle-os/api-client/react';
 import { daysUntil, dueGauge, groupByMonth, odometerDeltas, spanOfDays } from '@vehicle-os/ui';
 import {
-  EntryCard,
-  EntryHead,
-  Fact,
-  Facts,
   fillQuantity,
   KindIcon,
-  MonthHeading,
-  NotePreview,
-  RAIL,
-  Road,
-  startsDay,
-  TimelineRow,
+  LedgerEnd,
+  LedgerMonth,
+  LedgerPlaceholder,
+  LedgerRow,
+  LedgerSurface,
 } from '@/components/timeline';
 import { api } from '@/lib/api';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
-import { formatDistance, humanise } from '@/lib/format';
-import {
-  Chip,
-  Glyph,
-  Marker,
-  SectionHeading,
-  StatusDot,
-  ToneChip,
-  type Tone,
-} from '@/lib/instrument';
+import { ledgerDate } from '@/lib/ledger';
+import { formatDistance, formatMoney, humanise } from '@/lib/format';
+import { Chip, Glyph, SectionHeading, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
 import { ease, haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import {
   discard,
@@ -58,6 +46,9 @@ import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/them
 import { Button, Skeleton } from '@/lib/ui';
 
 const pad = (value: number) => String(value).padStart(2, '0');
+/** The logbook sheet's gutter: the page's, kept inside a sheet that runs past it. */
+// Close to the screen's edges: the record has the width, only a pressed row's wash needs room.
+const BOOK = spacing.sm;
 const DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 /** A done entry that lives on this phone until the queue has sent it. */
@@ -147,7 +138,14 @@ function needsYou(item: PlannedItem): boolean {
  * under its leaf, each day on the road, each entry a card, down to where it starts. Every entry
  * opens. What is coming up is Reminders' alone, so the two never repeat.
  */
-export function ActivityFeed({ vehicle }: { vehicle: Vehicle }) {
+export function ActivityFeed({
+  vehicle,
+  bottom = 0,
+}: {
+  vehicle: Vehicle;
+  /** Room under the last entry — what floats over the page's foot — kept inside the sheet. */
+  bottom?: number;
+}) {
   const theme = useTheme();
   const router = useRouter();
   const [filter, setFilter] = useState<EventType | null>(null);
@@ -206,6 +204,8 @@ export function ActivityFeed({ vehicle }: { vehicle: Vehicle }) {
 
   const groups = groupByMonth(done);
   const deltas = odometerDeltas(done);
+  // Rows numbered down the page, for the entrance stagger across months.
+  let row = 0;
 
   const counts = new Map<EventType, number>();
   for (const event of everything.data?.done.data ?? []) {
@@ -224,119 +224,137 @@ export function ActivityFeed({ vehicle }: { vehicle: Vehicle }) {
   const logFirst = () => router.push({ pathname: '/add/done', params: { vehicleId: vehicle.id } });
 
   return (
-    <View style={{ gap: spacing.md }}>
+    <View style={{ flexGrow: 1, gap: spacing.md }}>
       {waiting > 0 ? <SyncStrip count={waiting} /> : null}
 
-      {kinds.length >= 2 || filter ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ marginHorizontal: -spacing.lg }}
-          contentContainerStyle={{ gap: 6, paddingHorizontal: spacing.lg }}
-        >
-          <Chip label="All" selected={filter === null} onPress={() => choose(null)} />
-          {kinds.map(([kind, count]) => (
-            <Chip
-              key={kind}
-              label={humanise(kind)}
-              selected={filter === kind}
-              onPress={() => choose(filter === kind ? null : kind)}
-              leading={<Glyph size={16}>{eventEmoji(kind)}</Glyph>}
-              count={countsComplete ? count : undefined}
-            />
-          ))}
-        </ScrollView>
-      ) : null}
-
-      <View>
-        {activity.isPending ? (
-          <RailPlaceholders />
-        ) : activity.isError && !activity.data ? (
-          <View style={[styles.empty, { backgroundColor: theme.card }, rimmed(theme)]}>
-            <Glyph size={28}>📡</Glyph>
-            <Text style={[typeScale.headline, { color: theme.foreground }]}>
-              The record did not load
-            </Text>
-            <Text
-              style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}
+      {/*
+       * The record on a sheet of its own, the screen's width and white by day, as the admin
+       * console's Logbook sits; it runs on to the page's end, under the dock.
+       */}
+      <View
+        style={[
+          styles.book,
+          {
+            backgroundColor: theme.cardRaised,
+            // Only the top has an edge: the sides are the screen's, the foot the page's end.
+            borderTopColor: theme.dark ? theme.rim : theme.hairline,
+            paddingBottom: spacing.sm + bottom,
+          },
+        ]}
+      >
+        <LedgerSurface.Provider value={theme.cardRaised}>
+          {kinds.length >= 2 || filter ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginHorizontal: -BOOK }}
+              contentContainerStyle={{ gap: 6, paddingHorizontal: BOOK }}
             >
-              {(activity.error as Error).message}
-            </Text>
-            <Button label="Try again" onPress={() => void activity.refetch()} />
-          </View>
-        ) : (
-          <View style={{ opacity: activity.isPlaceholderData ? 0.6 : 1 }}>
-            {done.length === 0 ? (
-              <View
-                style={[
-                  styles.empty,
-                  { backgroundColor: theme.card, marginTop: spacing.sm },
-                  rimmed(theme),
-                ]}
-              >
-                <Glyph size={30}>📝</Glyph>
-                <Text style={[typeScale.headline, { color: theme.foreground }]}>
-                  {filter ? `No ${humanise(filter).toLowerCase()} yet` : 'Nothing recorded yet'}
-                </Text>
-                <Text style={[typeScale.label, styles.emptyText, { color: theme.mutedForeground }]}>
-                  Every service, fill-up, repair, payment and note you add becomes part of this
-                  vehicle's activity.
-                </Text>
-                <Button
-                  label="Log the first entry"
-                  icon="add"
-                  variant="primary"
-                  onPress={logFirst}
+              <Chip compact label="All" selected={filter === null} onPress={() => choose(null)} />
+              {kinds.map(([kind, count]) => (
+                <Chip
+                  key={kind}
+                  compact
+                  label={humanise(kind)}
+                  selected={filter === kind}
+                  onPress={() => choose(filter === kind ? null : kind)}
+                  leading={<Glyph size={13}>{eventEmoji(kind)}</Glyph>}
+                  count={countsComplete ? count : undefined}
                 />
-              </View>
-            ) : (
-              groups.map((group) => (
-                <View key={group.key} style={{ marginTop: spacing.xs }}>
-                  <MonthHeading group={group} />
-                  <View style={{ marginTop: spacing.xs }}>
-                    {group.items.map((event, index) => (
-                      <DoneRow
-                        key={event.id}
-                        event={event}
-                        delta={deltas.get(event.id) ?? null}
-                        firstOfDay={startsDay(group.items, index)}
-                        last={index === group.items.length - 1}
-                        index={index}
-                      />
-                    ))}
-                  </View>
-                </View>
-              ))
-            )}
+              ))}
+            </ScrollView>
+          ) : null}
 
-            {done.length === 0 ? null : hasMore ? (
-              <View style={styles.older}>
-                <Button
-                  label="Load older entries"
-                  loading={older.isFetching}
-                  onPress={() => (showOlder ? void older.fetchNextPage() : setShowOlder(true))}
-                />
+          <View>
+            {activity.isPending ? (
+              <LedgerPlaceholder />
+            ) : activity.isError && !activity.data ? (
+              <View style={styles.empty}>
+                <Glyph size={28}>📡</Glyph>
+                <Text style={[typeScale.headline, { color: theme.foreground }]}>
+                  The record did not load
+                </Text>
+                <Text
+                  style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}
+                >
+                  {(activity.error as Error).message}
+                </Text>
+                <Button label="Try again" onPress={() => void activity.refetch()} />
               </View>
             ) : (
-              <View style={styles.older}>
-                <Marker>
-                  <Text style={[figure, styles.end, { color: theme.mutedForeground }]}>
-                    START OF THE RECORD ·{' '}
-                    {DATE.format(new Date(done.at(-1)!.occurredAt)).toUpperCase()}
+              <View style={{ opacity: activity.isPlaceholderData ? 0.6 : 1 }}>
+                {done.length === 0 ? (
+                  <View style={styles.empty}>
+                    <Glyph size={30}>📝</Glyph>
+                    <Text style={[typeScale.headline, { color: theme.foreground }]}>
+                      {filter ? `No ${humanise(filter).toLowerCase()} yet` : 'Nothing recorded yet'}
+                    </Text>
+                    <Text
+                      style={[typeScale.label, styles.emptyText, { color: theme.mutedForeground }]}
+                    >
+                      Every service, fill-up, repair, payment and note you add becomes part of this
+                      vehicle's activity.
+                    </Text>
+                    <Button
+                      label="Log the first entry"
+                      icon="add"
+                      variant="primary"
+                      onPress={logFirst}
+                    />
+                  </View>
+                ) : (
+                  groups.map((group) => (
+                    <View key={group.key}>
+                      <LedgerMonth group={group} />
+                      {group.items.map((event, place) => (
+                        <DoneRow
+                          key={event.id}
+                          event={event}
+                          previousAt={place > 0 ? group.items[place - 1]!.occurredAt : undefined}
+                          nextAt={group.items[place + 1]?.occurredAt}
+                          delta={deltas.get(event.id) ?? null}
+                          index={row++}
+                        />
+                      ))}
+                    </View>
+                  ))
+                )}
+
+                {/* The road ends at the record's first entry, or runs on into the rest of it. */}
+                {done.length === 0 ? null : (
+                  <LedgerEnd>
+                    {hasMore ? (
+                      <View style={styles.older}>
+                        <Button
+                          label="Load older entries"
+                          size="sm"
+                          icon="chevron-down"
+                          loading={older.isFetching}
+                          onPress={() =>
+                            showOlder ? void older.fetchNextPage() : setShowOlder(true)
+                          }
+                        />
+                      </View>
+                    ) : (
+                      <Text style={[figure, styles.end, { color: theme.mutedForeground }]}>
+                        START OF THE RECORD ·{' '}
+                        {DATE.format(new Date(done.at(-1)!.occurredAt)).toUpperCase()}
+                      </Text>
+                    )}
+                  </LedgerEnd>
+                )}
+                {older.isError ? (
+                  <Text
+                    accessibilityRole="alert"
+                    style={[typeScale.caption, { color: theme.destructive, textAlign: 'center' }]}
+                  >
+                    {(older.error as Error).message}
                   </Text>
-                </Marker>
+                ) : null}
               </View>
             )}
-            {older.isError ? (
-              <Text
-                accessibilityRole="alert"
-                style={[typeScale.caption, { color: theme.destructive, textAlign: 'center' }]}
-              >
-                {(older.error as Error).message}
-              </Text>
-            ) : null}
           </View>
-        )}
+        </LedgerSurface.Provider>
       </View>
     </View>
   );
@@ -606,6 +624,40 @@ function taskDue(task: Task): { headline: string; tone: Tone } | null {
   };
 }
 
+/** The most pressing planned job, as its row words it. */
+export interface NextUp {
+  title: string;
+  headline: string;
+  tone: Tone;
+  emoji: string;
+}
+
+/**
+ * What a vehicle needs next, for its hero: anything late before anything soon, and otherwise the
+ * first job the server lists — which is the nearest due.
+ */
+export function nextUp(
+  planned: readonly PlannedItem[],
+  unit: Vehicle['odometerUnit'],
+): NextUp | null {
+  const rank = (tone: Tone) => (tone === 'destructive' ? 0 : tone === 'warning' ? 1 : 2);
+  const read = planned.map((item): NextUp => {
+    if (item.kind === 'SCHEDULE') {
+      const { headline, tone } = readDue(item.schedule, unit);
+      return { title: item.schedule.title, headline, tone, emoji: jobEmoji(item.schedule.title) };
+    }
+    const due = taskDue(item.task);
+    return {
+      title: item.task.title,
+      headline: due?.headline ?? 'No due date',
+      tone: due?.tone ?? 'neutral',
+      emoji: '🗓️',
+    };
+  });
+  // A stable sort: within a tone, the server's order — nearest due first — stands.
+  return read.sort((a, b) => rank(a.tone) - rank(b.tone))[0] ?? null;
+}
+
 /** A one-off job, with the only control a row needs: done. Queued, so it works without signal. */
 function TaskRow({ task, vehicleId }: { task: Task; vehicleId: string }) {
   const theme = useTheme();
@@ -682,116 +734,111 @@ function TaskRow({ task, vehicleId }: { task: Task; vehicleId: string }) {
 }
 
 /**
- * One done entry, as the web's logbook draws every entry, with what only a vehicle's own record
- * knows: where the odometer stood and how far since the last reading — the range of a tank, the
- * gap between services — the fill's quantity, who did it, and the note. The whole card opens it;
- * an entry still on this phone says so, and, if the server refused it, offers to let it go.
+ * One done entry on the road, with what only a vehicle's own record knows: where the odometer
+ * stood and how far it had gone since the reading before — the range of a tank, the gap between
+ * services — the fill's quantity, who did it, and the note. A title that only repeats the kind
+ * ("Fuel", filed under Fuel) gives the kind's place in the line to the rest. The whole row opens
+ * it; an entry still on this phone says so and, if the server refused it, offers to let it go.
  */
 function DoneRow({
   event,
+  previousAt,
+  nextAt,
   delta,
-  firstOfDay,
-  last,
   index,
 }: {
   event: VehicleEvent;
+  /** The entries above and below it in its month: one badge and one stretch of road per day. */
+  previousAt: string | undefined;
+  nextAt: string | undefined;
   delta: number | null;
-  firstOfDay: boolean;
-  last: boolean;
   index: number;
 }) {
   const theme = useTheme();
   const router = useRouter();
   const local = isLocal(event) ? event.local : null;
   const { quantity, rest: note } = fillQuantity(event.eventType, event.description);
-  const facts = event.odometer !== null || quantity || event.provider;
+  const kind = humanise(event.eventType);
+  const titled =
+    event.title.trim() !== '' && event.title.trim().toLowerCase() !== kind.toLowerCase();
+  const unit = event.odometerUnit;
+  const when = ledgerDate(event.occurredAt);
 
   return (
-    <TimelineRow occurredAt={event.occurredAt} firstOfDay={firstOfDay} last={last} index={index}>
-      {/*
-       * Not one still queued: it has no id on the server yet, and becomes pressable of its own
-       * accord once it has been sent.
-       */}
-      <EntryCard
-        onPress={
-          local
-            ? undefined
-            : () =>
-                router.push({
-                  pathname: '/event/[id]',
-                  params: { id: event.id, vehicleId: event.vehicleId },
-                })
-        }
-        accessibilityLabel={`${new Date(event.occurredAt).toLocaleDateString()}, ${humanise(
-          event.eventType,
-        )}: ${event.title}`}
-        accessibilityHint={local ? undefined : 'Opens the entry'}
-      >
-        <EntryHead
-          eventType={event.eventType}
-          title={event.title}
-          cost={event.cost}
-          tint={local ? (local.error ? theme.destructiveSoft : theme.warningSoft) : undefined}
-        >
-          {note ? <NotePreview text={note} /> : null}
-          {facts ? (
-            <Facts>
-              {event.odometer !== null ? (
-                <Fact icon="speedometer-outline">
-                  <Text style={figure}>{formatDistance(event.odometer, event.odometerUnit)}</Text>
-                  {delta !== null ? (
-                    <Text style={[figure, { color: theme.foreground }]}>
-                      {'  '}+{formatDistance(delta, event.odometerUnit)}
-                    </Text>
-                  ) : null}
-                </Fact>
-              ) : null}
-              {quantity ? (
-                <Fact
-                  icon={event.eventType === 'CHARGE' ? 'battery-charging-outline' : 'water-outline'}
-                >
-                  <Text style={figure}>{quantity}</Text>
-                </Fact>
-              ) : null}
-              {event.provider ? <Fact icon="storefront-outline">{event.provider}</Fact> : null}
-            </Facts>
-          ) : null}
-
-          {local ? (
-            local.error ? (
-              <View style={styles.failed}>
-                <ToneChip tone="destructive" label="Not saved" />
-                <Text
-                  numberOfLines={2}
-                  style={[typeScale.caption, { flex: 1, color: theme.destructive }]}
-                >
-                  {local.error}
-                </Text>
-                <PressableScale
-                  onPress={() => void discard(local.writeId)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Discard ${event.title}`}
-                  style={[styles.discard, { backgroundColor: theme.destructiveSoft }]}
-                >
-                  <Text
-                    style={[typeScale.caption, { color: theme.destructive, fontWeight: '700' }]}
-                  >
-                    Discard
-                  </Text>
-                </PressableScale>
-              </View>
-            ) : (
-              <View style={[styles.syncChip, { backgroundColor: theme.warningSoft }]}>
-                <Pulse color={theme.warning} size={6} />
-                <Text style={[typeScale.caption, { color: theme.foreground, fontWeight: '600' }]}>
-                  Waiting to sync
-                </Text>
-              </View>
-            )
-          ) : null}
-        </EntryHead>
-      </EntryCard>
-    </TimelineRow>
+    <LedgerRow
+      eventType={event.eventType}
+      title={titled ? event.title : kind}
+      occurredAt={event.occurredAt}
+      previousAt={previousAt}
+      nextAt={nextAt}
+      meta={[event.provider]}
+      cost={event.cost}
+      // Nothing paid: a trip says how far it went.
+      aside={event.cost || !event.trip ? null : formatDistance(event.trip.distance, unit)}
+      // Under the cost: what went in, and how far since the reading before — a tank's range.
+      trail={[quantity]}
+      change={
+        delta === null
+          ? null
+          : {
+              text: `${delta > 0 ? '+' : '−'}${formatDistance(Math.abs(delta), unit)}`,
+              up: delta > 0,
+            }
+      }
+      state={local ? (local.error ? 'failed' : 'waiting') : undefined}
+      // Not one still queued: it has no id on the server yet.
+      onPress={
+        local
+          ? undefined
+          : () =>
+              router.push({
+                pathname: '/event/[id]',
+                params: { id: event.id, vehicleId: event.vehicleId },
+              })
+      }
+      accessibilityLabel={[
+        when,
+        `${kind}: ${titled ? event.title : kind}`,
+        event.cost ? formatMoney(event.cost) : null,
+        event.odometer !== null ? `at ${formatDistance(event.odometer, unit)}` : null,
+        note || null,
+      ]
+        .filter(Boolean)
+        .join(', ')}
+      accessibilityHint={local ? undefined : 'Opens the entry'}
+      index={index}
+    >
+      {local ? (
+        local.error ? (
+          <View style={styles.failed}>
+            <ToneChip tone="destructive" label="Not saved" />
+            <Text
+              numberOfLines={2}
+              style={[typeScale.caption, { flex: 1, color: theme.destructive }]}
+            >
+              {local.error}
+            </Text>
+            <PressableScale
+              onPress={() => void discard(local.writeId)}
+              accessibilityRole="button"
+              accessibilityLabel={`Discard ${event.title}`}
+              style={[styles.discard, { backgroundColor: theme.destructiveSoft }]}
+            >
+              <Text style={[typeScale.caption, { color: theme.destructive, fontWeight: '700' }]}>
+                Discard
+              </Text>
+            </PressableScale>
+          </View>
+        ) : (
+          <View style={[styles.syncChip, { backgroundColor: theme.warningSoft }]}>
+            <Pulse color={theme.warning} size={6} />
+            <Text style={[typeScale.caption, { color: theme.foreground, fontWeight: '600' }]}>
+              Waiting to sync
+            </Text>
+          </View>
+        )
+      ) : null}
+    </LedgerRow>
   );
 }
 
@@ -818,30 +865,6 @@ function SyncStrip({ count }: { count: number }) {
           void flush().finally(() => setSending(false));
         }}
       />
-    </View>
-  );
-}
-
-/** The logbook before it loads, on its road, so nothing moves when the entries arrive. */
-function RailPlaceholders() {
-  const theme = useTheme();
-  return (
-    <View accessibilityRole="progressbar" accessibilityLabel="Loading activity">
-      {[0, 1, 2].map((index) => (
-        <View key={index} style={styles.placeholderRow}>
-          <View style={styles.railCell}>
-            <Road color={theme.border} stopAt={index === 2 ? 40 : null} />
-            <Skeleton width={34} height={33} radius={9} />
-          </View>
-          <View style={[styles.placeholderCard, { backgroundColor: theme.card }, rimmed(theme)]}>
-            <Skeleton width={32} height={32} radius={12} />
-            <View style={{ flex: 1, gap: 8 }}>
-              <Skeleton width="40%" height={12} />
-              <Skeleton width="70%" height={14} />
-            </View>
-          </View>
-        </View>
-      ))}
     </View>
   );
 }
@@ -967,8 +990,19 @@ export function VehiclePlanned({ vehicle }: { vehicle: Vehicle }) {
 }
 
 const styles = StyleSheet.create({
-  railCell: { width: RAIL, alignItems: 'center' },
-  older: { marginTop: spacing.sm, alignItems: 'stretch' },
+  // Past the page's gutter to the screen's edges, its top rounded like the stage's foot.
+  book: {
+    flexGrow: 1,
+    gap: spacing.sm,
+    marginHorizontal: -spacing.lg,
+    paddingHorizontal: BOOK,
+    paddingTop: spacing.md,
+    borderTopLeftRadius: radius.xxxl,
+    borderTopRightRadius: radius.xxxl,
+    borderTopWidth: 1,
+    overflow: 'hidden',
+  },
+  older: { alignItems: 'flex-start' },
   end: { fontSize: 11, letterSpacing: 0.8 },
   empty: {
     alignItems: 'center',
@@ -1031,6 +1065,7 @@ const styles = StyleSheet.create({
     paddingRight: spacing.sm,
   },
   syncChip: {
+    marginTop: 4,
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
@@ -1039,14 +1074,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  failed: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  failed: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 4 },
   discard: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  placeholderRow: { flexDirection: 'row', gap: spacing.sm, paddingBottom: spacing.sm },
-  placeholderCard: {
-    flex: 1,
-    flexDirection: 'row',
-    gap: 10,
-    borderRadius: radius.xl,
-    padding: 10,
-  },
 });

@@ -46,8 +46,9 @@ export function groupByMonth<T extends Dated>(items: readonly T[]): MonthGroup<T
 }
 
 /**
- * Distance since the previous entry with a reading, keyed by entry. Walked oldest to newest; only
- * a rise in the same unit counts — a lower reading is a correction or a cluster swap.
+ * Distance since the previous entry with a reading, keyed by entry. Walked oldest to newest, in
+ * one unit at a time. A rise is positive; a drop — a correction, a cluster swap, a typo — is
+ * negative, so the logbook can show it rather than hide it. An unchanged reading has no change.
  */
 export function odometerDeltas(items: readonly Reading[]): Map<string, number> {
   const deltas = new Map<string, number>();
@@ -58,7 +59,7 @@ export function odometerDeltas(items: readonly Reading[]): Map<string, number> {
     if (
       previous?.odometer != null &&
       previous.odometerUnit === item.odometerUnit &&
-      item.odometer > previous.odometer
+      item.odometer !== previous.odometer
     ) {
       deltas.set(item.id, item.odometer - previous.odometer);
     }

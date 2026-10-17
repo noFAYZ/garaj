@@ -7,7 +7,7 @@
  */
 
 import type { AiProposal } from '@vehicle-os/contracts';
-import { parseDone, parsePlanned } from './quick-entry';
+import { parseDone, parsePlanned } from '@vehicle-os/ui';
 
 const UNITS: Record<string, string> = { l: 'L', gal: 'GAL', kwh: 'KWH' };
 

@@ -327,9 +327,9 @@ importers:
       '@expo-google-fonts/albert-sans':
         specifier: ^0.4.2
         version: 0.4.2
-      '@expo-google-fonts/geist-mono':
-        specifier: ^0.4.3
-        version: 0.4.3
+      '@expo-google-fonts/cascadia-mono':
+        specifier: 0.4.1
+        version: 0.4.1
       '@expo/metro-runtime':
         specifier: ~4.0.1
         version: 4.0.1(react-native@0.76.9(@babel/core@7.29.7)(@babel/preset-env@7.29.7(@babel/core@7.29.7))(@types/react@19.2.18)(react@18.3.1))
@@ -2327,8 +2327,8 @@ packages:
   '@expo-google-fonts/albert-sans@0.4.2':
     resolution: {integrity: sha512-tLiuIgK3ra9cs9fYTswRe/5m7xqUV080RUzZzljwB7VYagAPpiBsJFJ+LhSwDyaC5wzZasK7zHMAm1TrYWFPXQ==}
 
-  '@expo-google-fonts/geist-mono@0.4.3':
-    resolution: {integrity: sha512-gjnwv1QOG4meZpMhrLjTIPC/+lhyNu8EcXa2eJPVbPrYvguVjCfBq+Ezq6cWKWW8ung6fqb2TjvuTalE6lqlnw==}
+  '@expo-google-fonts/cascadia-mono@0.4.1':
+    resolution: {integrity: sha512-goT/Sza699h/qrloaWv9yal8qg/EiVuqZBd0+FecSbTZ4kdHlDqtELzSaXbfM9sxMnwMk6PW3FRJ4RQTAUYEuQ==}
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
@@ -8457,6 +8457,11 @@ snapshots:
       nanostores: 1.5.3
       zod: 4.5.4
 
+  '@better-auth/drizzle-adapter@1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)':
+    dependencies:
+      '@better-auth/core': 1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3)
+      '@better-auth/utils': 0.4.2
+
   '@better-auth/drizzle-adapter@1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(drizzle-orm@0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.2.18)(kysely@0.29.5)(postgres@3.4.9)(react@19.2.8))':
     dependencies:
       '@better-auth/core': 1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3)
@@ -8851,7 +8856,7 @@ snapshots:
 
   '@expo-google-fonts/albert-sans@0.4.2': {}
 
-  '@expo-google-fonts/geist-mono@0.4.3': {}
+  '@expo-google-fonts/cascadia-mono@0.4.1': {}
 
   '@expo/bunyan@4.0.1':
     dependencies:
@@ -10541,7 +10546,7 @@ snapshots:
   better-auth@1.7.3(next@15.5.25(@babel/core@7.29.7)(@types/node@22.20.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(vitest@2.1.9(@types/node@22.20.1)(lightningcss@1.32.0)(terser@5.51.2)):
     dependencies:
       '@better-auth/core': 1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3)
-      '@better-auth/drizzle-adapter': 1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(drizzle-orm@0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.2.18)(kysely@0.29.5)(postgres@3.4.9)(react@19.2.8))
+      '@better-auth/drizzle-adapter': 1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)
       '@better-auth/kysely-adapter': 1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)(kysely@0.29.5)
       '@better-auth/memory-adapter': 1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)
       '@better-auth/mongo-adapter': 1.7.3(@better-auth/core@1.7.3(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.5)(nanostores@1.5.3))(@better-auth/utils@0.4.2)

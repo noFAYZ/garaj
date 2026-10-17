@@ -13,6 +13,7 @@ import {
   distancePerYear,
   efficiencyInWindow,
   groupDetail,
+  healthBand,
   monthlyPace,
   monthsSince,
   ownedFor,
@@ -22,10 +23,20 @@ import {
   type ReportPeriod,
 } from '@vehicle-os/ui';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useMemo, useState, type ReactNode } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Children, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Alert,
+  Animated,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import type { CostTrends, ValuationSummary, VehicleHealth } from '@vehicle-os/contracts';
 import {
+  conditionSummaryQuery,
   costTrendsQuery,
   healthQuery,
   incomeLedgerQuery,
@@ -35,20 +46,30 @@ import {
 } from '@vehicle-os/api-client/react';
 import {
   ColumnChart,
-  Donut,
+  Ladder,
   LineChart,
   RankBars,
+  Spark,
   SplitBar,
   type Series,
 } from '@/components/charts';
-import { STATUS, healthStatus, useChartColors, type StatusKey } from '@/lib/chart-colors';
+import { useChartColors } from '@/lib/chart-colors';
 import { REPORT_TABS, useVehicleReport, type ReportTab, type VehicleReport } from '@/lib/report';
 import { shareMileageReport } from '@/lib/share-export';
 import { Button, Skeleton } from '@/lib/ui';
 import { showUpgrade } from '@/lib/upgrade';
 import { api } from '@/lib/api';
 import { Eyebrow, Glyph, Segmented } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import {
+  Gauge,
+  haptic,
+  Odometer,
+  PressableScale,
+  Rise,
+  spring,
+  useIgnition,
+  useReduceMotion,
+} from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 import { compactMoney, formatDistance, formatMoney, humanise } from '@/lib/format';
 
@@ -82,16 +103,10 @@ const perUnit = (amountMinor: number, currency: string) =>
   (amountMinor / 10 ** minorUnitExponent(currency)).toFixed(3);
 const rate = (amountMinor: number, distance: number | null, currency: string) =>
   distance ? cents(amountMinor / distance, currency) : '—';
-
-/** "today", "12 days ago", "3 months ago" — without `Intl.RelativeTimeFormat`, which Hermes lacks. */
-function ago(iso: string): string {
-  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
-  if (days <= 0) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 60) return `${days} days ago`;
-  const months = Math.round(days / 30.4);
-  return months < 24 ? `${months} months ago` : `${Math.round(days / 365)} years ago`;
-}
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+/** `12k`, `8.4k`, `640` — a distance for an axis. */
+const compact = (value: number) =>
+  value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(Math.round(value));
 
 const columns = (buckets: readonly { key: string; values: Record<string, number> }[]) =>
   buckets.map((bucket) => ({
@@ -102,12 +117,14 @@ const columns = (buckets: readonly { key: string; values: Record<string, number>
   }));
 
 /**
- * The vehicle's report — the web's six tabs over one period, on a phone.
+ * The vehicle's report — the web's six parts over one period, on a phone, and drawn the web's
+ * way: each part a stack of cards that are mostly picture. A card leads with its chart and the
+ * one figure the chart is about; a strip of key figures sits under it; everything else is a
+ * chart, a bar or a dial. Words are only what names a mark.
  *
  * Overview says what it all adds up to; Refueling, Expenses and Services are slices of the same
  * ledger, so they always add up to it; Income nets what it earns against that spend; Routes
- * splits the driving by purpose. The period applies to every tab at once, so switching compares
- * like with like. Each section leads with its number, then its shape.
+ * splits the driving by purpose. The period applies to every part at once.
  */
 export function VehicleStatistics({
   vehicleId,
@@ -127,82 +144,48 @@ export function VehicleStatistics({
 
   const open = (next: ReportTab) => {
     setTab(next);
-    // A new tab starts at its head, not wherever the last one was scrolled to.
+    // A new part starts at its head, not wherever the last one was scrolled to.
     onJump?.(0);
   };
 
   return (
     <View style={{ gap: spacing.md }}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={{ marginHorizontal: -spacing.md }}
-        contentContainerStyle={{ gap: 6, paddingHorizontal: spacing.md }}
-        accessibilityRole="tablist"
-      >
-        {REPORT_TABS.map((item) => {
-          const selected = item.value === tab;
-          return (
-            <PressableScale
-              key={item.value}
-              onPress={() => {
-                if (!selected) haptic.selection();
-                open(item.value);
-              }}
-              accessibilityRole="tab"
-              accessibilityState={{ selected }}
-              accessibilityLabel={item.label}
-              scaleTo={0.94}
-              style={[styles.tabChip, { backgroundColor: selected ? theme.primary : theme.card }]}
-            >
-              <Glyph size={13}>{item.glyph}</Glyph>
-              <Text
-                style={[
-                  typeScale.label,
-                  { color: selected ? theme.primaryForeground : theme.foreground },
-                ]}
-              >
-                {item.label}
-              </Text>
-            </PressableScale>
-          );
-        })}
-      </ScrollView>
+      <ReportTabs value={tab} onChange={open} />
 
-      <View style={styles.between}>
-        <View style={{ flex: 1 }}>
-          <Segmented
-            value={period}
-            options={REPORT_PERIODS.map((option) => ({ value: option.value, label: option.label }))}
-            onChange={setPeriod}
-          />
-        </View>
-        {report.refreshing ? (
-          <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>Updating…</Text>
-        ) : null}
+      <Segmented
+        small
+        value={period}
+        options={REPORT_PERIODS.map((option) => ({
+          value: option.value,
+          label: option.label,
+          said: option.long,
+        }))}
+        onChange={setPeriod}
+      />
+
+      {/* The last window's figures stay up, dimmed, while the next one loads over them. */}
+      <View style={{ opacity: report.refreshing ? 0.5 : 1 }}>
+        {report.error ? (
+          <Card label="Could not load the report">
+            <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+              {report.error.message}
+            </Text>
+            <Button label="Try again" size="sm" onPress={report.refetch} />
+          </Card>
+        ) : tab === 'overview' ? (
+          <Overview report={report} onOpen={open} onLogOdometer={onLogOdometer} />
+        ) : tab === 'refueling' ? (
+          <Refueling report={report} />
+        ) : tab === 'expenses' ? (
+          <GroupTab report={report} group="EXPENSES" />
+        ) : tab === 'services' ? (
+          <GroupTab report={report} group="SERVICES" />
+        ) : tab === 'income' ? (
+          <Income report={report} />
+        ) : (
+          <Routes report={report} />
+        )}
       </View>
-
-      {report.error ? (
-        <Card>
-          <View style={{ gap: spacing.sm }}>
-            <Eyebrow>Could not load the report</Eyebrow>
-            <Body>{report.error.message}</Body>
-            <Button label="Try again" onPress={report.refetch} />
-          </View>
-        </Card>
-      ) : tab === 'overview' ? (
-        <Overview report={report} onOpen={open} onLogOdometer={onLogOdometer} />
-      ) : tab === 'refueling' ? (
-        <Refueling report={report} />
-      ) : tab === 'expenses' ? (
-        <GroupTab report={report} group="EXPENSES" />
-      ) : tab === 'services' ? (
-        <GroupTab report={report} group="SERVICES" />
-      ) : tab === 'income' ? (
-        <Income report={report} />
-      ) : (
-        <Routes report={report} />
-      )}
     </View>
   );
 }
@@ -219,164 +202,99 @@ function Overview({
   onLogOdometer?: () => void;
 }) {
   const colors = useChartColors();
-  const { spend, distance, period, vehicleId, vehicle } = report;
+  const { spend, distance, vehicleId, vehicle } = report;
   const health = useQuery(healthQuery(api, vehicleId));
   const value = useQuery(valuationsQuery(api, vehicleId));
   const trends = useQuery(costTrendsQuery(api, vehicleId));
   const unit = report.odometerUnit === 'MI' ? 'mi' : 'km';
 
+  if (!spend) return <Loading />;
+  const currency = spend.currency;
+
   return (
-    <Sections
-      sections={[
-        {
-          key: 'summary',
-          title: period.long,
-          glyph: '📊',
-          body: !spend ? (
-            <HeroSkeleton />
-          ) : (
-            <View style={{ gap: spacing.md }}>
-              <Hero
-                label="Running cost"
-                value={money(spend.total, spend.currency)}
-                caption={`${pad(spend.count)} entries · the purchase left out`}
-              />
-              <View style={styles.grid}>
-                <Tile
-                  label="Per day"
-                  value={cents(spend.total / spend.days, spend.currency)}
-                  note={`over ${spend.days.toLocaleString()} days`}
-                />
-                <Tile
-                  label={`Per ${unit}`}
-                  value={rate(spend.total, distance, spend.currency)}
-                  note={
-                    distance
-                      ? `over ${formatDistance(distance, report.odometerUnit)}`
-                      : 'needs two readings'
-                  }
-                />
-                <Tile
-                  label="Driven"
-                  value={formatDistance(distance, report.odometerUnit)}
-                  note={
-                    distance
-                      ? `${Math.round(distance / spend.days)} ${unit} a day`
-                      : 'in this period'
-                  }
-                />
-                <Tile
-                  label="Per month"
-                  value={money((spend.total / spend.days) * 30.4375, spend.currency)}
-                  note="at this period’s pace"
-                />
-              </View>
-              <Excluded rows={spend.excluded} />
-            </View>
-          ),
-        },
-        {
-          key: 'split',
-          title: 'Where the money went',
-          glyph: '💳',
-          body: !spend ? (
-            <HeroSkeleton />
-          ) : spend.total === 0 ? (
-            <Body>
-              Nothing spent in this period. Fuel, services and bills appear here as you log them.
-            </Body>
-          ) : (
-            <View style={{ gap: spacing.xl }}>
-              <ColumnChart
-                buckets={columns(spend.buckets)}
-                series={REPORT_GROUPS.map((group) => ({
-                  key: group.key,
-                  label: group.label,
-                  color: colors[group.key],
-                }))}
-                format={(amount) => money(amount, spend.currency)}
-                formatAxis={(amount) => compactMoney(amount, spend.currency)}
-                caption={`${period.long} · running costs`}
-              />
-              <Donut
-                centre="Running"
-                total={money(spend.total, spend.currency)}
-                onOpen={(key) => onOpen(TAB_OF_GROUP[key as ReportGroup])}
-                slices={REPORT_GROUPS.filter((group) => spend.groups[group.key].total > 0).map(
-                  (group) => ({
-                    key: group.key,
-                    label: group.label,
-                    value: spend.groups[group.key].total,
-                    display: money(spend.groups[group.key].total, spend.currency),
-                    color: colors[group.key],
-                  }),
-                )}
-              />
-            </View>
-          ),
-        },
-        {
-          key: 'insights',
-          title: 'Insights',
-          glyph: '💡',
-          body: <Insights report={report} value={value.data} trends={trends.data} />,
-        },
-        {
-          key: 'value',
-          title: 'Value',
-          glyph: '🏷️',
-          body: (
-            <Value
-              summary={value.data}
-              pending={value.isPending}
-              trends={trends.data}
-              purchaseDate={vehicle?.purchaseDate ?? null}
-            />
-          ),
-        },
-        {
-          key: 'distance',
-          title: 'Distance',
-          glyph: '🛣️',
-          body: (
-            <Distance
-              odometer={vehicle?.currentOdometer ?? null}
-              unit={report.odometerUnit}
-              engineHours={vehicle?.currentEngineHours ?? null}
-              pending={!vehicle}
-              years={trends.data?.distancePerYear ?? []}
-              onLog={onLogOdometer}
-            />
-          ),
-        },
-        {
-          key: 'health',
-          title: 'Health',
-          glyph: '🩺',
-          body: <Health health={health.data} pending={health.isPending} />,
-        },
-      ]}
-    />
+    <Stack>
+      <Card>
+        <ColumnChart
+          label="Running cost"
+          legend={false}
+          buckets={columns(spend.buckets)}
+          series={REPORT_GROUPS.map((group) => ({
+            key: group.key,
+            label: group.label,
+            color: colors[group.key],
+          }))}
+          format={(amount) => money(amount, currency)}
+          formatAxis={(amount) => compactMoney(amount, currency)}
+        />
+        {spend.total > 0 ? (
+          <SplitBar
+            onSelect={(key) => onOpen(TAB_OF_GROUP[key as ReportGroup])}
+            parts={REPORT_GROUPS.map((group) => ({
+              key: group.key,
+              label: group.label,
+              value: spend.groups[group.key].total,
+              display: money(spend.groups[group.key].total, currency),
+              color: colors[group.key],
+            }))}
+          />
+        ) : null}
+        <Excluded rows={spend.excluded} />
+      </Card>
+
+      <Kpis
+        items={[
+          { label: 'Per day', value: cents(spend.total / spend.days, currency) },
+          { label: `Per ${unit}`, value: rate(spend.total, distance, currency) },
+          {
+            label: 'Driven',
+            value: distance ? Math.round(distance).toLocaleString() : '—',
+            unit: distance ? unit : undefined,
+          },
+        ]}
+      />
+
+      <Insights report={report} value={value.data} />
+
+      <Value
+        summary={value.data}
+        pending={value.isPending}
+        trends={trends.data}
+        purchaseDate={vehicle?.purchaseDate ?? null}
+      />
+
+      <Health health={health.data} pending={health.isPending} />
+
+      <Condition vehicleId={vehicleId} />
+
+      <Distance
+        odometer={vehicle?.currentOdometer ?? null}
+        unit={report.odometerUnit}
+        engineHours={vehicle?.currentEngineHours ?? null}
+        years={trends.data?.distancePerYear ?? []}
+        onLog={onLogOdometer}
+      />
+    </Stack>
   );
 }
 
 /**
- * The figures a logbook cannot give, worked out from all of it: each a tile with what it is of.
- * Only the ones the record supports are drawn — a tile of dashes is noise.
+ * What the record adds up to past its sums, side by side: what each kilometre really cost once
+ * the value lost is counted — running and value lost as one bar — and the monthly pace against
+ * the year before, over its year. Each only when the record supports it.
  */
 function Insights({
   report,
   value,
-  trends,
 }: {
   report: VehicleReport;
   value: ValuationSummary | undefined;
-  trends: CostTrends | undefined;
 }) {
-  const { cost, spend, vehicle, vehicleId, period } = report;
+  const theme = useTheme();
+  const colors = useChartColors();
+  const { cost, vehicle, vehicleId } = report;
   // Two years, once: the pace compares its two halves.
   const monthly = useQuery(monthlySpendQuery(api, vehicleId, 24));
-  if (!cost || !spend) return <HeroSkeleton />;
+  if (!cost) return null;
 
   const currency = cost.currency;
   const unit = cost.distanceUnit === 'MI' ? 'mi' : 'km';
@@ -393,103 +311,55 @@ function Insights({
     worthMinor: worth,
     distance: cost.distanceCovered,
   });
-  const pace =
-    monthly.data && monthly.data.currency === currency
-      ? monthlyPace(monthly.data.points, purchaseDate ? monthsSince(purchaseDate) : null)
+  const points = monthly.data && monthly.data.currency === currency ? monthly.data.points : null;
+  const pace = points ? monthlyPace(points, purchaseDate ? monthsSince(purchaseDate) : null) : null;
+  // Only once the value lost is known: without it, it is the running cost the strip above shows.
+  const lostShare =
+    trueCost?.includesDepreciation && trueCost.perDistanceMinor > 0 && cost.distanceCovered
+      ? Math.min(1, Math.max(0, 1 - running / cost.distanceCovered / trueCost.perDistanceMinor))
       : null;
-  const lost = depreciationPerYear(paid, worth, purchaseDate);
-  const yearly = distancePerYear(trends?.distancePerYear ?? []);
-  const busiest = spend.buckets.reduce<(typeof spend.buckets)[number] | null>(
-    (best, bucket) => (bucket.total > (best?.total ?? 0) ? bucket : best),
-    null,
-  );
+  const showPace = pace !== null && pace.averageMinor > 0;
+  if (lostShare === null && !showPace) return null;
 
-  const tiles: (TileProps & { key: string })[] = [];
-  if (trueCost) {
-    tiles.push({
-      key: 'true',
-      label: 'True cost',
-      value: cents(trueCost.perDistanceMinor, currency),
-      unit: `/${unit}`,
-      note: trueCost.includesDepreciation ? 'running + value lost' : 'running costs only',
-    });
-  }
-  if (cost.costPerDistance) {
-    tiles.push({
-      key: 'running',
-      label: 'Running',
-      value: formatMoney(cost.costPerDistance),
-      unit: `/${unit}`,
-      note: 'fuel, service and fees',
-    });
-  }
-  if (pace && pace.averageMinor > 0) {
-    tiles.push({
-      key: 'pace',
-      label: 'Per month',
-      value: money(pace.averageMinor, currency),
-      note: 'last 12 months',
-      status:
-        pace.changePercent !== null
-          ? {
-              // Spending more is the thing to notice; less is the good news.
-              key: pace.changePercent > 0 ? 'serious' : 'good',
-              text: `${pace.changePercent > 0 ? '▲' : '▼'} ${Math.abs(pace.changePercent)}% vs year before`,
-            }
-          : undefined,
-    });
-    tiles.push({
-      key: 'ahead',
-      label: 'Next 12 months',
-      value: money(pace.averageMinor * 12, currency),
-      note: 'at this year’s pace',
-    });
-  }
-  if (lost !== null && lost > 0) {
-    tiles.push({
-      key: 'lost',
-      label: 'Value lost',
-      value: money(lost, currency),
-      unit: '/yr',
-      note: 'since bought',
-    });
-  }
-  if (yearly !== null) {
-    tiles.push({
-      key: 'yearly',
-      label: 'Driven',
-      value: yearly.toLocaleString(),
-      unit: `${unit}/yr`,
-      note: 'a whole year, on average',
-    });
-  }
-  if (busiest && spend.buckets.length > 1) {
-    tiles.push({
-      key: 'busiest',
-      label: spend.unit === 'month' ? 'Dearest month' : 'Dearest year',
-      value: money(busiest.total, spend.currency),
-      note: `${bucketLabel(busiest.key, 'long')} · ${period.label}`,
-    });
-  }
-  if (spend.total > 0) {
-    tiles.push({
-      key: 'energy',
-      label: 'Energy share',
-      value: `${Math.round((spend.groups.REFUELING.total / spend.total) * 100)}%`,
-      note: 'of running costs on fuel',
-    });
-  }
-
-  if (tiles.length === 0) {
-    return (
-      <Body>A purchase price, a couple of odometer readings and some spending fill this in.</Body>
-    );
-  }
   return (
-    <View style={styles.grid}>
-      {tiles.map(({ key, ...tile }) => (
-        <Tile key={key} {...tile} />
-      ))}
+    <View style={styles.pair}>
+      {trueCost && lostShare !== null ? (
+        <Card label="True cost" style={styles.half}>
+          <Figure value={cents(trueCost.perDistanceMinor, currency)} unit={`/${unit}`} />
+          <View
+            accessible
+            accessibilityLabel={`${Math.round((1 - lostShare) * 100)}% running costs, ${Math.round(lostShare * 100)}% value lost`}
+            style={{ gap: 6 }}
+          >
+            <View style={styles.split}>
+              <View style={{ flex: 1 - lostShare, backgroundColor: colors.ink, borderRadius: 3 }} />
+              <View style={{ flex: lostShare, backgroundColor: colors.trip, borderRadius: 3 }} />
+            </View>
+            <View style={styles.legend}>
+              <Swatch color={colors.ink} label="Running" />
+              <Swatch color={colors.trip} label="Value lost" />
+            </View>
+          </View>
+        </Card>
+      ) : null}
+      {showPace && points ? (
+        <Card
+          label="Monthly"
+          trailing={
+            pace.changePercent !== null ? (
+              // Spending more is the thing to notice; less is the good news.
+              <Delta change={pace.changePercent} good="down" />
+            ) : null
+          }
+          style={styles.half}
+        >
+          <Figure value={money(pace.averageMinor, currency)} />
+          <Spark
+            values={points.slice(-12).map((point) => point.amountMinor)}
+            color={theme.primary}
+          />
+        </Card>
+      ) : null}
     </View>
   );
 }
@@ -498,19 +368,16 @@ function Insights({
 
 function Refueling({ report }: { report: VehicleReport }) {
   const colors = useChartColors();
-  const { spend, distance, vehicleId, period } = report;
+  const { spend, distance, vehicleId } = report;
   const trends = useQuery(costTrendsQuery(api, vehicleId));
   const fuel = useMemo(() => (spend ? buildRefuelReport(spend) : undefined), [spend]);
   const detail = useMemo(() => (spend ? groupDetail(spend, 'REFUELING') : undefined), [spend]);
   const perHundred = report.odometerUnit !== 'MI';
   const unit = report.odometerUnit === 'MI' ? 'mi' : 'km';
 
-  if (!spend || !fuel || !detail)
-    return (
-      <Card>
-        <HeroSkeleton />
-      </Card>
-    );
+  if (!spend || !fuel || !detail) return <Loading />;
+  if (fuel.fills === 0) return <Empty glyph="⛽" text="No fill-ups in this period" />;
+
   const currency = spend.currency;
   const efficiency = (trends.data?.efficiency ?? []).flatMap((series) => {
     const result = efficiencyInWindow(series.points, report.from ? spend.fromMs : 0, perHundred);
@@ -529,202 +396,127 @@ function Refueling({ report }: { report: VehicleReport }) {
     ]),
   ];
 
-  if (fuel.fills === 0) {
-    return (
-      <Card>
-        <Eyebrow>No fill-ups in this period</Eyebrow>
-        <Body>
-          Record a fill with how much went in and the odometer, and this fills with consumption,
-          prices and the cheapest places to fill up.
-        </Body>
-      </Card>
-    );
-  }
-
   return (
-    <Sections
-      sections={[
-        {
-          key: 'summary',
-          title: 'Refueling',
-          glyph: '⛽',
-          body: (
-            <View style={{ gap: spacing.md }}>
-              <Hero
-                label="Fuel spend"
-                value={money(detail.total, currency)}
-                caption={`${pad(fuel.fills)} fills · ${period.long.toLowerCase()}`}
+    <Stack>
+      <Card>
+        <ColumnChart
+          label="Fuel"
+          trailing={<Tag>{plural(fuel.fills, 'fill')}</Tag>}
+          buckets={columns(
+            detail.buckets.map((bucket) => ({
+              key: bucket.key,
+              values: { REFUELING: bucket.value },
+            })),
+          )}
+          series={[{ key: 'REFUELING', label: 'Refueling', color: colors.REFUELING }]}
+          format={(amount) => money(amount, currency)}
+          formatAxis={(amount) => compactMoney(amount, currency)}
+        />
+      </Card>
+
+      <Kpis
+        items={[
+          {
+            label: 'Consumption',
+            value: leading ? leading.average.toFixed(1) : '—',
+            unit: leading ? rateUnit(leading.unit) : undefined,
+          },
+          {
+            label: `Per ${primary ? UNIT_LABEL[primary.unit] : 'unit'}`,
+            value: primary?.pricePerUnitMinor ? perUnit(primary.pricePerUnitMinor, currency) : '—',
+            unit: primary?.pricePerUnitMinor ? currency : undefined,
+          },
+          { label: `Per ${unit}`, value: rate(detail.total, distance, currency) },
+        ]}
+      />
+
+      {units.flatMap((fuelUnit) => {
+        const use = efficiency.find((entry) => entry.unit === fuelUnit);
+        const bought = fuel.units.find((entry) => entry.unit === fuelUnit);
+        const label = UNIT_LABEL[fuelUnit] ?? fuelUnit;
+        const named = units.length > 1 ? ` · ${label}` : '';
+        return [
+          use && use.points.length >= 2 ? (
+            <Card key={`use-${fuelUnit}`} label={`Consumption${named} · ${rateUnit(fuelUnit)}`}>
+              <LineChart
+                series={[
+                  {
+                    key: 'rate',
+                    label: rateUnit(fuelUnit),
+                    color: colors.REFUELING,
+                    points: use.points.slice(-16),
+                  },
+                ]}
+                reference={{ value: use.average, label: `avg ${use.average.toFixed(1)}` }}
+                formatY={(value) => value.toFixed(1)}
+                formatX={(x) => DAY_MONTH.format(new Date(x))}
               />
-              <View style={styles.grid}>
-                <Tile
-                  label="Consumption"
-                  value={leading ? leading.average.toFixed(1) : '—'}
-                  unit={leading ? rateUnit(leading.unit) : undefined}
-                  note={leading ? `best ${leading.best.toFixed(1)}` : 'needs two full tanks'}
-                />
-                <Tile
-                  label={`Per ${primary ? UNIT_LABEL[primary.unit] : 'unit'}`}
-                  value={
-                    primary?.pricePerUnitMinor ? perUnit(primary.pricePerUnitMinor, currency) : '—'
-                  }
-                  unit={currency}
-                  note="weighted by what went in"
-                />
-                <Tile
-                  label={`Fuel per ${unit}`}
-                  value={rate(detail.total, distance, currency)}
-                  note={
-                    spend.total > 0
-                      ? `${Math.round((detail.total / spend.total) * 100)}% of running`
-                      : undefined
-                  }
-                />
-                <Tile
-                  label="Last fill"
-                  value={fuel.latest ? ago(fuel.latest.occurredAt) : '—'}
-                  note={fuel.latest?.vendor ?? undefined}
-                />
-              </View>
-            </View>
-          ),
-        },
-        ...units.map((fuelUnit) => {
-          const use = efficiency.find((entry) => entry.unit === fuelUnit);
-          const bought = fuel.units.find((entry) => entry.unit === fuelUnit);
-          const label = UNIT_LABEL[fuelUnit] ?? fuelUnit;
-          return {
-            key: `unit-${fuelUnit}`,
-            title:
-              fuelUnit === 'KWH'
-                ? 'Charging'
-                : units.length > 1
-                  ? `Fuel · ${label}`
-                  : 'Consumption and price',
-            glyph: fuelUnit === 'KWH' ? '🔌' : '📈',
-            body: (
-              <View style={{ gap: spacing.xl }}>
-                {use && use.points.length >= 2 ? (
-                  <View style={{ gap: spacing.sm }}>
-                    <Eyebrow>{`Consumption · ${rateUnit(fuelUnit)}`}</Eyebrow>
-                    <LineChart
-                      series={[
-                        {
-                          key: 'rate',
-                          label: 'Per fill',
-                          color: colors.REFUELING,
-                          points: use.points.slice(-16),
-                        },
-                      ]}
-                      reference={{ value: use.average, label: `average ${use.average.toFixed(1)}` }}
-                      formatY={(value) => value.toFixed(1)}
-                      formatX={(x) => DAY_MONTH.format(new Date(x))}
-                      height={120}
-                    />
-                  </View>
-                ) : null}
-                {bought && bought.prices.length >= 2 && bought.pricePerUnitMinor ? (
-                  <View style={{ gap: spacing.sm }}>
-                    <Eyebrow>{`Price per ${label} · ${currency}`}</Eyebrow>
-                    <LineChart
-                      series={[
-                        {
-                          key: 'price',
-                          label: `per ${label}`,
-                          color: colors.REFUELING,
-                          points: bought.prices
-                            .map((price) => ({ x: price.at, y: price.perUnitMinor }))
-                            .slice(-16),
-                        },
-                      ]}
-                      reference={{ value: bought.pricePerUnitMinor, label: 'average' }}
-                      formatY={(value) => perUnit(value, currency)}
-                      formatX={(x) => DAY_MONTH.format(new Date(x))}
-                      height={120}
-                    />
-                  </View>
-                ) : null}
-                {bought && bought.places.length > 0 ? (
-                  <View style={{ gap: spacing.sm }}>
-                    <Eyebrow>
-                      {fuelUnit === 'KWH' ? 'Where you charge' : 'Where you fill up'}
-                    </Eyebrow>
-                    {bought.places.slice(0, 5).map((place, index) => (
-                      <Row
-                        key={place.vendor}
-                        title={place.vendor}
-                        meta={`${pad(place.fills)} ${place.fills === 1 ? 'fill' : 'fills'}`}
-                        trailing={`${perUnit(place.perUnitMinor, currency)} ${currency}`}
-                        status={index === 0 && bought.places.length > 1 ? 'good' : undefined}
-                      />
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            ),
-          };
-        }),
-        {
-          key: 'monthly',
-          title: 'Fuel spend',
-          glyph: '💳',
-          body: (
-            <ColumnChart
-              buckets={columns(
-                detail.buckets.map((bucket) => ({
-                  key: bucket.key,
-                  values: { REFUELING: bucket.value },
-                })),
-              )}
-              series={[{ key: 'REFUELING', label: 'Refueling', color: colors.REFUELING }]}
-              format={(amount) => money(amount, currency)}
-              formatAxis={(amount) => compactMoney(amount, currency)}
-              caption={`${period.long} · fuel and charging`}
-            />
-          ),
-        },
-        {
-          key: 'habits',
-          title: 'Habits',
-          glyph: '⏱️',
-          body: (
-            <View style={styles.grid}>
-              {fuel.averageFillMinor !== null ? (
-                <Tile
-                  label="Average fill"
-                  value={money(fuel.averageFillMinor, currency)}
-                  note="per visit"
-                />
-              ) : null}
-              {primary ? (
-                <Tile
-                  label="Per fill"
-                  value={(primary.quantity / primary.fills).toFixed(1)}
-                  unit={UNIT_LABEL[primary.unit]}
-                  note="on average"
-                />
-              ) : null}
-              {fuel.daysBetween !== null ? (
-                <Tile
-                  label="Every"
-                  value={fuel.daysBetween.toFixed(fuel.daysBetween < 10 ? 1 : 0)}
-                  unit="days"
-                  note="between fills"
-                />
-              ) : null}
-              {fuel.distanceBetween !== null ? (
-                <Tile
-                  label="Range used"
-                  value={Math.round(fuel.distanceBetween).toLocaleString()}
-                  unit={unit}
-                  note="between fills"
-                />
-              ) : null}
-            </View>
-          ),
-        },
-        { key: 'recent', title: 'Fill-ups', glyph: '🧾', body: <Recent rows={detail.rows} /> },
-      ]}
-    />
+            </Card>
+          ) : null,
+          bought && bought.prices.length >= 2 && bought.pricePerUnitMinor ? (
+            <Card key={`price-${fuelUnit}`} label={`Price${named} · ${currency}/${label}`}>
+              <LineChart
+                series={[
+                  {
+                    key: 'price',
+                    label: `per ${label}`,
+                    color: colors.REFUELING,
+                    points: bought.prices
+                      .map((price) => ({ x: price.at, y: price.perUnitMinor }))
+                      .slice(-16),
+                  },
+                ]}
+                reference={{ value: bought.pricePerUnitMinor, label: 'avg' }}
+                formatY={(value) => perUnit(value, currency)}
+                formatX={(x) => DAY_MONTH.format(new Date(x))}
+              />
+            </Card>
+          ) : null,
+          bought && bought.places.length > 0 ? (
+            <Card
+              key={`places-${fuelUnit}`}
+              label={fuelUnit === 'KWH' ? 'Where you charge' : 'Where you fill up'}
+            >
+              <Ladder
+                color={colors.REFUELING}
+                rows={bought.places.slice(0, 5).map((place) => ({
+                  key: place.vendor,
+                  label: place.vendor,
+                  value: place.perUnitMinor,
+                  display: perUnit(place.perUnitMinor, currency),
+                }))}
+              />
+            </Card>
+          ) : null,
+        ];
+      })}
+
+      <Kpis
+        items={[
+          fuel.averageFillMinor !== null && {
+            label: 'Average fill',
+            value: money(fuel.averageFillMinor, currency),
+          },
+          primary && {
+            label: 'Per fill',
+            value: (primary.quantity / primary.fills).toFixed(1),
+            unit: UNIT_LABEL[primary.unit],
+          },
+          fuel.daysBetween !== null && {
+            label: 'Every',
+            value: fuel.daysBetween.toFixed(fuel.daysBetween < 10 ? 1 : 0),
+            unit: 'days',
+          },
+          fuel.distanceBetween !== null && {
+            label: 'Range',
+            value: Math.round(fuel.distanceBetween).toLocaleString(),
+            unit,
+          },
+        ]}
+      />
+
+      <Entries rows={detail.rows} />
+    </Stack>
   );
 }
 
@@ -732,146 +524,85 @@ function Refueling({ report }: { report: VehicleReport }) {
 
 const GROUP_COPY = {
   SERVICES: {
-    glyph: '🔧',
+    glyph: '🧰',
     noun: 'visit',
-    last: 'Last service',
-    byVendor: 'By workshop',
+    byVendor: 'Workshops',
     empty: 'No services in this period',
-    emptyText:
-      'Maintenance, repairs, parts and cleaning appear here with what they cost and where.',
   },
-  EXPENSES: {
-    glyph: '🧾',
-    noun: 'bill',
-    last: 'Latest',
-    byVendor: 'Paid to',
-    empty: 'No other expenses in this period',
-    emptyText:
-      'Insurance, tax, registration, parking, tolls and upgrades — everything that is not fuel or a service.',
-  },
+  EXPENSES: { glyph: '🧾', noun: 'bill', byVendor: 'Paid to', empty: 'No bills in this period' },
 } as const;
 
 function GroupTab({ report, group }: { report: VehicleReport; group: 'SERVICES' | 'EXPENSES' }) {
   const colors = useChartColors();
-  const { spend, distance, period } = report;
+  const { spend, distance } = report;
   const detail = useMemo(() => (spend ? groupDetail(spend, group) : undefined), [spend, group]);
   const copy = GROUP_COPY[group];
   const label = REPORT_GROUPS.find((entry) => entry.key === group)!.label;
   const unit = report.odometerUnit === 'MI' ? 'mi' : 'km';
 
-  if (!spend || !detail)
-    return (
-      <Card>
-        <HeroSkeleton />
-      </Card>
-    );
+  if (!spend || !detail) return <Loading />;
+  if (detail.count === 0) return <Empty glyph={copy.glyph} text={copy.empty} />;
   const currency = spend.currency;
-  if (detail.count === 0) {
-    return (
-      <Card>
-        <Eyebrow>{copy.empty}</Eyebrow>
-        <Body>{copy.emptyText}</Body>
-      </Card>
-    );
-  }
 
   return (
-    <Sections
-      sections={[
-        {
-          key: 'summary',
-          title: label,
-          glyph: copy.glyph,
-          body: (
-            <View style={{ gap: spacing.md }}>
-              <Hero
-                label={`${label} spend`}
-                value={money(detail.total, currency)}
-                caption={`${pad(detail.count)} ${copy.noun}s · ${Math.round((detail.total / (spend.total || 1)) * 100)}% of running costs`}
-              />
-              <View style={styles.grid}>
-                <Tile
-                  label={`Per ${copy.noun}`}
-                  value={detail.averageMinor === null ? '—' : money(detail.averageMinor, currency)}
-                  note="on average"
-                />
-                <Tile
-                  label="Per month"
-                  value={money(detail.perMonthMinor, currency)}
-                  note={`${rate(detail.total, distance, currency)} per ${unit}`}
-                />
-                <Tile
-                  label={copy.last}
-                  value={detail.latest ? ago(detail.latest.occurredAt) : '—'}
-                  note={detail.latest?.description}
-                />
-                {detail.largest[0] ? (
-                  <Tile
-                    label="Biggest"
-                    value={money(detail.largest[0].amount.amountMinor, currency)}
-                    note={detail.largest[0].description}
-                  />
-                ) : null}
-              </View>
-            </View>
-          ),
-        },
-        {
-          key: 'monthly',
-          title: 'By month',
-          glyph: '📊',
-          body: (
-            <ColumnChart
-              buckets={columns(
-                detail.buckets.map((bucket) => ({
-                  key: bucket.key,
-                  values: { [group]: bucket.value },
-                })),
-              )}
-              series={[{ key: group, label, color: colors[group] }]}
-              format={(amount) => money(amount, currency)}
-              formatAxis={(amount) => compactMoney(amount, currency)}
-              caption={`${period.long} · ${label.toLowerCase()}`}
-            />
-          ),
-        },
-        {
-          key: 'kind',
-          title: 'By kind',
-          glyph: '🗂️',
-          body: (
-            <View style={{ gap: spacing.xl }}>
-              <RankBars
-                rows={detail.byCategory.map((row) => ({
-                  key: row.key,
-                  label: humanise(row.key),
-                  note: `${pad(row.count)} ${row.count === 1 ? 'entry' : 'entries'}`,
-                  value: row.amountMinor,
-                  display: money(row.amountMinor, currency),
-                  color: colors[group],
-                }))}
-              />
-              {detail.byVendor.length > 0 ? (
-                <View style={{ gap: spacing.sm }}>
-                  <Eyebrow>{copy.byVendor}</Eyebrow>
-                  <RankBars
-                    rows={detail.byVendor.slice(0, 5).map((row) => ({
-                      key: row.key,
-                      label: row.key,
-                      note: `${pad(row.count)} ${row.count === 1 ? copy.noun : `${copy.noun}s`}`,
-                      value: row.amountMinor,
-                      display: money(row.amountMinor, currency),
-                      color: colors[group],
-                    }))}
-                  />
-                </View>
-              ) : null}
-            </View>
-          ),
-        },
-        { key: 'recent', title: 'Entries', glyph: '🧾', body: <Recent rows={detail.rows} /> },
-      ]}
-    />
+    <Stack>
+      <Card>
+        <ColumnChart
+          label={label}
+          trailing={<Tag>{plural(detail.count, copy.noun)}</Tag>}
+          buckets={columns(
+            detail.buckets.map((bucket) => ({
+              key: bucket.key,
+              values: { [group]: bucket.value },
+            })),
+          )}
+          series={[{ key: group, label, color: colors[group] }]}
+          format={(amount) => money(amount, currency)}
+          formatAxis={(amount) => compactMoney(amount, currency)}
+        />
+      </Card>
+
+      <Kpis
+        items={[
+          {
+            label: `Per ${copy.noun}`,
+            value: detail.averageMinor === null ? '—' : money(detail.averageMinor, currency),
+          },
+          { label: 'Per month', value: money(detail.perMonthMinor, currency) },
+          { label: `Per ${unit}`, value: rate(detail.total, distance, currency) },
+        ]}
+      />
+
+      <Card label="By kind">
+        <RankBars
+          rows={detail.byCategory.map((row) => ({
+            key: row.key,
+            label: humanise(row.key),
+            count: row.count,
+            value: row.amountMinor,
+            display: money(row.amountMinor, currency),
+            color: colors[group],
+          }))}
+        />
+      </Card>
+
+      {detail.byVendor.length > 0 ? (
+        <Card label={copy.byVendor}>
+          <RankBars
+            rows={detail.byVendor.slice(0, 5).map((row) => ({
+              key: row.key,
+              label: row.key,
+              count: row.count,
+              value: row.amountMinor,
+              display: money(row.amountMinor, currency),
+              color: colors[group],
+            }))}
+          />
+        </Card>
+      ) : null}
+
+      <Entries rows={detail.rows} />
+    </Stack>
   );
 }
 
@@ -879,7 +610,8 @@ function GroupTab({ report, group }: { report: VehicleReport; group: 'SERVICES' 
 
 function Income({ report }: { report: VehicleReport }) {
   const colors = useChartColors();
-  const { spend, distance, vehicleId, from, period } = report;
+  const theme = useTheme();
+  const { spend, distance, vehicleId, from } = report;
   const income = useQuery({
     ...incomeLedgerQuery(api, vehicleId, from),
     placeholderData: keepPreviousData,
@@ -891,142 +623,80 @@ function Income({ report }: { report: VehicleReport }) {
   const unit = report.odometerUnit === 'MI' ? 'mi' : 'km';
 
   const wall = planWall(income.error);
-  if (wall) {
-    return (
-      <Locked
-        wall={wall}
-        title="What it earns, against what it costs"
-        text="Fares, deliveries, rentals and reimbursements, netted against the same period’s running costs — month by month, by payer, per kilometre."
-      />
-    );
-  }
-  if (!spend || !data)
-    return (
-      <Card>
-        <HeroSkeleton />
-      </Card>
-    );
+  if (wall) return <Locked wall={wall} title="What it earns, against what it costs" />;
+  if (!spend || !data) return <Loading />;
+  if (data.count === 0) return <Empty glyph="💵" text="Nothing earned in this period" />;
   const currency = spend.currency;
+  const ahead = data.net >= 0;
 
   return (
-    <Sections
-      sections={[
-        {
-          key: 'summary',
-          title: 'Income',
-          glyph: '💵',
-          body: (
-            <View style={{ gap: spacing.md }}>
-              <Hero
-                label="Earned"
-                value={money(data.total, currency)}
-                caption={`${pad(data.count)} entries · ${period.long.toLowerCase()}`}
-              />
-              <View style={styles.grid}>
-                <Tile
-                  label="Net"
-                  value={money(data.net, currency)}
-                  note="earned less running costs"
-                  status={
-                    data.count > 0
-                      ? {
-                          key: data.net >= 0 ? 'good' : 'critical',
-                          text: data.net >= 0 ? 'In profit' : 'Cost more than it made',
-                        }
-                      : undefined
-                  }
-                />
-                <Tile
-                  label={`Per ${unit}`}
-                  value={rate(data.total, distance, currency)}
-                  note="earned per distance"
-                />
-                <Tile
-                  label="Margin"
-                  value={data.total > 0 ? `${Math.round((data.net / data.total) * 100)}%` : '—'}
-                  note="of what came in, kept"
-                />
-              </View>
-              <Excluded rows={data.excluded} />
-            </View>
-          ),
-        },
-        ...(data.count > 0
-          ? [
-              {
-                key: 'against',
-                title: 'Earned against spent',
-                glyph: '⚖️',
-                body: (
-                  <ColumnChart
-                    mode="group"
-                    buckets={columns(
-                      data.buckets.map((bucket) => ({
-                        key: bucket.key,
-                        values: { earned: bucket.earned, spent: bucket.spent },
-                      })),
-                    )}
-                    series={[
-                      { key: 'earned', label: 'Earned', color: colors.income },
-                      // Grey ink, not a spend group's hue: this is every group at once.
-                      { key: 'spent', label: 'Spent', color: colors.muted },
-                    ]}
-                    format={(amount) => money(amount, currency)}
-                    formatAxis={(amount) => compactMoney(amount, currency)}
-                    caption={`${period.long} · earned`}
-                  />
-                ),
-              },
-              {
-                key: 'kind',
-                title: 'By kind',
-                glyph: '🗂️',
-                body: (
-                  <View style={{ gap: spacing.xl }}>
-                    <RankBars
-                      rows={data.byCategory.map((row) => ({
-                        key: row.key,
-                        label: humanise(row.key),
-                        note: `${pad(row.count)} entries`,
-                        value: row.amountMinor,
-                        display: money(row.amountMinor, currency),
-                        color: colors.income,
-                      }))}
-                    />
-                    {data.byPayer.length > 0 ? (
-                      <View style={{ gap: spacing.sm }}>
-                        <Eyebrow>By payer</Eyebrow>
-                        <RankBars
-                          rows={data.byPayer.slice(0, 5).map((row) => ({
-                            key: row.key,
-                            label: row.key,
-                            note: `${pad(row.count)} entries`,
-                            value: row.amountMinor,
-                            display: money(row.amountMinor, currency),
-                            color: colors.income,
-                          }))}
-                        />
-                      </View>
-                    ) : null}
-                  </View>
-                ),
-              },
-            ]
-          : [
-              {
-                key: 'empty',
-                title: 'Nothing earned yet',
-                glyph: '⚖️',
-                body: (
-                  <Body>
-                    Fares, deliveries and rentals logged against this vehicle are netted against its
-                    costs here.
-                  </Body>
-                ),
-              },
-            ]),
-      ]}
-    />
+    <Stack>
+      <Card>
+        <ColumnChart
+          mode="group"
+          label="Earned"
+          trailing={<Tag>{`${data.count} ${data.count === 1 ? 'entry' : 'entries'}`}</Tag>}
+          buckets={columns(
+            data.buckets.map((bucket) => ({
+              key: bucket.key,
+              values: { earned: bucket.earned, spent: bucket.spent },
+            })),
+          )}
+          series={[
+            { key: 'earned', label: 'Earned', color: colors.income },
+            // Grey ink, not a spend group's hue: this is every group at once.
+            { key: 'spent', label: 'Spent', color: colors.muted },
+          ]}
+          format={(amount) => money(amount, currency)}
+          formatAxis={(amount) => compactMoney(amount, currency)}
+        />
+        <Excluded rows={data.excluded} />
+      </Card>
+
+      <Kpis
+        items={[
+          {
+            label: 'Net',
+            value: money(data.net, currency),
+            tone: ahead ? theme.success : theme.destructive,
+          },
+          { label: `Per ${unit}`, value: rate(data.total, distance, currency) },
+          {
+            label: 'Margin',
+            value: data.total > 0 ? `${Math.round((data.net / data.total) * 100)}` : '—',
+            unit: data.total > 0 ? '%' : undefined,
+          },
+        ]}
+      />
+
+      <Card label="By kind">
+        <RankBars
+          rows={data.byCategory.map((row) => ({
+            key: row.key,
+            label: humanise(row.key),
+            count: row.count,
+            value: row.amountMinor,
+            display: money(row.amountMinor, currency),
+            color: colors.income,
+          }))}
+        />
+      </Card>
+
+      {data.byPayer.length > 0 ? (
+        <Card label="By payer">
+          <RankBars
+            rows={data.byPayer.slice(0, 5).map((row) => ({
+              key: row.key,
+              label: row.key,
+              count: row.count,
+              value: row.amountMinor,
+              display: money(row.amountMinor, currency),
+              color: colors.income,
+            }))}
+          />
+        </Card>
+      ) : null}
+    </Stack>
   );
 }
 
@@ -1042,7 +712,8 @@ function endOfToday() {
 
 function Routes({ report }: { report: VehicleReport }) {
   const colors = useChartColors();
-  const { distance, vehicleId, from, period, vehicle } = report;
+  const theme = useTheme();
+  const { vehicleId, from, vehicle } = report;
   const range = { from: from ?? '2000-01-01T00:00:00.000Z', to: endOfToday() };
   const mileage = useQuery({
     ...mileageReportQuery(api, vehicleId, range),
@@ -1062,32 +733,9 @@ function Routes({ report }: { report: VehicleReport }) {
   };
 
   const wall = planWall(mileage.error);
-  if (wall) {
-    return (
-      <Locked
-        wall={wall}
-        title="Every trip, by purpose"
-        text="Business, commute and personal distance for any period, with the deduction at each trip’s own rate — ready for a tax return or an expense claim."
-      />
-    );
-  }
-  if (!routes || !mileage.data)
-    return (
-      <Card>
-        <HeroSkeleton />
-      </Card>
-    );
-  if (routes.trips === 0) {
-    return (
-      <Card>
-        <Eyebrow>No trips in this period</Eyebrow>
-        <Body>
-          Log a trip with its purpose and distance and this splits your driving into business,
-          commute and personal — with what it is worth to claim.
-        </Body>
-      </Card>
-    );
-  }
+  if (wall) return <Locked wall={wall} title="Every trip, by purpose" />;
+  if (!routes || !mileage.data) return <Loading />;
+  if (routes.trips === 0) return <Empty glyph="🛣️" text="No trips in this period" />;
 
   const share = async () => {
     setSharing(true);
@@ -1099,113 +747,91 @@ function Routes({ report }: { report: VehicleReport }) {
       setSharing(false);
     }
   };
+  const deductions = mileage.data.deductions;
 
   return (
-    <Sections
-      sections={[
-        {
-          key: 'summary',
-          title: 'Routes',
-          glyph: '🛣️',
-          body: (
-            <View style={{ gap: spacing.md }}>
-              <Hero
-                label="Logged"
-                value={km(routes.distance)}
-                caption={
-                  distance
-                    ? `${pad(routes.trips)} trips · ${Math.min(100, Math.round((routes.distance / distance) * 100))}% of the odometer’s ${km(distance)}`
-                    : `${pad(routes.trips)} trips · ${period.long.toLowerCase()}`
-                }
-              />
-              <View style={styles.grid}>
-                <Tile
-                  label="Average trip"
-                  value={routes.averageDistance === null ? '—' : km(routes.averageDistance)}
-                  note={
-                    routes.longest[0] ? `longest ${km(routes.longest[0].trip.distance)}` : undefined
-                  }
-                />
-                <Tile
-                  label="Business"
-                  value={
-                    routes.businessShare === null
-                      ? '—'
-                      : `${Math.round(routes.businessShare * 100)}%`
-                  }
-                  note={`${km(routes.byPurpose.BUSINESS.distance)} claimable`}
-                />
-                <Tile
-                  label="Deductible"
-                  value={
-                    mileage.data.deductions.length > 0
-                      ? mileage.data.deductions
-                          .map((amount) => formatMoney(amount, true))
-                          .join(' + ')
-                      : '—'
-                  }
-                  note={
-                    mileage.data.unratedBusinessTrips > 0
-                      ? `${mileage.data.unratedBusinessTrips} trips without a rate`
-                      : 'at each trip’s own rate'
-                  }
-                />
-              </View>
+    <Stack>
+      <Card>
+        <ColumnChart
+          label="Logged"
+          legend={false}
+          trailing={
+            <View style={styles.trail}>
+              <Tag>{plural(routes.trips, 'trip')}</Tag>
+              <PressableScale
+                onPress={() => void share()}
+                disabled={sharing}
+                accessibilityRole="button"
+                accessibilityLabel="Share the trips as CSV"
+                hitSlop={8}
+                scaleTo={0.88}
+                style={[styles.round, { backgroundColor: theme.muted, opacity: sharing ? 0.5 : 1 }]}
+              >
+                <Ionicons name="share-outline" size={14} color={theme.foreground} />
+              </PressableScale>
             </View>
-          ),
-        },
-        {
-          key: 'monthly',
-          title: routes.unit === 'month' ? 'Distance by month' : 'Distance by year',
-          glyph: '📊',
-          body: (
-            <View style={{ gap: spacing.xl }}>
-              <ColumnChart
-                buckets={columns(routes.buckets)}
-                series={TRIP_PURPOSES.map((purpose) => ({
-                  key: purpose.key,
-                  label: purpose.label,
-                  color: purposeColor[purpose.key],
-                }))}
-                format={km}
-                caption={`${period.long} · logged trips`}
-              />
-              <SplitBar
-                parts={TRIP_PURPOSES.map((purpose) => ({
-                  key: purpose.key,
-                  label: `${purpose.label} · ${pad(routes.byPurpose[purpose.key].trips)} trips`,
-                  value: routes.byPurpose[purpose.key].distance,
-                  display: km(routes.byPurpose[purpose.key].distance),
-                  color: purposeColor[purpose.key],
-                }))}
-              />
-            </View>
-          ),
-        },
-        {
-          key: 'longest',
-          title: 'Longest trips',
-          glyph: '📍',
-          body: (
-            <View style={{ gap: spacing.sm }}>
-              {routes.longest.map((row) => (
-                <Row
-                  key={row.eventId}
-                  title={row.title}
-                  meta={`${DAY_MONTH.format(new Date(row.occurredAt))} · ${humanise(row.trip.purpose)}`}
-                  trailing={km(row.trip.distance)}
-                />
-              ))}
-              <Button label="Share as CSV" loading={sharing} onPress={() => void share()} />
-            </View>
-          ),
-        },
-      ]}
-    />
+          }
+          buckets={columns(routes.buckets)}
+          series={TRIP_PURPOSES.map((purpose) => ({
+            key: purpose.key,
+            label: purpose.label,
+            color: purposeColor[purpose.key],
+          }))}
+          format={km}
+        />
+        <SplitBar
+          parts={TRIP_PURPOSES.map((purpose) => ({
+            key: purpose.key,
+            label: purpose.label,
+            value: routes.byPurpose[purpose.key].distance,
+            display: km(routes.byPurpose[purpose.key].distance),
+            color: purposeColor[purpose.key],
+          }))}
+        />
+      </Card>
+
+      <Kpis
+        items={[
+          {
+            label: 'Average trip',
+            value:
+              routes.averageDistance === null
+                ? '—'
+                : Math.round(routes.averageDistance).toLocaleString(),
+            unit: routes.averageDistance === null ? undefined : unit === 'MI' ? 'mi' : 'km',
+          },
+          {
+            label: 'Business',
+            value:
+              routes.businessShare === null ? '—' : String(Math.round(routes.businessShare * 100)),
+            unit: routes.businessShare === null ? undefined : '%',
+          },
+          {
+            label: 'Deductible',
+            value:
+              deductions.length > 0
+                ? deductions.map((amount) => formatMoney(amount, true)).join(' + ')
+                : '—',
+          },
+        ]}
+      />
+
+      <Card label="Longest trips">
+        <RankBars
+          rows={routes.longest.map((row) => ({
+            key: row.eventId,
+            label: row.title,
+            value: row.trip.distance,
+            display: km(row.trip.distance),
+            color: purposeColor[row.trip.purpose],
+          }))}
+        />
+      </Card>
+    </Stack>
   );
 }
 
-/* ——— Overview's lifetime sections ——— */
+/* ——— Overview's lifetime cards ——— */
 
 function Value({
   summary,
@@ -1219,13 +845,19 @@ function Value({
   purchaseDate: string | null;
 }) {
   const colors = useChartColors();
-  if (pending) return <HeroSkeleton />;
+  if (pending) return <Loading />;
 
   const current = summary?.currentValue ?? null;
   const paid = summary?.purchasePrice ?? null;
+  // Nothing to say without a price or a valuation; the card waits for one.
+  if (!current && !paid) return null;
   const change = summary?.changePercent ?? null;
   const currency = current?.currency ?? paid?.currency ?? trends?.currency ?? null;
   const owned = purchaseDate ? ownedFor(purchaseDate) : null;
+  const lost =
+    current && paid && current.currency === paid.currency
+      ? depreciationPerYear(paid.amountMinor, current.amountMinor, purchaseDate)
+      : null;
 
   /*
    * What it has cost you against what it is worth, on one money axis. Both start from the price;
@@ -1234,13 +866,13 @@ function Value({
    */
   const series: Series[] = [];
   if (trends && trends.currency === currency) {
-    const spend = trends.ownership.filter((row) => row.cumulativeMinor > 0);
-    if (spend.length >= 2) {
+    const spent = trends.ownership.filter((row) => row.cumulativeMinor > 0);
+    if (spent.length >= 2) {
       series.push({
         key: 'cost',
         label: 'Cost to own',
         color: colors.ink,
-        points: spend.map((row) => {
+        points: spent.map((row) => {
           const [year, month] = row.month.split('-').map(Number) as [number, number];
           return { x: Date.UTC(year, month - 1, 15), y: row.cumulativeMinor };
         }),
@@ -1264,47 +896,119 @@ function Value({
   }
 
   return (
-    <View style={{ gap: spacing.xl }}>
-      <Hero
-        label="Worth now"
-        value={current ? formatMoney(current, true) : '—'}
-        status={
-          change !== null
-            ? {
-                // A gain is good news; a loss is the ordinary life of a car, not an alarm.
-                key: change >= 0 ? 'good' : 'serious',
-                text: `${change >= 0 ? '▲' : '▼'} ${Math.abs(change)}% since bought`,
-              }
-            : undefined
-        }
-        caption={current ? undefined : 'No valuation recorded yet'}
-      />
-
+    <Card label="Worth" trailing={change !== null ? <Delta change={change} good="up" /> : null}>
+      <Figure value={current ? formatMoney(current, true) : '—'} large />
       {series.length > 0 && currency ? (
-        <View style={{ gap: spacing.sm }}>
-          <Eyebrow>{series.length > 1 ? 'Cost against worth' : 'Cost to own over time'}</Eyebrow>
-          <LineChart
-            series={series}
-            formatY={(amount) => compactMoney(amount, currency)}
-            formatX={(x) => MONTH_YEAR.format(new Date(x))}
-            area={series.length === 1}
-          />
+        <LineChart
+          series={series}
+          formatY={(amount) => compactMoney(amount, currency)}
+          formatX={(x) => MONTH_YEAR.format(new Date(x))}
+          area={series.length === 1}
+        />
+      ) : null}
+      <Facts
+        items={[
+          paid && { label: 'Paid', value: formatMoney(paid, true) },
+          lost !== null &&
+            lost > 0 &&
+            currency && { label: 'Lost / yr', value: money(lost, currency) },
+          owned ? { label: 'Owned', value: owned } : null,
+        ]}
+      />
+    </Card>
+  );
+}
+
+function Health({ health, pending }: { health: VehicleHealth | undefined; pending: boolean }) {
+  const theme = useTheme();
+  const score = health?.overall ?? null;
+  const progress = useIgnition(score === null ? 0 : score / 100);
+  if (pending) return <Loading />;
+  // Unscored, it has nothing to draw: schedules, documents and a check give it something.
+  if (!health || score === null) return null;
+
+  const band = healthBand(score) ?? 'success';
+  const scored = health.categories.filter((category) => category.score !== null);
+  const factors = [...health.factors].sort((a, b) => b.penalty - a.penalty).slice(0, 4);
+
+  return (
+    <Card
+      label="Health"
+      trailing={
+        <Word color={theme[band]}>
+          {band === 'success' ? 'Good' : band === 'warning' ? 'Fair' : 'Poor'}
+        </Word>
+      }
+    >
+      <View style={styles.healthRow}>
+        <Gauge
+          progress={progress}
+          size={108}
+          color={theme[band]}
+          label={`Health ${score} out of 100`}
+        >
+          <Text style={[figure, styles.gaugeFigure, { color: theme.foreground }]}>{score}</Text>
+        </Gauge>
+        {scored.length > 0 ? (
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <RankBars
+              max={100}
+              rows={scored.map((category) => ({
+                key: category.category,
+                label: humanise(category.category),
+                value: category.score ?? 0,
+                display: String(category.score),
+                color: theme[healthBand(category.score) ?? 'success'],
+              }))}
+            />
+          </View>
+        ) : null}
+      </View>
+      {factors.length > 0 ? (
+        // What cost it points, worst first: the working behind the score, as a row of chips.
+        <View style={styles.chips}>
+          {factors.map((factor) => (
+            <View
+              key={`${factor.category}-${factor.label}`}
+              accessible
+              accessibilityLabel={`${factor.label}: ${factor.detail} Minus ${factor.penalty}`}
+              style={[styles.penalty, { backgroundColor: theme.muted }]}
+            >
+              <Text style={[figure, styles.penaltyFigure, { color: theme.destructive }]}>
+                −{factor.penalty}
+              </Text>
+              <Text numberOfLines={1} style={[typeScale.caption, { color: theme.foreground }]}>
+                {factor.label}
+              </Text>
+            </View>
+          ))}
         </View>
       ) : null}
+    </Card>
+  );
+}
 
-      <View style={styles.grid}>
-        <Tile label="Paid" value={paid ? formatMoney(paid, true) : '—'} note="purchase price" />
-        <Tile
-          label="Owned"
-          value={owned ?? '—'}
-          note={
-            purchaseDate
-              ? `since ${new Date(`${purchaseDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`
-              : 'no purchase date'
-          }
-        />
-      </View>
-    </View>
+/** The latest judgement of each part, as bars in its band's colour. */
+function Condition({ vehicleId }: { vehicleId: string }) {
+  const theme = useTheme();
+  const condition = useQuery(conditionSummaryQuery(api, vehicleId));
+  const parts = condition.data?.categories.filter((part) => part.score !== null) ?? [];
+  const overall = condition.data?.overallScore ?? null;
+  if (parts.length === 0) return null;
+  return (
+    <Card label="Condition" trailing={overall === null ? null : <Tag>{`${overall} / 100`}</Tag>}>
+      <RankBars
+        max={100}
+        columns={2}
+        rows={parts.map((part) => ({
+          key: part.category,
+          label: humanise(part.category),
+          value: part.score ?? 0,
+          display: String(part.score),
+          color: theme[healthBand(part.score) ?? 'success'],
+        }))}
+      />
+    </Card>
   );
 }
 
@@ -1312,23 +1016,25 @@ function Distance({
   odometer,
   unit,
   engineHours,
-  pending,
   years,
   onLog,
 }: {
   odometer: number | null;
   unit: 'KM' | 'MI';
   engineHours: number | null;
-  pending: boolean;
   years: CostTrends['distancePerYear'];
   onLog?: () => void;
 }) {
+  const theme = useTheme();
   const colors = useChartColors();
-  if (pending) return <HeroSkeleton />;
   const recent = years.slice(-6);
+  const yearly = distancePerYear(years);
 
   return (
-    <View style={{ gap: spacing.xl }}>
+    <Card
+      label="Odometer"
+      trailing={engineHours !== null ? <Tag>{`${engineHours.toLocaleString()} h`}</Tag> : null}
+    >
       <PressableScale
         onPress={
           onLog
@@ -1342,24 +1048,23 @@ function Distance({
         accessibilityRole="button"
         accessibilityLabel={`Odometer: ${formatDistance(odometer, unit)}`}
         accessibilityHint="Record a new reading"
-        scaleTo={0.98}
+        scaleTo={0.97}
+        style={styles.odometer}
       >
-        <Hero
-          label="Odometer"
-          value={formatDistance(odometer, unit)}
-          caption={
-            engineHours !== null
-              ? `${engineHours.toLocaleString()} engine hours`
-              : onLog
-                ? 'Tap to record a new reading'
-                : undefined
-          }
-          action
-        />
+        <Odometer value={odometer} size={20} />
+        <Text style={[figure, styles.odometerUnit, { color: theme.mutedForeground }]}>{unit}</Text>
+        {onLog ? (
+          <View style={[styles.round, { marginLeft: 'auto', backgroundColor: theme.muted }]}>
+            <Ionicons name="add" size={16} color={theme.foreground} />
+          </View>
+        ) : null}
       </PressableScale>
-
       {recent.length >= 2 ? (
         <ColumnChart
+          large={false}
+          label="Per year"
+          total={yearly ?? undefined}
+          height={64}
           buckets={recent.map((row) => ({
             key: String(row.year),
             label: `’${String(row.year).slice(2)}`,
@@ -1368,184 +1073,373 @@ function Distance({
           }))}
           series={[{ key: 'distance', label: 'Driven', color: colors.muted }]}
           format={(value) => formatDistance(value, recent[0]!.distanceUnit)}
-          caption="Driven per year"
+          formatAxis={compact}
         />
-      ) : (
-        <Body>A second reading, a while after the first, draws how far it goes each year.</Body>
-      )}
-    </View>
-  );
-}
-
-function Health({ health, pending }: { health: VehicleHealth | undefined; pending: boolean }) {
-  const theme = useTheme();
-  if (pending) return <HeroSkeleton />;
-  const score = health?.overall ?? null;
-  if (!health || score === null) {
-    return (
-      <View style={{ gap: spacing.sm }}>
-        <Hero label="Score" value="—" caption="Not scored yet" />
-        <Body>Schedules, documents and a condition check give it something to score.</Body>
-      </View>
-    );
-  }
-
-  const status = healthStatus(score);
-  const scored = health.categories.filter((category) => category.score !== null);
-  const factors = [...health.factors].sort((a, b) => b.penalty - a.penalty).slice(0, 6);
-
-  return (
-    <View style={{ gap: spacing.xl }}>
-      <View style={{ gap: spacing.sm }}>
-        <Hero
-          label="Score"
-          value={String(score)}
-          unit="/ 100"
-          status={{
-            key: status,
-            text: status === 'good' ? 'Good' : status === 'warning' ? 'Fair' : 'Poor',
-          }}
-          caption={health.summary}
-        />
-        {/* Ten cells, as many lit as the score has tens, in its status colour. */}
-        <View accessible accessibilityLabel={`Health ${score} out of 100`} style={styles.cells}>
-          {Array.from({ length: 10 }, (_, index) => (
-            <View
-              key={index}
-              style={[
-                styles.cell,
-                { backgroundColor: index < Math.round(score / 10) ? STATUS[status] : theme.muted },
-              ]}
-            />
-          ))}
-        </View>
-      </View>
-
-      {scored.length > 0 ? (
-        <View style={{ gap: spacing.sm }}>
-          <Eyebrow>By area</Eyebrow>
-          <RankBars
-            max={100}
-            rows={scored.map((category) => ({
-              key: category.category,
-              label: humanise(category.category),
-              note: category.basis,
-              value: category.score ?? 0,
-              display: String(category.score),
-              color: STATUS[healthStatus(category.score ?? 0)],
-            }))}
-          />
-        </View>
       ) : null}
-
-      {factors.length > 0 ? (
-        <View style={{ gap: spacing.sm }}>
-          <Eyebrow>What cost it points</Eyebrow>
-          <RankBars
-            rows={factors.map((factor) => ({
-              key: `${factor.category}-${factor.label}`,
-              label: factor.label,
-              note: factor.detail,
-              value: factor.penalty,
-              display: `−${factor.penalty}`,
-              color: STATUS.critical,
-            }))}
-          />
-        </View>
-      ) : null}
-    </View>
+    </Card>
   );
 }
 
 /* ——— Pieces ——— */
 
-/** Sections in the house style: numbered, named, each in its own card, rising in turn. */
-function Sections({
-  sections,
-}: {
-  sections: readonly { key: string; title: string; glyph: string; body: ReactNode }[];
-}) {
+/**
+ * The report's parts as tabs, not chips: words on a rule, the chosen one in ink with a copper bar
+ * under it that glides to the next — navigation, so it should not look like the Logs' filters.
+ * Scrolls sideways when the parts outrun the screen, keeping the chosen one in view.
+ */
+function ReportTabs({ value, onChange }: { value: ReportTab; onChange: (tab: ReportTab) => void }) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const scroller = useRef<ScrollView>(null);
+  const placed = useRef(false);
+  const [frames, setFrames] = useState<Partial<Record<ReportTab, { x: number; width: number }>>>(
+    {},
+  );
+  const [left] = useState(() => new Animated.Value(0));
+  const [width] = useState(() => new Animated.Value(0));
+  const frame = frames[value];
+
+  useEffect(() => {
+    if (!frame) return;
+    if (reduce || !placed.current) {
+      placed.current = true;
+      left.setValue(frame.x);
+      width.setValue(frame.width);
+      return;
+    }
+    // Width is a layout prop, so the bar rides the JS driver; one bar, a few frames.
+    const glide = (to: Animated.Value, toValue: number) =>
+      Animated.spring(to, { toValue, useNativeDriver: false, ...spring.glide });
+    const animation = Animated.parallel([glide(left, frame.x), glide(width, frame.width)]);
+    animation.start();
+    scroller.current?.scrollTo({ x: Math.max(0, frame.x - spacing.xxl), animated: true });
+    return () => animation.stop();
+  }, [frame, reduce, left, width]);
+
   return (
-    <View style={{ gap: spacing.lg }}>
-      {sections.map((section, index) => (
-        <Rise key={section.key} index={index} style={{ gap: spacing.sm }}>
-          <SectionHead index={index + 1} title={section.title} glyph={section.glyph} />
-          <Card>{section.body}</Card>
+    <View style={[styles.tabs, { borderBottomColor: theme.border }]}>
+      <ScrollView
+        ref={scroller}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabsRow}
+        accessibilityRole="tablist"
+      >
+        {REPORT_TABS.map((item) => {
+          const selected = item.value === value;
+          return (
+            <PressableScale
+              key={item.value}
+              onLayout={(event) => {
+                const { x, width: span } = event.nativeEvent.layout;
+                setFrames((known) => ({ ...known, [item.value]: { x, width: span } }));
+              }}
+              onPress={() => {
+                if (selected) return;
+                haptic.selection();
+                onChange(item.value);
+              }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+              accessibilityLabel={item.label}
+              hitSlop={{ top: 6, bottom: 6 }}
+              scaleTo={0.96}
+              style={styles.tab}
+            >
+              <Text
+                style={[
+                  styles.tabLabel,
+                  { color: selected ? theme.foreground : theme.mutedForeground },
+                ]}
+              >
+                {item.label}
+              </Text>
+            </PressableScale>
+          );
+        })}
+        {frame ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.tabBar, { backgroundColor: theme.primary, left, width }]}
+          />
+        ) : null}
+      </ScrollView>
+    </View>
+  );
+}
+
+/** A part's cards, rising into place in turn. */
+function Stack({ children }: { children: ReactNode }) {
+  return (
+    <View style={{ gap: spacing.md }}>
+      {Children.toArray(children).map((child, index) => (
+        <Rise key={index} index={index}>
+          {child}
         </Rise>
       ))}
     </View>
   );
 }
 
-/** A tab's latest entries, read-only: recording and correcting are the dock's and the entry's. */
-function Recent({ rows }: { rows: readonly LedgerRow[] }) {
-  const [all, setAll] = useState(false);
-  if (rows.length === 0) return <Body>Nothing recorded in this period.</Body>;
-  const shown = all ? rows : rows.slice(0, 5);
+function Card({
+  label,
+  trailing,
+  children,
+  style,
+}: {
+  label?: string;
+  trailing?: ReactNode;
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const theme = useTheme();
   return (
-    <View style={{ gap: spacing.sm }}>
-      {shown.map((row) => (
-        <Row
-          key={row.id}
-          title={row.description}
-          meta={`${DAY_MONTH.format(new Date(row.occurredAt))} · ${humanise(row.category)}${row.vendor ? ` · ${row.vendor}` : ''}`}
-          trailing={formatMoney(row.amount)}
-        />
+    <View style={[styles.card, { backgroundColor: theme.card }, style]}>
+      {label ? (
+        <View style={styles.cardHead}>
+          <Eyebrow style={{ flex: 1 }}>{label}</Eyebrow>
+          {trailing}
+        </View>
+      ) : null}
+      {children}
+    </View>
+  );
+}
+
+interface Kpi {
+  label: string;
+  value: string;
+  unit?: string;
+  tone?: string;
+}
+
+/**
+ * The figures under a chart, as one strip of cells with hairlines between them — three across,
+ * four as two by two. Only those the record supports: a cell of dashes is noise.
+ */
+function Kpis({ items }: { items: (Kpi | null | false | undefined | '')[] }) {
+  const theme = useTheme();
+  const shown = items.filter((item): item is Kpi => Boolean(item));
+  if (shown.length === 0) return null;
+  const basis =
+    shown.length === 4 || shown.length === 2 ? '49%' : shown.length === 1 ? '100%' : '32%';
+  return (
+    <View style={[styles.kpis, { backgroundColor: theme.border }]}>
+      {shown.map((item) => (
+        <View
+          key={item.label}
+          accessible
+          accessibilityLabel={`${item.label}: ${item.value}${item.unit ? ` ${item.unit}` : ''}`}
+          style={[styles.kpi, { flexBasis: basis, backgroundColor: theme.card }]}
+        >
+          <Eyebrow style={styles.kpiLabel}>{item.label}</Eyebrow>
+          <View style={styles.kpiLine}>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              style={[figure, styles.kpiValue, { color: item.tone ?? theme.foreground }]}
+            >
+              {item.value}
+            </Text>
+            {item.unit ? (
+              <Text
+                numberOfLines={1}
+                style={[figure, styles.kpiUnit, { color: theme.mutedForeground }]}
+              >
+                {item.unit}
+              </Text>
+            ) : null}
+          </View>
+        </View>
       ))}
-      {rows.length > 5 ? (
-        <Button
-          label={all ? 'Show fewer' : `Show all ${rows.length}`}
-          onPress={() => setAll((open) => !open)}
-        />
+    </View>
+  );
+}
+
+/** A card's own figure, large in mono, its unit small beside it. */
+function Figure({ value, unit, large = false }: { value: string; unit?: string; large?: boolean }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.figureLine}>
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+        style={[figure, large ? styles.figureLarge : styles.figure, { color: theme.foreground }]}
+      >
+        {value}
+      </Text>
+      {unit ? (
+        <Text style={[figure, styles.kpiUnit, { color: theme.mutedForeground }]}>{unit}</Text>
       ) : null}
     </View>
   );
 }
 
-function Row({
-  title,
-  meta,
-  trailing,
-  status,
+/** Small figures at a card's foot, side by side: label over value. */
+function Facts({
+  items,
 }: {
-  title: string;
-  meta: string;
-  trailing: string;
-  status?: StatusKey;
+  items: (false | null | undefined | '' | { label: string; value: string })[];
 }) {
   const theme = useTheme();
+  const shown = items.filter((item): item is { label: string; value: string } => Boolean(item));
+  if (shown.length === 0) return null;
   return (
-    <View
-      accessible
-      accessibilityLabel={`${title}, ${meta}, ${trailing}`}
-      style={[styles.row, { backgroundColor: theme.muted }]}
-    >
-      <View style={[styles.rowRule, { backgroundColor: status ? STATUS[status] : theme.border }]} />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={[typeScale.label, { color: theme.foreground }]}>
-          {title}
-        </Text>
-        <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-          {meta}
-        </Text>
-      </View>
-      <Text style={[figure, styles.rowValue, { color: theme.foreground }]}>{trailing}</Text>
+    <View style={[styles.facts, { borderTopColor: theme.border }]}>
+      {shown.map((item) => (
+        <View
+          key={item.label}
+          accessible
+          accessibilityLabel={`${item.label}: ${item.value}`}
+          style={{ flex: 1, gap: 2 }}
+        >
+          <Eyebrow style={styles.kpiLabel}>{item.label}</Eyebrow>
+          <Text numberOfLines={1} style={[figure, styles.factValue, { color: theme.foreground }]}>
+            {item.value}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
 
-/** A plan's wall, in the tab it guards: what the tab would show, and the one way to get it. */
-function Locked({ wall, title, text }: { wall: PlanWall; title: string; text: string }) {
+/** A change, as an arrow and a percentage in good-news or worth-a-look colours. */
+function Delta({ change, good }: { change: number; good: 'up' | 'down' }) {
+  const theme = useTheme();
+  const up = change > 0;
+  const fine = change === 0 || up === (good === 'up');
+  return (
+    <View style={[styles.tag, { backgroundColor: fine ? theme.successSoft : theme.warningSoft }]}>
+      <Text style={[figure, styles.tagText, { color: fine ? theme.success : theme.warning }]}>
+        {up ? '▲' : change < 0 ? '▼' : '='} {Math.abs(change)}%
+      </Text>
+    </View>
+  );
+}
+
+function Tag({ children }: { children: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.tag, { backgroundColor: theme.muted }]}>
+      <Text style={[figure, styles.tagText, { color: theme.mutedForeground }]}>{children}</Text>
+    </View>
+  );
+}
+
+/** A status word with its dot, so no state is told by colour alone. */
+function Word({ color, children }: { color: string; children: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.tag, { backgroundColor: theme.muted }]}>
+      <View style={[styles.dot, { backgroundColor: color }]} />
+      <Text style={[styles.tagText, { fontWeight: '700', color: theme.foreground }]}>
+        {children}
+      </Text>
+    </View>
+  );
+}
+
+function Swatch({ color, label }: { color: string; label: string }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.swatchItem}>
+      <View style={[styles.dot, { borderRadius: 2.5, backgroundColor: color }]} />
+      <Text numberOfLines={1} style={[styles.swatchText, { color: theme.mutedForeground }]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * A part's entries, folded away: the figures above are the point, and the record itself is the
+ * Logs tab's. Opened, the newest first, read-only.
+ */
+function Entries({ rows }: { rows: readonly LedgerRow[] }) {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  if (rows.length === 0) return null;
+  return (
+    <Card>
+      <PressableScale
+        onPress={() => {
+          haptic.selection();
+          setOpen((shown) => !shown);
+        }}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`Entries, ${rows.length}`}
+        scaleTo={0.98}
+        style={styles.cardHead}
+      >
+        <Eyebrow style={{ flex: 1 }}>Entries</Eyebrow>
+        <Tag>{pad(rows.length)}</Tag>
+        <Ionicons
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={14}
+          color={theme.mutedForeground}
+        />
+      </PressableScale>
+      {open
+        ? rows.map((row) => (
+            <View
+              key={row.id}
+              accessible
+              accessibilityLabel={`${row.description}, ${DAY_MONTH.format(new Date(row.occurredAt))}, ${formatMoney(row.amount)}`}
+              style={styles.entry}
+            >
+              <Text style={[figure, styles.entryDate, { color: theme.mutedForeground }]}>
+                {DAY_MONTH.format(new Date(row.occurredAt)).toUpperCase()}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[typeScale.caption, styles.entryTitle, { color: theme.foreground }]}
+              >
+                {row.vendor ?? row.description}
+              </Text>
+              <Text style={[figure, styles.entryAmount, { color: theme.foreground }]}>
+                {formatMoney(row.amount)}
+              </Text>
+            </View>
+          ))
+        : null}
+    </Card>
+  );
+}
+
+/** A plan's wall, in the part it guards: what it would show, and the one way to get it. */
+function Locked({ wall, title }: { wall: PlanWall; title: string }) {
   const theme = useTheme();
   return (
     <Card>
-      <View style={{ gap: spacing.sm }}>
-        <Eyebrow>
-          {wall.requiredPlan ? `${PLAN_NAMES[wall.requiredPlan]} plan` : 'Paid plan'}
-        </Eyebrow>
-        <Text style={[typeScale.headline, { color: theme.foreground }]}>{title}</Text>
-        <Body>{text}</Body>
-        <Button label="See plans" variant="primary" onPress={() => showUpgrade(wall)} />
+      <View style={styles.lockRow}>
+        <View style={[styles.lockTile, { backgroundColor: theme.primarySoft }]}>
+          <Ionicons name="lock-closed" size={16} color={theme.primary} />
+        </View>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Eyebrow>
+            {wall.requiredPlan ? `${PLAN_NAMES[wall.requiredPlan]} plan` : 'Paid plan'}
+          </Eyebrow>
+          <Text style={[typeScale.headline, { color: theme.foreground }]}>{title}</Text>
+        </View>
+      </View>
+      <Button label="See plans" variant="primary" size="sm" onPress={() => showUpgrade(wall)} />
+    </Card>
+  );
+}
+
+/** Nothing in this period: the part's glyph and a few words, not a paragraph. */
+function Empty({ glyph, text }: { glyph: string; text: string }) {
+  const theme = useTheme();
+  return (
+    <Card>
+      <View style={styles.lockRow}>
+        <View style={[styles.lockTile, { backgroundColor: theme.muted }]}>
+          <Glyph size={16}>{glyph}</Glyph>
+        </View>
+        <Text style={[typeScale.label, { flex: 1, color: theme.mutedForeground }]}>{text}</Text>
       </View>
     </Card>
   );
@@ -1553,243 +1447,115 @@ function Locked({ wall, title, text }: { wall: PlanWall; title: string; text: st
 
 /** What the totals left out, named rather than converted at a guess. */
 function Excluded({ rows }: { rows: readonly { currency: string; amountMinor: number }[] }) {
+  const theme = useTheme();
   if (rows.length === 0) return null;
   return (
-    <Body>
-      Not included, in other currencies:{' '}
+    <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+      +{' '}
       {rows
-        .map((row) => formatMoney({ amountMinor: row.amountMinor, currency: row.currency }))
-        .join(', ')}
-      .
-    </Body>
+        .map((row) => formatMoney({ amountMinor: row.amountMinor, currency: row.currency }, true))
+        .join(' + ')}{' '}
+      not counted
+    </Text>
   );
 }
 
-/** A section's name, set as the house sets steps: the glyph of its kind, the title, a mono number. */
-function SectionHead({ index, title, glyph }: { index: number; title: string; glyph: string }) {
-  const theme = useTheme();
+function Loading() {
   return (
-    <View style={styles.head}>
-      <View style={[styles.headGlyph, { backgroundColor: theme.card }]}>
-        <Glyph size={16}>{glyph}</Glyph>
-      </View>
-      <Text
-        accessibilityRole="header"
-        style={[typeScale.title, { flex: 1, color: theme.foreground }]}
-      >
-        {title}
-      </Text>
-      <Text style={[figure, styles.headIndex, { color: theme.mutedForeground }]}>{pad(index)}</Text>
-    </View>
-  );
-}
-
-function Card({ children }: { children: ReactNode }) {
-  const theme = useTheme();
-  return <View style={[styles.card, { backgroundColor: theme.card }]}>{children}</View>;
-}
-
-function Body({ children }: { children: ReactNode }) {
-  const theme = useTheme();
-  return <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>{children}</Text>;
-}
-
-/** A status told three ways — a dot in its colour, a word, and the figure beside it. */
-function StatusChip({ status }: { status: { key: StatusKey; text: string } }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.statusChip, { backgroundColor: theme.muted }]}>
-      <View style={[styles.statusDot, { backgroundColor: STATUS[status.key] }]} />
-      <Text style={[typeScale.caption, { fontWeight: '700', color: theme.foreground }]}>
-        {status.text}
-      </Text>
-    </View>
-  );
-}
-
-/**
- * The one number a section is about: its label, the figure large in mono, its unit small beside
- * it, a status where the figure is good or bad news, and a line saying what it is of.
- */
-function Hero({
-  label,
-  value,
-  unit,
-  caption,
-  status,
-  action = false,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  caption?: string;
-  status?: { key: StatusKey; text: string };
-  action?: boolean;
-}) {
-  const theme = useTheme();
-  return (
-    <View style={{ gap: 3 }}>
-      <View style={styles.between}>
-        <Eyebrow>{label}</Eyebrow>
-        {action ? (
-          <Ionicons name="chevron-forward" size={13} color={theme.mutedForeground} />
-        ) : null}
-      </View>
-      <View style={styles.heroLine}>
-        <Text
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.6}
-          style={[figure, styles.heroValue, { color: theme.foreground }]}
-        >
-          {value}
-        </Text>
-        {unit ? (
-          <Text style={[figure, styles.heroUnit, { color: theme.mutedForeground }]}>{unit}</Text>
-        ) : null}
-        {status ? <StatusChip status={status} /> : null}
-      </View>
-      {caption ? (
-        <Text numberOfLines={2} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-          {caption}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
-function HeroSkeleton() {
-  return (
-    <View style={{ gap: 6 }}>
-      <Skeleton width={80} height={11} />
-      <Skeleton width={150} height={28} />
-      <Skeleton width="100%" height={96} radius={radius.md} />
-    </View>
-  );
-}
-
-interface TileProps {
-  label: string;
-  value: string;
-  unit?: string;
-  note?: string;
-  status?: { key: StatusKey; text: string };
-}
-
-/** A secondary figure, two to a row: label, figure with its unit, what it is of, and any status. */
-function Tile({ label, value, unit, note, status }: TileProps) {
-  const theme = useTheme();
-  return (
-    <View
-      accessible
-      accessibilityLabel={`${label}: ${value}${unit ? ` ${unit}` : ''}${note ? `, ${note}` : ''}${status ? `, ${status.text}` : ''}`}
-      style={[styles.tile, { backgroundColor: theme.muted }]}
-    >
-      <Eyebrow style={{ fontSize: 10 }}>{label}</Eyebrow>
-      <View style={styles.tileLine}>
-        <Text
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.7}
-          style={[figure, styles.tileValue, { color: theme.foreground }]}
-        >
-          {value}
-        </Text>
-        {unit ? (
-          <Text style={[figure, styles.tileUnit, { color: theme.mutedForeground }]}>{unit}</Text>
-        ) : null}
-      </View>
-      {note ? (
-        <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-          {note}
-        </Text>
-      ) : null}
-      {status ? (
-        <View style={styles.tileStatus}>
-          <View style={[styles.statusDot, { backgroundColor: STATUS[status.key] }]} />
-          <Text
-            numberOfLines={1}
-            style={[
-              typeScale.caption,
-              { flexShrink: 1, fontWeight: '600', color: theme.foreground },
-            ]}
-          >
-            {status.text}
-          </Text>
-        </View>
-      ) : null}
-    </View>
+    <Card>
+      <Skeleton width={90} height={11} />
+      <Skeleton width={150} height={30} />
+      <Skeleton width="100%" height={112} radius={radius.md} />
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  between: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  card: { borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm },
-  head: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  headGlyph: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.md,
+  // Edge to edge under the bar, a hairline rule the chosen tab's bar sits on.
+  tabs: { marginHorizontal: -spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth },
+  tabsRow: { gap: spacing.xl, paddingHorizontal: spacing.lg },
+  tab: { paddingTop: 4, paddingBottom: 11 },
+  tabLabel: { fontSize: 14.5, lineHeight: 19, fontWeight: '600', letterSpacing: -0.1 },
+  tabBar: { position: 'absolute', bottom: 0, height: 2.5, borderRadius: 2 },
+  card: { borderRadius: radius.xxl, padding: spacing.lg, gap: spacing.md },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 22 },
+  pair: { flexDirection: 'row', gap: spacing.md },
+  half: { flex: 1, minWidth: 0 },
+  trail: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  round: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headIndex: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
-  tabChip: {
+  kpis: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: 36,
-    paddingHorizontal: 13,
-    borderRadius: 999,
-  },
-  heroLine: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
     flexWrap: 'wrap',
-    columnGap: 6,
-    rowGap: 4,
+    gap: StyleSheet.hairlineWidth * 2,
+    borderRadius: radius.xxl,
+    overflow: 'hidden',
   },
-  heroValue: { fontSize: 26, lineHeight: 31, fontWeight: '700', flexShrink: 1 },
-  heroUnit: { fontSize: 13, fontWeight: '600' },
-  statusChip: {
-    alignSelf: 'center',
+  kpi: { flexGrow: 1, minWidth: 0, gap: 4, paddingHorizontal: 14, paddingVertical: 12 },
+  kpiLabel: { fontSize: 10, lineHeight: 13 },
+  kpiLine: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+  kpiValue: { flexShrink: 1, fontSize: 18, lineHeight: 23, fontWeight: '700', letterSpacing: -0.5 },
+  kpiUnit: { fontSize: 11, fontWeight: '600' },
+  figureLine: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
+  figure: { flexShrink: 1, fontSize: 22, lineHeight: 27, fontWeight: '700', letterSpacing: -0.7 },
+  figureLarge: {
+    flexShrink: 1,
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: '700',
+    letterSpacing: -1,
+  },
+  facts: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth * 2,
+    paddingTop: spacing.md,
+  },
+  factValue: { fontSize: 14, lineHeight: 18, fontWeight: '700' },
+  tag: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
     borderRadius: 999,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
   },
-  statusDot: { width: 7, height: 7, borderRadius: 999 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  tile: {
-    flexGrow: 1,
-    flexBasis: '46%',
-    minWidth: 0,
-    gap: 2,
-    borderRadius: radius.md,
-    padding: 10,
-  },
-  tileLine: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
-  tileValue: { fontSize: 17, lineHeight: 21, fontWeight: '700', flexShrink: 1 },
-  tileUnit: { fontSize: 11, fontWeight: '600' },
-  tileStatus: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  cells: { flexDirection: 'row', gap: 3 },
-  cell: { flex: 1, height: 8, borderRadius: 2 },
-  row: {
+  tagText: { fontSize: 11, lineHeight: 14, fontWeight: '600' },
+  dot: { width: 7, height: 7, borderRadius: 999 },
+  split: { flexDirection: 'row', gap: 2, height: 8 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 10, rowGap: 2 },
+  swatchItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  swatchText: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
+  healthRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
+  gaugeFigure: { fontSize: 22, lineHeight: 26, fontWeight: '700', letterSpacing: -0.6 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  penalty: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    borderRadius: radius.md,
-    paddingVertical: 9,
-    paddingRight: 10,
-    overflow: 'hidden',
+    gap: 6,
+    maxWidth: '100%',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  rowRule: { width: 3, alignSelf: 'stretch', borderRadius: 2, marginRight: 4 },
-  rowValue: { fontSize: 13, fontWeight: '700' },
+  penaltyFigure: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
+  odometer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  odometerUnit: { fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
+  entry: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 28 },
+  entryDate: { width: 48, fontSize: 10, fontWeight: '600', letterSpacing: 0.4 },
+  entryTitle: { flex: 1, fontWeight: '500' },
+  entryAmount: { fontSize: 12, fontWeight: '700' },
+  lockRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  lockTile: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

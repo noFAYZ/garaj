@@ -4,7 +4,7 @@
  */
 
 import type { Vehicle } from '@vehicle-os/contracts';
-import { parsePlanned } from './quick-entry';
+import { parsePlanned } from '@vehicle-os/ui';
 
 /** What a line reads as: a question for Ask, or something to put on a vehicle's record. */
 export type Intent =

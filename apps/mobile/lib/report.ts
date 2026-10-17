@@ -21,7 +21,7 @@ export const REPORT_TABS = [
   { value: 'refueling', label: 'Refueling', glyph: '⛽' },
   { value: 'expenses', label: 'Expenses', glyph: '🧾' },
   { value: 'income', label: 'Income', glyph: '💵' },
-  { value: 'services', label: 'Services', glyph: '🔧' },
+  { value: 'services', label: 'Services', glyph: '🧰' },
   { value: 'routes', label: 'Routes', glyph: '🛣️' },
 ] as const;
 export type ReportTab = (typeof REPORT_TABS)[number]['value'];

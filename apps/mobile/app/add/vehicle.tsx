@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -17,20 +17,41 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   DISTANCE_UNITS,
   VEHICLE_TYPES,
-  specFieldsFor,
+  isKnownCurrency,
+  supports,
+  validateSpecs,
   type DistanceUnit,
   type VehicleType,
 } from '@vehicle-os/domain';
+import type { AiAttachment, LookUpVehicle, VinDecodeResult } from '@vehicle-os/contracts';
 import { ApiError } from '@vehicle-os/api-client';
 import { garagesQuery, queryKeys } from '@vehicle-os/api-client/react';
-import { digitsOnly, domainForMake } from '@vehicle-os/ui';
+import {
+  VEHICLE_MAKES,
+  asVin,
+  digitsOnly,
+  domainForMake,
+  dropExtra,
+  extraChips,
+  splitDraft,
+  typeForMake,
+  type VehicleAnswers,
+  type VehicleExtras,
+} from '@vehicle-os/ui';
 import { newId } from '@vehicle-os/utils';
+import { Fact, Line } from '@/components/add-kit';
 import { BrandLogo } from '@/components/brand-logo';
 import { api } from '@/lib/api';
 import { enqueue, enqueueUpload, flush } from '@/lib/offline';
-import { fromParams, pickPhotos, type FileParams, type PickedFile } from '@/lib/file-picker';
-import { humanise } from '@/lib/format';
-import { Eyebrow, FigureInput, Glyph, Panel, PanelCell, Segmented } from '@/lib/instrument';
+import {
+  fromParams,
+  pickPhotos,
+  readBase64,
+  type FileParams,
+  type PickedFile,
+} from '@/lib/file-picker';
+import { humanise, toMinorUnits } from '@/lib/format';
+import { Eyebrow, Glyph, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { haptic, Odometer, Pop, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
 import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -51,24 +72,32 @@ const TYPE_GLYPH: Record<VehicleType, string> = {
   OTHER: '🔧',
 };
 
+/** `humanise` turns every enum into a word, which prints the acronyms as "Atv" and "Rv". */
+const typeLabel = (type: VehicleType) => (type === 'ATV' || type === 'RV' ? type : humanise(type));
+
 /** A plate is a physical thing: the same cream and ink whichever theme the phone is in. */
 const PLATE = { ground: '#F3EFE6', ink: '#17130E', hint: 'rgba(23,19,14,0.28)' } as const;
 
 const MAX_ODOMETER = 100_000_000;
 /** Enough to show it from every side; more is a gallery job for the vehicle's own page. */
 const MAX_PHOTOS = 8;
-const THIS_YEAR = new Date().getFullYear();
+const NEXT_YEAR = new Date().getFullYear() + 1;
+/** The reader's limit on a photo, as base64 (about 3 MB of picture). */
+const READ_LIMIT = 4_000_000;
+const READABLE = new Set<string>(['image/jpeg', 'image/png', 'image/webp']);
+const EMPTY: VehicleAnswers = { name: '', make: '', model: '', year: '', plate: '', odometer: '' };
 
 /**
- * A new vehicle, on one screen and built as it is answered.
+ * A new vehicle: five questions, or one sentence — the web's dialog, on a screen.
  *
- * The card at the top is the vehicle itself, not a summary of the form: its badge turns from the
- * kind of vehicle into the maker's mark as the make is typed (or into its cover photo, the badge
- * being where photos are added), its name is typed on the card with the year, make and model as
- * the name it gets otherwise, and two more answers are given on the card — the registration typed
- * onto a plate, the reading rolled onto the odometer's own drums. Under it, the rest in as few rows as they fit:
- * the kind as one rail, make · model · year as one row, the VIN that can fill them in. Nothing
- * scrolls at rest; the button is pinned, so it rides up with the keyboard.
+ * Top to bottom, as on the web: the vehicle itself — its photo badge, its name typed onto the card,
+ * what it is and which garage it goes into — then one line, then the five answers as one panel:
+ * make, model and year, the registration typed onto a plate, the reading rolled onto the
+ * odometer's own drums. The type follows the make (a Ducati is a motorcycle) until it is chosen.
+ *
+ * The line takes a description and reads it into the panel, or a VIN and decodes it. What either
+ * finds that the panel has no question for — the VIN, the colour, the price paid, the factory specs
+ * — goes with the vehicle as chips that can be dropped; everything else is on the vehicle's page.
  *
  * The unit is asked, not assumed: a vehicle recorded in the wrong one is wrong at the one moment
  * the answer is unrecoverable, and every figure derived from it afterwards is out by 1.6.
@@ -78,16 +107,13 @@ export default function AddVehicleScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const plateInput = useRef<TextInput>(null);
-  const odometerInput = useRef<TextInput>(null);
-  const [pickingGarage, setPickingGarage] = useState(false);
   // A photo taken from the add sheet becomes the new vehicle's cover; a garage's + names its garage.
   const params = useLocalSearchParams<FileParams & { garageId?: string }>();
   const [photos, setPhotos] = useState<PickedFile[]>(() => {
     const first = fromParams(params);
     return first ? [first] : [];
   });
-  const [photosOpen, setPhotosOpen] = useState(false);
+  const [sheet, setSheet] = useState<'photos' | 'type' | 'garage' | null>(null);
   const [photoBusy, setPhotoBusy] = useState<'camera' | 'library' | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const cover = photos[0] ?? null;
@@ -96,92 +122,180 @@ export default function AddVehicleScreen() {
 
   const garages = useQuery(garagesQuery(api));
   const [garageId, setGarageId] = useState<string | null>(params.garageId ?? null);
-  const [vehicleType, setVehicleType] = useState<VehicleType>('CAR');
-  const [nickname, setNickname] = useState('');
-  const [make, setMake] = useState('');
-  const [model, setModel] = useState('');
-  const [year, setYear] = useState('');
-  const [plate, setPlate] = useState('');
-  const [vin, setVin] = useState('');
-  const [vinSpecs, setVinSpecs] = useState<Record<string, string | number>>({});
-  const [odometer, setOdometer] = useState('');
+  const [answers, setAnswers] = useState<VehicleAnswers>(EMPTY);
+  const [chosenType, setChosenType] = useState<VehicleType | null>(null);
+  const [extras, setExtras] = useState<VehicleExtras>({});
+  // What the line or a VIN filled, and no hand has touched since: marked ✦ until it is.
+  const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
+  const [line, setLine] = useState('');
+  const [filled, setFilled] = useState<{
+    from: 'vin' | 'line';
+    count: number;
+    decoded?: boolean;
+  } | null>(null);
+  const [makeFocused, setMakeFocused] = useState(false);
   // The unit chosen on You, until this vehicle is told otherwise.
   const profile = useProfile();
-  const [pickedUnit, setOdometerUnit] = useState<DistanceUnit | null>(null);
-  const odometerUnit: DistanceUnit = pickedUnit ?? profile.data?.distanceUnit ?? 'KM';
+  const [chosenUnit, setChosenUnit] = useState<DistanceUnit | null>(null);
+  const unit: DistanceUnit = chosenUnit ?? profile.data?.distanceUnit ?? 'KM';
+  const vehicleType: VehicleType = chosenType ?? typeForMake(answers.make) ?? 'CAR';
 
   const list = garages.data ?? [];
-  // One garage is the common case; asking which is a question with one answer.
-  const chosenGarage = garageId ?? list[0]?.id ?? null;
-  const reading = odometer ? Number(odometer) : null;
-  const yearError =
-    year.length === 4 && (Number(year) < 1885 || Number(year) > THIS_YEAR + 1)
-      ? `Between 1885 and ${THIS_YEAR + 1}`
-      : undefined;
+  /*
+   * Only a lone garage chooses itself. With more, the vehicle goes where the person says: the first
+   * in the list is an accident of sort order, and a car filed into the wrong garage is shared with
+   * the wrong people.
+   */
+  const chosenGarage = garageId ?? (list.length === 1 ? list[0]!.id : null);
+  const garage = list.find((candidate) => candidate.id === chosenGarage);
+  const currency =
+    extras.purchaseCurrency && isKnownCurrency(extras.purchaseCurrency)
+      ? extras.purchaseCurrency
+      : (garage?.defaultCurrency ?? 'USD');
+
+  const set = (key: keyof VehicleAnswers, value: string) => {
+    setAnswers((now) => ({ ...now, [key]: value }));
+    setMarked((now) => {
+      if (!now.has(key)) return now;
+      const next = new Set(now);
+      next.delete(key);
+      return next;
+    });
+  };
+  const mark = (label: string, key: string) => (marked.has(key) ? `${label} ✦` : label);
+
+  const lookUp = useMutation({
+    mutationFn: (vehicle: LookUpVehicle) => api.ai.lookUpVehicle(vehicle),
+    meta: { toast: false },
+    onSuccess: (result) => {
+      if (Object.keys(result.specs).length === 0) return;
+      setExtras((now) => ({ ...now, specs: { ...result.specs, ...now.specs } }));
+    },
+  });
+
+  /*
+   * The line, read — a VIN decoded, anything else described. Needs signal: unlike the add itself, a
+   * read cannot be queued, and without one the panel simply stays as typed.
+   */
+  const vin = asVin(line);
+  const read = useMutation({
+    mutationFn: async () => {
+      if (vin) return { from: 'vin' as const, result: await api.vehicles.decodeVin(vin) };
+      // The cover still names the make, the model and the colour; one, to keep the read quick.
+      const photo = cover && READABLE.has(cover.mimeType) ? cover : null;
+      const data = photo ? await readBase64(photo.uri) : null;
+      const attachments =
+        photo && data && data.length <= READ_LIMIT
+          ? [{ mimeType: photo.mimeType as AiAttachment['mimeType'], data }]
+          : [];
+      return {
+        from: 'line' as const,
+        draft: await api.ai.draftVehicle({
+          text: line.trim() || 'Read the attached photo.',
+          ...(attachments.length ? { attachments } : {}),
+        }),
+      };
+    },
+    meta: { toast: false },
+    onSuccess: (outcome) => {
+      haptic.success();
+      if (outcome.from === 'vin') return applyVin(outcome.result);
+      const { answers: said, type, unit: saidUnit, extras: found } = splitDraft(outcome.draft);
+      // The line is the person's own words, so what it says replaces what was there.
+      const next = { ...answers, ...said };
+      setAnswers(next);
+      if (type) setChosenType(type as VehicleType);
+      if (saidUnit) setChosenUnit(saidUnit as DistanceUnit);
+      setExtras((now) => ({ ...now, ...found }));
+      setMarked(new Set([...marked, ...Object.keys(said), ...(type ? ['type'] : [])]));
+      setFilled({ from: 'line', count: Object.keys(said).length + (type ? 1 : 0) });
+      if (next.make && next.model) {
+        lookUp.mutate({
+          vehicleType: (type as VehicleType | null) ?? vehicleType,
+          make: next.make,
+          model: next.model,
+          ...(found.variant ? { variant: found.variant } : {}),
+          ...(next.year ? { year: Number(next.year) } : {}),
+        });
+      }
+    },
+  });
+  /*
+   * A decode fills only what is still empty: the person may have typed a model the VIN database
+   * spells differently, and silently replacing what someone wrote is the one thing a suggestion
+   * must never do.
+   */
+  function applyVin(result: VinDecodeResult) {
+    const took: string[] = [];
+    const fill = (key: keyof VehicleAnswers, value: string | number | null) => {
+      if (value === null || answers[key].trim()) return;
+      took.push(key);
+      setAnswers((now) => ({ ...now, [key]: String(value) }));
+    };
+    if (result.decoded) {
+      fill('make', result.make);
+      fill('model', result.model);
+      fill('year', result.year);
+    }
+    setExtras((now) => ({
+      ...now,
+      vin: result.vin,
+      ...(result.variant && !now.variant ? { variant: result.variant } : {}),
+      ...(Object.keys(result.specs).length ? { specs: { ...result.specs, ...now.specs } } : {}),
+    }));
+    setMarked(new Set([...marked, ...took]));
+    setFilled({ from: 'vin', count: took.length, decoded: result.decoded });
+    setLine('');
+  }
+
+  const reading = answers.odometer ? Number(answers.odometer) : null;
+  const yearOff =
+    answers.year.length === 4 && (Number(answers.year) < 1885 || Number(answers.year) > NEXT_YEAR);
   const odometerError =
     reading !== null && reading > MAX_ODOMETER ? 'That is past 100,000,000' : undefined;
 
-  /*
-   * A suggestion, never an overwrite: only fields still empty are filled, since the person may
-   * have typed a model the VIN database spells differently. Needs signal — unlike the create
-   * below, a lookup cannot be queued, and without one the form simply stays manual.
-   */
-  const lookUp = useMutation({
-    mutationFn: () => api.vehicles.decodeVin(vin),
-    meta: { toast: false },
-    onSuccess: (result) => {
-      if (!result.decoded) return;
-      haptic.success();
-      if (!make.trim() && result.make) setMake(result.make);
-      if (!model.trim() && result.model) setModel(result.model);
-      if (!year && result.year) setYear(String(result.year));
-      setVinSpecs(result.specs);
-    },
-  });
-  const vinFailed = lookUp.error instanceof ApiError;
-  const vinNote = lookUp.error
-    ? lookUp.error instanceof ApiError
-      ? (lookUp.error.fields?.vin ?? lookUp.error.message)
-      : 'No connection — fill it in below'
-    : lookUp.data
-      ? lookUp.data.decoded
-        ? `Found: ${[lookUp.data.year, lookUp.data.make, lookUp.data.model].filter(Boolean).join(' ')}`
-        : 'Not in the database — usually a VIN from outside the US'
-      : undefined;
-
   const create = useMutation({
     /*
-     * Queued, not posted — a vehicle is often added where it is standing, which is as likely to
-     * be a lock-up with no signal as anywhere else. Its id is chosen here rather than by the
-     * server, so the photo below and every entry afterwards can already name it, and so a replay
-     * of this write lands on the vehicle it already made rather than beside it.
+     * Queued, not posted — a vehicle is often added where it is standing, which is as likely to be
+     * a lock-up with no signal as anywhere else. Its id is chosen here rather than by the server,
+     * so the photos below and every entry afterwards can already name it, and so a replay of this
+     * write lands on the vehicle it already made rather than beside it.
      */
     mutationFn: async () => {
       const id = newId();
+      const text = (value: string | undefined) => value?.trim() || undefined;
+      // Only what this type has fields for and inside their bounds: a figure a look-up got wrong
+      // is left behind rather than refusing the whole vehicle.
+      const specs = validateSpecs(vehicleType, extras.specs ?? {}).specs;
+      const body = {
+        id,
+        garageId: chosenGarage!,
+        vehicleType,
+        nickname: text(answers.name),
+        make: text(answers.make),
+        model: text(answers.model),
+        year: answers.year.length === 4 ? Number(answers.year) : undefined,
+        registrationIdentifier: text(answers.plate)?.toUpperCase(),
+        ...(reading !== null ? { currentOdometer: reading, odometerUnit: unit } : {}),
+        identificationNumber: extras.vin,
+        variant: text(extras.variant),
+        color: text(extras.color),
+        purchaseDate: extras.purchaseDate,
+        ...(extras.purchasePrice
+          ? {
+              purchasePriceAmountMinor: toMinorUnits(extras.purchasePrice, currency),
+              purchasePriceCurrency: currency,
+            }
+          : {}),
+        ...(extras.engineHours && supports(vehicleType, 'engineHours')
+          ? { currentEngineHours: extras.engineHours }
+          : {}),
+        ...(Object.keys(specs).length ? { specs } : {}),
+      };
+      // Absent, not undefined: the queue keeps the body as JSON on disk.
       await enqueue({
         kind: 'vehicle-create',
-        body: {
-          id,
-          garageId: chosenGarage!,
-          vehicleType,
-          ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
-          ...(make.trim() ? { make: make.trim() } : {}),
-          ...(model.trim() ? { model: model.trim() } : {}),
-          ...(year.length === 4 ? { year: Number(year) } : {}),
-          ...(plate.trim() ? { registrationIdentifier: plate.trim().toUpperCase() } : {}),
-          ...(vin.trim() ? { identificationNumber: vin.trim() } : {}),
-          // Only the decoded specs this type has fields for; the server refuses any other key.
-          ...(Object.keys(vinSpecs).length > 0
-            ? {
-                specs: Object.fromEntries(
-                  specFieldsFor(vehicleType)
-                    .filter((field) => field.key in vinSpecs)
-                    .map((field) => [field.key, vinSpecs[field.key]!]),
-                ),
-              }
-            : {}),
-          ...(reading !== null ? { currentOdometer: reading, odometerUnit } : {}),
-        },
+        body: Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined)),
       });
 
       // Each photo is its own queued write, after the vehicle: the queue sends in order, so the
@@ -211,12 +325,22 @@ export default function AddVehicleScreen() {
   });
 
   const fieldErrors = create.error instanceof ApiError ? create.error.fields : undefined;
-  const spec = [year.length === 4 ? year : null, make.trim(), model.trim()]
+  const derived = [answers.year, answers.make.trim(), answers.model.trim()]
     .filter(Boolean)
     .join(' ');
-  const garageName = list.find((garage) => garage.id === chosenGarage)?.name ?? 'garage';
   // The maker's mark once the make is one the logo list knows; the kind of vehicle until then.
-  const branded = !cover && domainForMake(make.trim()) !== null;
+  const branded = !cover && domainForMake(answers.make.trim()) !== null;
+  const canRead = vin !== null || line.trim().length >= 3 || cover !== null;
+  const chips = extraChips(extras);
+  // The makes that start with what is typed, while it is typed: the web's list, as a rail.
+  const typedMake = answers.make.trim().toLowerCase();
+  const suggestions =
+    makeFocused && typedMake && !VEHICLE_MAKES.some((m) => m.name.toLowerCase() === typedMake)
+      ? VEHICLE_MAKES.filter((option) => option.name.toLowerCase().startsWith(typedMake)).slice(
+          0,
+          6,
+        )
+      : [];
 
   // Picked photos join the end; the library offers only as many as are left.
   const addPhotos = async (source: 'camera' | 'library') => {
@@ -236,21 +360,38 @@ export default function AddVehicleScreen() {
   };
   // One line for whatever is wrong, over the button — the rows above never grow to make room.
   const problem =
-    yearError ??
+    (yearOff ? `The year is between 1885 and ${NEXT_YEAR}` : undefined) ??
     odometerError ??
     (fieldErrors ? Object.values(fieldErrors)[0] : undefined) ??
     (create.isError ? (create.error as Error).message : undefined);
+  const lineSaid = read.isPending
+    ? vin
+      ? 'Decoding the VIN…'
+      : 'Reading…'
+    : read.isError
+      ? read.error instanceof ApiError && read.error.status === 503
+        ? 'GarajAI is not on here. Paste a VIN, or fill it in below.'
+        : 'Could not read that just now — it needs signal. Fill it in below.'
+      : filled
+        ? filled.from === 'vin' && !filled.decoded
+          ? 'Not in the VIN database — usually a VIN from outside the US. Kept with it.'
+          : filled.count === 0
+            ? filled.from === 'vin'
+              ? 'Decoded; the answers already there were kept.'
+              : 'Nothing to fill from that. Try a make, model and year.'
+            : `✦ ${filled.count} ${filled.from === 'vin' ? 'from the VIN' : 'read'} — check before adding`
+        : null;
 
   /*
    * Every way into this screen — the add sheet, a photo's destination list, a deep link — ends
    * here, so the ceiling is checked once, here, before a single question is asked. Only when the
-   * person's own plan is the one that decides (they own every garage they could add to); a
-   * member of a larger fleet is let through and the server answers for the owner's plan.
+   * person's own plan is the one that decides (they own every garage they could add to); a member
+   * of a larger fleet is let through and the server answers for the owner's plan.
    */
   const wall = governs ? limitWall('vehicles') : null;
   /*
-   * At the ceiling, the upgrade screen takes this one's place in the stack — `replace`, so
-   * closing it goes back to where the person started rather than to a form they cannot use.
+   * At the ceiling, the upgrade screen takes this one's place in the stack — `replace`, so closing
+   * it goes back to where the person started rather than to a form they cannot use.
    */
   useEffect(() => {
     if (!wall) return;
@@ -272,248 +413,223 @@ export default function AddVehicleScreen() {
       style={{ flex: 1, backgroundColor: theme.background }}
     >
       <Stack.Screen options={{ title: 'Add a vehicle' }} />
-      {/* Scrollable only for what does not fit — a small phone with the keyboard up. */}
       <ScrollView
         contentContainerStyle={styles.page}
         keyboardShouldPersistTaps="handled"
         alwaysBounceVertical={false}
         showsVerticalScrollIndicator={false}
       >
+        {/* The vehicle itself: its badge, its name, what it is and where it goes. */}
         <Rise>
-          <View style={[styles.build, { backgroundColor: theme.card }, rimmed(theme)]}>
+          <View style={[styles.card, { backgroundColor: theme.card }, rimmed(theme)]}>
             <Ground cx="100%" cy="0%" />
-
-            <View style={styles.buildTop}>
-              {/* The badge is where photos are added: a press opens them. */}
-              <PressableScale
-                onPress={() => {
-                  haptic.selection();
-                  setPhotosOpen(true);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  photos.length
-                    ? `${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}, change`
-                    : 'Add photos'
+            {/* The badge is where photos are added: a press opens them. */}
+            <PressableScale
+              onPress={() => {
+                haptic.selection();
+                setSheet('photos');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={
+                photos.length
+                  ? `${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}, change`
+                  : 'Add photos'
+              }
+              scaleTo={0.92}
+            >
+              {/* Keyed by what it shows, so a change of face pops in rather than swapping. */}
+              <Pop
+                key={
+                  cover
+                    ? cover.uri
+                    : branded
+                      ? `make:${answers.make.trim().toLowerCase()}`
+                      : vehicleType
                 }
-                scaleTo={0.92}
+                style={[styles.badge, { backgroundColor: theme.muted }]}
               >
-                {/* Keyed by what it shows, so a change of face pops in rather than swapping. */}
-                <Pop
-                  key={
-                    cover ? cover.uri : branded ? `make:${make.trim().toLowerCase()}` : vehicleType
-                  }
-                  style={[styles.badge, { backgroundColor: theme.muted }]}
-                >
-                  {cover ? (
-                    <Image
-                      source={{ uri: cover.uri }}
-                      style={StyleSheet.absoluteFill}
-                      contentFit="cover"
-                      accessibilityIgnoresInvertColors
-                    />
-                  ) : branded ? (
-                    <BrandLogo make={make.trim()} size={42} />
-                  ) : (
-                    <Glyph size={34}>{TYPE_GLYPH[vehicleType]}</Glyph>
-                  )}
-                </Pop>
-                <View
-                  style={[
-                    styles.badgeTag,
-                    { backgroundColor: theme.primary, borderColor: theme.card },
-                  ]}
-                >
-                  {photos.length > 1 ? (
-                    <Text style={[figure, styles.badgeCount, { color: theme.primaryForeground }]}>
-                      {photos.length}
-                    </Text>
-                  ) : (
-                    <Ionicons
-                      name={photos.length ? 'images' : 'camera'}
-                      size={12}
-                      color={theme.primaryForeground}
-                    />
-                  )}
-                </View>
-              </PressableScale>
-              <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                {/* Where it is going, and — with more than one garage — the way to change it. */}
-                <PressableScale
-                  onPress={() => {
-                    haptic.selection();
-                    setPickingGarage(true);
-                  }}
-                  disabled={list.length < 2}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Into ${garageName}${list.length > 1 ? ', change garage' : ''}`}
-                  hitSlop={8}
-                  scaleTo={0.95}
-                  style={styles.into}
-                >
-                  <Eyebrow style={{ flexShrink: 1 }}>Into {garageName}</Eyebrow>
-                  {list.length > 1 ? (
-                    <Ionicons name="chevron-down" size={12} color={theme.mutedForeground} />
-                  ) : null}
-                </PressableScale>
-                {/*
-                 * Its name, typed here. Left empty it is called by its year, make and model —
-                 * which is what the empty field shows, so the default is never a surprise.
-                 */}
-                <TextInput
-                  value={nickname}
-                  onChangeText={setNickname}
-                  placeholder={spec || `A new ${humanise(vehicleType).toLowerCase()}`}
-                  placeholderTextColor={spec ? theme.mutedForeground : theme.borderStrong}
-                  maxLength={120}
-                  autoCorrect={false}
-                  returnKeyType="next"
-                  onSubmitEditing={() => plateInput.current?.focus()}
-                  accessibilityLabel="Name"
-                  accessibilityHint="Optional. Without one it is called by its year, make and model."
-                  style={[typeScale.display, styles.name, { color: theme.foreground }]}
-                />
-                <View style={styles.nameNote}>
-                  <Ionicons
-                    name={nickname.trim() ? 'pricetag-outline' : 'pencil'}
-                    size={11}
-                    color={theme.mutedForeground}
+                {cover ? (
+                  <Image
+                    source={{ uri: cover.uri }}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                    accessibilityIgnoresInvertColors
                   />
-                  <Text
-                    numberOfLines={1}
-                    style={[typeScale.caption, { flexShrink: 1, color: theme.mutedForeground }]}
-                  >
-                    {nickname.trim()
-                      ? spec || humanise(vehicleType)
-                      : 'Name it, or it goes by its make and model'}
+                ) : branded ? (
+                  <BrandLogo make={answers.make.trim()} size={42} />
+                ) : (
+                  <Glyph size={34}>{TYPE_GLYPH[vehicleType]}</Glyph>
+                )}
+              </Pop>
+              <View
+                style={[
+                  styles.badgeTag,
+                  { backgroundColor: theme.primary, borderColor: theme.card },
+                ]}
+              >
+                {photos.length > 1 ? (
+                  <Text style={[figure, styles.badgeCount, { color: theme.primaryForeground }]}>
+                    {photos.length}
                   </Text>
-                </View>
+                ) : (
+                  <Ionicons
+                    name={photos.length ? 'images' : 'camera'}
+                    size={12}
+                    color={theme.primaryForeground}
+                  />
+                )}
               </View>
-            </View>
+            </PressableScale>
 
-            {/* The registration, typed onto the plate itself. */}
-            <View style={styles.plate}>
-              <View style={[styles.plateBand, { backgroundColor: theme.primary }]}>
-                <Ionicons name="flag" size={11} color={theme.primaryForeground} />
-              </View>
+            <View style={{ flex: 1, minWidth: 0, gap: spacing.sm }}>
+              {/*
+               * Its name, typed onto the card. Left empty it is called by its year, make and
+               * model — which is what the empty field shows, so the default is never a surprise.
+               */}
               <TextInput
-                ref={plateInput}
-                value={plate}
-                onChangeText={(text) => setPlate(text.toUpperCase())}
-                placeholder="AB12 CDE"
-                placeholderTextColor={PLATE.hint}
-                autoCapitalize="characters"
+                value={answers.name}
+                onChangeText={(text) => set('name', text)}
+                placeholder={derived || 'New vehicle'}
+                placeholderTextColor={derived ? theme.mutedForeground : theme.borderStrong}
+                maxLength={120}
                 autoCorrect={false}
-                maxLength={12}
-                returnKeyType="next"
-                onSubmitEditing={() => odometerInput.current?.focus()}
-                accessibilityLabel="Number plate"
-                style={[figure, styles.plateInput]}
+                accessibilityLabel="Name"
+                accessibilityHint="Optional. Without one it is called by its year, make and model."
+                style={[typeScale.display, styles.name, { color: theme.foreground }]}
               />
+              <View style={styles.chips}>
+                <Fact
+                  glyph={TYPE_GLYPH[vehicleType]}
+                  label={typeLabel(vehicleType)}
+                  marked={marked.has('type')}
+                  onPress={() => setSheet('type')}
+                />
+                {list.length > 1 ? (
+                  <Fact
+                    icon="home-outline"
+                    label={garage?.name ?? 'Which garage?'}
+                    selected={!garage}
+                    onPress={() => setSheet('garage')}
+                  />
+                ) : null}
+              </View>
             </View>
-
-            <OdometerField
-              inputRef={odometerInput}
-              value={odometer}
-              onChange={setOdometer}
-              unit={odometerUnit}
-              onUnit={setOdometerUnit}
-            />
           </View>
         </Rise>
 
-        {/* The kind of vehicle, as one rail: ten choices in a row's height. */}
-        <Rise index={1}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginHorizontal: -spacing.md }}
-            contentContainerStyle={styles.rail}
-          >
-            {VEHICLE_TYPES.map((type) => {
-              const selected = type === vehicleType;
-              return (
-                <PressableScale
-                  key={type}
-                  onPress={() => {
-                    if (!selected) haptic.selection();
-                    setVehicleType(type);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={humanise(type)}
-                  scaleTo={0.92}
-                  style={[
-                    styles.typeTile,
-                    selected
-                      ? { backgroundColor: theme.primarySoft, borderColor: theme.primary }
-                      : { backgroundColor: theme.card, borderColor: 'transparent' },
-                  ]}
-                >
-                  <Glyph size={24}>{TYPE_GLYPH[type]}</Glyph>
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    style={[
-                      typeScale.caption,
-                      {
-                        fontSize: 11,
-                        fontWeight: '600',
-                        color: selected ? theme.foreground : theme.mutedForeground,
-                      },
-                    ]}
-                  >
-                    {humanise(type)}
-                  </Text>
-                </PressableScale>
-              );
-            })}
-          </ScrollView>
+        {/* The line: a description to read, or a VIN to decode — the button says which. */}
+        <Rise index={1} style={{ gap: 6 }}>
+          <Line
+            value={line}
+            onChangeText={(text) => {
+              setLine(text);
+              if (read.isError) read.reset();
+            }}
+            lit={filled !== null}
+            placeholder="2019 911 Carrera S, 42k km — or the VIN"
+            accessibilityLabel="Describe the vehicle, or paste its VIN"
+            autoCapitalize="none"
+            returnKeyType={vin ? 'search' : 'done'}
+            onSubmitEditing={() => canRead && !read.isPending && read.mutate()}
+            trailing={
+              canRead ? (
+                <Button
+                  label={vin ? 'Decode' : 'Fill'}
+                  variant="primary"
+                  size="sm"
+                  loading={read.isPending}
+                  onPress={() => read.mutate()}
+                />
+              ) : null
+            }
+          />
+          {lineSaid || lookUp.isPending ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[
+                typeScale.caption,
+                styles.said,
+                { color: read.isError ? theme.destructive : theme.mutedForeground },
+              ]}
+            >
+              {[lineSaid, lookUp.isPending ? 'Looking up its specs…' : null]
+                .filter(Boolean)
+                .join(' · ')}
+            </Text>
+          ) : null}
+          {chips.length ? (
+            <View style={styles.chips}>
+              {chips.map((chip) => (
+                <Fact
+                  key={chip.key}
+                  icon={chip.key === 'specs' ? 'globe-outline' : 'sparkles-outline'}
+                  label={chip.label}
+                  onRemove={() => setExtras((now) => dropExtra(now, chip.key))}
+                />
+              ))}
+            </View>
+          ) : null}
         </Rise>
 
+        {/* The five answers, as one panel: what it is, then the plate and the reading on it. */}
         <Rise index={2}>
           <Panel>
             <View style={styles.row}>
-              <TextCell label="Make" value={make} onChangeText={setMake} placeholder="Mazda" />
-              <TextCell label="Model" value={model} onChangeText={setModel} placeholder="MX-5" />
-              <PanelCell label="Year">
-                <FigureInput
-                  value={year}
-                  onChangeText={(text) => setYear(digitsOnly(text, 4))}
-                  placeholder={String(THIS_YEAR)}
-                  keyboardType="number-pad"
-                  accessibilityLabel="Year"
-                />
-              </PanelCell>
-            </View>
-            <View style={styles.row}>
               <TextCell
-                label="VIN"
-                value={vin}
-                onChangeText={(text) => {
-                  setVin(text.toUpperCase());
-                  lookUp.reset();
-                }}
-                placeholder="Optional · fills in the rest"
-                autoCapitalize="characters"
-                mono
-                maxLength={24}
-                returnKeyType="search"
-                onSubmitEditing={() => vin.trim() && lookUp.mutate()}
-                note={vinFailed ? undefined : vinNote}
-                error={vinFailed ? vinNote : undefined}
+                label={mark('Make', 'make')}
+                value={answers.make}
+                onChangeText={(text) => set('make', text)}
+                onFocus={() => setMakeFocused(true)}
+                onBlur={() => setMakeFocused(false)}
+                placeholder="Mazda"
+                autoCapitalize="words"
+                grow={1.25}
               />
-              <View style={[styles.decode, { backgroundColor: theme.cardRaised }]}>
-                <Button
-                  label="Decode"
-                  size="sm"
-                  icon="sparkles"
-                  disabled={!vin.trim()}
-                  loading={lookUp.isPending}
-                  onPress={() => lookUp.mutate()}
+              <TextCell
+                label={mark('Model', 'model')}
+                value={answers.model}
+                onChangeText={(text) => set('model', text)}
+                placeholder="MX-5"
+                grow={1}
+              />
+              <TextCell
+                label={mark('Year', 'year')}
+                value={answers.year}
+                onChangeText={(text) => set('year', digitsOnly(text, 4))}
+                placeholder={String(NEXT_YEAR - 1)}
+                keyboardType="number-pad"
+                mono
+                grow={0.8}
+              />
+            </View>
+
+            {/* The registration, typed onto the plate itself. */}
+            <PanelCell label={mark('Plate', 'plate')}>
+              <View style={styles.plate}>
+                <View style={[styles.plateBand, { backgroundColor: theme.primary }]}>
+                  <Ionicons name="flag" size={11} color={theme.primaryForeground} />
+                </View>
+                <TextInput
+                  value={answers.plate}
+                  onChangeText={(text) => set('plate', text.toUpperCase())}
+                  placeholder="AB12 CDE"
+                  placeholderTextColor={PLATE.hint}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={12}
+                  accessibilityLabel="Number plate"
+                  style={[figure, styles.plateInput]}
                 />
               </View>
-            </View>
+            </PanelCell>
+
+            <OdometerCell
+              label={mark('Odometer', 'odometer')}
+              value={answers.odometer}
+              onChange={(text) => set('odometer', text)}
+              unit={unit}
+              onUnit={setChosenUnit}
+            />
           </Panel>
         </Rise>
       </ScrollView>
@@ -529,6 +645,33 @@ export default function AddVehicleScreen() {
           },
         ]}
       >
+        {/* The makes that start with what is typed, over the keyboard where the thumb is. */}
+        {suggestions.length ? (
+          <ScrollView
+            horizontal
+            keyboardShouldPersistTaps="always"
+            showsHorizontalScrollIndicator={false}
+            style={{ marginHorizontal: -spacing.lg }}
+            contentContainerStyle={styles.suggestions}
+          >
+            {suggestions.map((option) => (
+              <PressableScale
+                key={option.name}
+                onPress={() => {
+                  haptic.selection();
+                  set('make', option.name);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={option.name}
+                scaleTo={0.94}
+                style={[styles.suggestion, { backgroundColor: theme.muted }]}
+              >
+                <BrandLogo make={option.name} size={18} />
+                <Text style={[typeScale.label, { color: theme.foreground }]}>{option.name}</Text>
+              </PressableScale>
+            ))}
+          </ScrollView>
+        ) : null}
         {problem ? (
           <Text
             accessibilityRole="alert"
@@ -538,24 +681,75 @@ export default function AddVehicleScreen() {
             {problem}
           </Text>
         ) : null}
+        {/* The button reads the type back: what the make or the line decided is the last look. */}
         <Button
-          label={`Add to ${garageName}`}
+          label={`Add ${vehicleType === 'OTHER' ? 'vehicle' : typeLabel(vehicleType).toLowerCase()}`}
           variant="primary"
           size="lg"
           icon="add"
           loading={create.isPending}
-          disabled={!chosenGarage || Boolean(yearError) || Boolean(odometerError)}
+          disabled={!chosenGarage || yearOff || Boolean(odometerError)}
           onPress={() => create.mutate()}
         />
       </View>
 
-      {photosOpen ? (
+      {sheet === 'type' ? (
+        <MenuSheet title="What is it" onClose={() => setSheet(null)}>
+          <View style={styles.types}>
+            {VEHICLE_TYPES.map((type) => {
+              const selected = type === vehicleType;
+              return (
+                <PressableScale
+                  key={type}
+                  onPress={() => {
+                    haptic.selection();
+                    setChosenType(type);
+                    setMarked((now) => {
+                      const next = new Set(now);
+                      next.delete('type');
+                      return next;
+                    });
+                    setSheet(null);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={typeLabel(type)}
+                  scaleTo={0.92}
+                  style={[
+                    styles.typeTile,
+                    selected
+                      ? { backgroundColor: theme.primarySoft, borderColor: theme.primary }
+                      : { backgroundColor: theme.muted, borderColor: 'transparent' },
+                  ]}
+                >
+                  <Glyph size={26}>{TYPE_GLYPH[type]}</Glyph>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    style={[
+                      typeScale.caption,
+                      {
+                        fontWeight: '600',
+                        color: selected ? theme.foreground : theme.mutedForeground,
+                      },
+                    ]}
+                  >
+                    {typeLabel(type)}
+                  </Text>
+                </PressableScale>
+              );
+            })}
+          </View>
+        </MenuSheet>
+      ) : null}
+
+      {sheet === 'photos' ? (
         <MenuSheet
           title="Photos"
           message={
             photos.length
               ? `The first is the cover — press another to make it so. ${photos.length} of ${MAX_PHOTOS}.`
-              : `Up to ${MAX_PHOTOS}. The first is the cover.`
+              : `Up to ${MAX_PHOTOS}. The first is the cover; Fill reads it.`
           }
           options={
             photos.length >= MAX_PHOTOS
@@ -573,7 +767,7 @@ export default function AddVehicleScreen() {
                   },
                 ]
           }
-          onClose={() => setPhotosOpen(false)}
+          onClose={() => setSheet(null)}
         >
           {photos.length ? (
             <ScrollView
@@ -645,18 +839,18 @@ export default function AddVehicleScreen() {
         </MenuSheet>
       ) : null}
 
-      {pickingGarage ? (
+      {sheet === 'garage' ? (
         <MenuSheet
           title="Which garage"
-          options={list.map((garage) => ({
-            label: garage.name,
-            icon: garage.id === chosenGarage ? 'checkmark-circle' : 'ellipse-outline',
+          options={list.map((option) => ({
+            label: option.name,
+            icon: option.id === chosenGarage ? 'checkmark-circle' : 'ellipse-outline',
             onPress: () => {
-              setGarageId(garage.id);
-              setPickingGarage(false);
+              setGarageId(option.id);
+              setSheet(null);
             },
           }))}
-          onClose={() => setPickingGarage(false)}
+          onClose={() => setSheet(null)}
         />
       ) : null}
     </KeyboardAvoidingView>
@@ -664,22 +858,21 @@ export default function AddVehicleScreen() {
 }
 
 /**
- * The odometer, as a field that looks like one: a display that lights copper while it is being
- * typed into, the reading on the drums it will be shown on with a caret blinking after it, a clear
- * when there is something to clear, and km or mi beside it. Empty, it says so in words — six
- * zeros would read as a reading of zero, and zero is a reading.
+ * The odometer, as a cell that looks like one: the reading on the drums it will be shown on, lit
+ * copper with a blinking caret while it is typed into, and km or mi beside it. Empty, it says so in
+ * words — six zeros would read as a reading of zero, and zero is a reading.
  *
- * The keyboard's field is invisible over the display, so a press anywhere on it is a press on the
+ * The keyboard's field is invisible over the drums, so a press anywhere on them is a press on the
  * field and every digit typed rolls into place.
  */
-function OdometerField({
-  inputRef,
+function OdometerCell({
+  label,
   value,
   onChange,
   unit,
   onUnit,
 }: {
-  inputRef: React.RefObject<TextInput | null>;
+  label: string;
   value: string;
   onChange: (value: string) => void;
   unit: DistanceUnit;
@@ -690,18 +883,11 @@ function OdometerField({
   const reading = value ? Number(value) : null;
 
   return (
-    <View
-      style={[
-        styles.odometerField,
-        {
-          backgroundColor: theme.muted,
-          borderColor: focused ? theme.primary : theme.hairline,
-        },
-      ]}
-    >
+    <View style={[styles.odometer, { backgroundColor: theme.cardRaised }]}>
       <View style={styles.odometerDisplay}>
         <Eyebrow style={focused ? { color: theme.primary } : undefined}>
-          Odometer{reading === null && !focused ? ' · optional' : ''}
+          {label}
+          {reading === null && !focused ? ' · optional' : ''}
         </Eyebrow>
         <View style={styles.odometerDigits}>
           {reading === null && !focused ? (
@@ -716,7 +902,6 @@ function OdometerField({
           )}
         </View>
         <TextInput
-          ref={inputRef}
           value={value}
           onChangeText={(text) => onChange(digitsOnly(text, 10))}
           onFocus={() => setFocused(true)}
@@ -741,12 +926,12 @@ function OdometerField({
           accessibilityLabel="Clear the reading"
           hitSlop={8}
           scaleTo={0.85}
-          style={[styles.odometerClear, { backgroundColor: theme.card }]}
+          style={[styles.odometerClear, { backgroundColor: theme.muted }]}
         >
           <Ionicons name="close" size={14} color={theme.mutedForeground} />
         </PressableScale>
       ) : null}
-      <View style={{ width: 96 }}>
+      <View style={{ width: 104 }}>
         <Segmented
           value={unit}
           options={DISTANCE_UNITS.map((option) => ({
@@ -781,58 +966,55 @@ function Caret() {
   );
 }
 
-/** A plain text answer in a panel cell, the label as its eyebrow. */
+/** A plain text answer in a panel cell, the label as its eyebrow; `grow` is its share of the row. */
 function TextCell({
   label,
-  error,
-  note,
+  grow,
   mono = false,
   ...props
-}: React.ComponentProps<typeof TextInput> & {
-  label: string;
-  error?: string;
-  /** A neutral line under the answer; an `error` replaces it and is tinted. */
-  note?: string;
-  mono?: boolean;
-}) {
+}: React.ComponentProps<typeof TextInput> & { label: string; grow: number; mono?: boolean }) {
   const theme = useTheme();
   return (
-    <PanelCell label={label} note={error ?? note} noteTone={error ? 'destructive' : undefined}>
-      <TextInput
-        placeholderTextColor={theme.borderStrong}
-        accessibilityLabel={label}
-        autoCorrect={false}
-        style={[
-          typeScale.headline,
-          mono ? [figure, { letterSpacing: 1.5 }] : null,
-          { color: theme.foreground, paddingVertical: 4, paddingHorizontal: 0 },
-        ]}
-        {...props}
-      />
-    </PanelCell>
+    <View style={{ flex: grow, minWidth: 0 }}>
+      <PanelCell label={label}>
+        <TextInput
+          placeholderTextColor={theme.borderStrong}
+          accessibilityLabel={label.replace(' ✦', '')}
+          autoCorrect={false}
+          maxLength={120}
+          style={[
+            typeScale.headline,
+            mono ? figure : null,
+            { color: theme.foreground, paddingVertical: 4, paddingHorizontal: 0 },
+          ]}
+          {...props}
+        />
+      </PanelCell>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { padding: spacing.md, paddingTop: spacing.sm, gap: spacing.md },
-  build: {
+  page: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
     borderRadius: radius.xxxl,
     padding: spacing.lg,
-    gap: spacing.md + 2,
     overflow: 'hidden',
   },
-  buildTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   badge: {
     overflow: 'hidden',
-    width: 64,
-    height: 64,
+    width: 68,
+    height: 68,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  into: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' },
   name: { fontSize: 24, lineHeight: 30, padding: 0, margin: 0 },
-  nameNote: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+  said: { paddingHorizontal: 4 },
   badgeTag: {
     position: 'absolute',
     right: -4,
@@ -846,6 +1028,67 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   badgeCount: { fontSize: 11, fontWeight: '700' },
+  row: { flexDirection: 'row', gap: StyleSheet.hairlineWidth },
+  plate: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    height: 46,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: PLATE.ink,
+    backgroundColor: PLATE.ground,
+    overflow: 'hidden',
+  },
+  plateBand: { width: 24, alignItems: 'center', justifyContent: 'center' },
+  plateInput: {
+    flex: 1,
+    paddingVertical: 0,
+    paddingHorizontal: spacing.sm,
+    textAlign: 'center',
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 3,
+    color: PLATE.ink,
+  },
+  odometer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.md,
+  },
+  odometerDisplay: { flex: 1, minWidth: 0, gap: 6 },
+  odometerDigits: { flexDirection: 'row', alignItems: 'center', height: 28 },
+  odometerClear: {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  caret: { width: 2, height: 22, borderRadius: 1, marginLeft: 3 },
+  suggestions: { gap: 6, paddingHorizontal: spacing.lg },
+  suggestion: {
+    height: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+  },
+  types: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  typeTile: {
+    width: '18.3%',
+    flexGrow: 1,
+    height: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    paddingHorizontal: 2,
+  },
   shots: { gap: spacing.sm, paddingVertical: 2 },
   shot: {
     width: 84,
@@ -872,62 +1115,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  plate: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    height: 52,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: PLATE.ink,
-    backgroundColor: PLATE.ground,
-    overflow: 'hidden',
-  },
-  plateBand: { width: 26, alignItems: 'center', justifyContent: 'center' },
-  plateInput: {
-    flex: 1,
-    paddingVertical: 0,
-    paddingHorizontal: spacing.sm,
-    textAlign: 'center',
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: 3,
-    color: PLATE.ink,
-  },
-  odometerField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-    paddingVertical: spacing.sm,
-    paddingLeft: spacing.md,
-    paddingRight: spacing.sm,
-  },
-  odometerDisplay: { flex: 1, minWidth: 0, gap: 4 },
-  odometerDigits: { flexDirection: 'row', alignItems: 'center', height: 28 },
-  odometerClear: {
-    width: 26,
-    height: 26,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  caret: { width: 2, height: 22, borderRadius: 1, marginLeft: 3 },
-  rail: { paddingHorizontal: spacing.md, gap: spacing.sm },
-  typeTile: {
-    width: 66,
-    height: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-    paddingHorizontal: 2,
-  },
-  row: { flexDirection: 'row', gap: StyleSheet.hairlineWidth },
-  decode: { justifyContent: 'center', paddingRight: spacing.md },
   footer: {
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm + 2,
     gap: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,

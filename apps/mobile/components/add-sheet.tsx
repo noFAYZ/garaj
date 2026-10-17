@@ -10,15 +10,19 @@ import {
   PanResponder,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  AddActivity,
+  QUICK_ACTIONS,
+  type ActivityMode,
+  type QuickAction,
+} from '@/components/add-activity';
 import { ADD_ACTIONS } from '@/components/add-mode';
 import { GrowCombo } from '@/components/grow-combo';
-import { QUICK_ACTIONS, QuickEntryForm, type QuickAction } from '@/components/quick-entry-form';
 import { fileParams, pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { Eyebrow } from '@/lib/instrument';
 import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
@@ -123,40 +127,53 @@ export function AddGlyph({
  * choosing which vehicle a photo is of) are not offered at all. That is the whole difference: one
  * sheet, asked from two places, and it never asks something the caller already knows.
  */
-/** What the quick entry needs to know about the vehicle it is recording against. */
-export interface QuickContext {
-  readonly unit: string;
-  readonly currency: string;
-  readonly currentOdometer: number | null;
+/** The add form, open in the sheet: its mode, the quick entry it started as, a photo it holds. */
+interface OpenForm {
+  readonly mode: ActivityMode;
+  readonly quick: QuickAction | null;
+  readonly photo: PickedFile | null;
 }
 
 export function AddSheet({
   initialFile,
   initialQuick = null,
+  initialMode = null,
   vehicleId,
   subject,
-  quickContext,
   onClose,
 }: {
   initialFile: PickedFile | null;
-  /** Opens straight onto one of the quick entries — the hero's odometer press does this. */
+  /**
+   * Opens straight onto one of the quick entries — the hero's odometer press does this, and the
+   * app's own + for a fill-up, a reading or a service, where the form asks which vehicle first.
+   */
   initialQuick?: QuickAction | null;
+  /** Opens straight onto the add form in this mode — a dock's Reminder. */
+  initialMode?: ActivityMode | null;
   /** Scopes every route to this vehicle. Absent from the app's own tab bar, which asks. */
   vehicleId?: string;
   /** What the sheet says it is adding to, e.g. "2019 Mazda MX-5". */
   subject?: string;
-  /** Present only with a vehicle: without its unit and currency a quick entry would guess. */
-  quickContext?: QuickContext;
   onClose: () => void;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [file, setFile] = useState<PickedFile | null>(initialFile);
-  const [quick, setQuick] = useState<QuickAction | null>(initialQuick);
+  const [form, setForm] = useState<OpenForm | null>(
+    initialQuick || initialMode
+      ? { mode: initialMode ?? 'done', quick: initialQuick, photo: null }
+      : null,
+  );
   const [busy, setBusy] = useState<'camera' | 'library' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reduce = useReduceMotion();
+  const open = (
+    mode: ActivityMode,
+    quick: QuickAction | null = null,
+    photo: PickedFile | null = null,
+  ) => setForm({ mode, quick, photo });
+  const starts = QUICK_ACTIONS.find((action) => action.kind === form?.quick)?.starts;
 
   /*
    * The sheet's own motion: it springs up from below while the page dims, follows a thumb that
@@ -281,7 +298,8 @@ export function AddSheet({
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
-        <View style={styles.frame}>
+        {/* Never under the status bar: a sheet taller than the room left shrinks instead. */}
+        <View style={[styles.frame, { paddingTop: insets.top + spacing.sm }]}>
           <Animated.View
             style={[StyleSheet.absoluteFill, { backgroundColor: theme.scrim, opacity: dim }]}
           >
@@ -292,7 +310,7 @@ export function AddSheet({
               style={StyleSheet.absoluteFill}
             />
           </Animated.View>
-          <Animated.View style={{ transform: [{ translateY: drop }] }}>
+          <Animated.View style={{ flexShrink: 1, transform: [{ translateY: drop }] }}>
             <View
               style={[
                 styles.sheet,
@@ -309,42 +327,33 @@ export function AddSheet({
                 <View style={[styles.grabber, { backgroundColor: theme.borderStrong }]} />
               </View>
 
-              {quick && vehicleId && quickContext ? (
-                <Rise key="quick" style={{ gap: spacing.md }}>
-                  <View style={styles.sheetHeader}>
-                    <PressableScale
-                      onPress={() => setQuick(null)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Back"
-                      hitSlop={8}
-                      style={[styles.iconButton, { backgroundColor: theme.muted }]}
-                    >
-                      <Ionicons name="chevron-back" size={18} color={theme.foreground} />
-                    </PressableScale>
-                    <Text style={[typeScale.title, { flex: 1, color: theme.foreground }]}>
-                      {QUICK_ACTIONS.find((action) => action.kind === quick)?.label}
-                    </Text>
-                  </View>
-
+              {form ? (
+                <Rise key="form" style={{ flexShrink: 1 }}>
                   {/*
-                   * The form itself, in the sheet. It saves to this phone's queue and closes — the
-                   * point of a quick entry is that it is over before the network is involved.
+                   * The add form itself, the same one the add screens show. It saves to this
+                   * phone's queue and closes: a quick entry is over before the network is involved.
                    */}
-                  {/* Scrolls: with the keyboard up there is less room than the form needs. */}
-                  <ScrollView
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                    style={{ maxHeight: 420 }}
-                  >
-                    <QuickEntryForm
-                      kind={quick}
-                      vehicleId={vehicleId}
-                      unit={quickContext.unit}
-                      currency={quickContext.currency}
-                      currentOdometer={quickContext.currentOdometer}
-                      onDone={onClose}
-                    />
-                  </ScrollView>
+                  <AddActivity
+                    vehicleId={vehicleId}
+                    initialMode={form.mode}
+                    initialKind={starts?.kind ?? null}
+                    initialLine={starts?.line ?? ''}
+                    initialPhoto={form.photo}
+                    inSheet
+                    lead={
+                      <PressableScale
+                        onPress={() => setForm(null)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Back"
+                        hitSlop={8}
+                        style={[styles.iconButton, { backgroundColor: theme.muted }]}
+                      >
+                        <Ionicons name="chevron-back" size={18} color={theme.foreground} />
+                      </PressableScale>
+                    }
+                    onDone={onClose}
+                    onAddVehicle={() => go('/add/vehicle')}
+                  />
                 </Rise>
               ) : file ? (
                 <Rise key="photo" style={{ gap: spacing.md }}>
@@ -392,7 +401,11 @@ export function AddSheet({
                       icon: destination.icon,
                       label: destination.label,
                       hint: destination.hint,
-                      onPress: () => go(destination.pathname, fileParams(file)),
+                      // A receipt is read into the add form, here; the rest go to their screens.
+                      onPress: () =>
+                        destination.pathname === '/add/done'
+                          ? open('done', null, file)
+                          : go(destination.pathname, fileParams(file)),
                     }))}
                   />
                 </Rise>
@@ -424,35 +437,31 @@ export function AddSheet({
                    * are given the size to match — and a thumb reaching the bottom of a phone finds
                    * a target rather than a line of text.
                    */}
-                  {vehicleId && quickContext ? (
-                    <View style={styles.quickRow}>
-                      {QUICK_ACTIONS.map((action, index) => (
-                        <Rise key={action.kind} index={index} style={{ flex: 1 }}>
-                          <PressableScale
-                            onPress={() => setQuick(action.kind)}
-                            accessibilityRole="button"
-                            accessibilityLabel={action.label}
-                            accessibilityHint={action.hint}
-                            scaleTo={0.94}
-                            style={[styles.quickTile, { backgroundColor: theme.muted }]}
+                  <View style={styles.quickRow}>
+                    {QUICK_ACTIONS.map((action, index) => (
+                      <Rise key={action.kind} index={index} style={{ flex: 1 }}>
+                        <PressableScale
+                          onPress={() => open('done', action.kind)}
+                          accessibilityRole="button"
+                          accessibilityLabel={action.label}
+                          accessibilityHint={action.hint}
+                          scaleTo={0.94}
+                          style={[styles.quickTile, { backgroundColor: theme.muted }]}
+                        >
+                          <View style={[styles.quickIcon, { backgroundColor: theme.primarySoft }]}>
+                            <Ionicons name={action.icon} size={20} color={theme.primary} />
+                          </View>
+                          <Text
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            style={[typeScale.label, { fontSize: 13, color: theme.foreground }]}
                           >
-                            <View
-                              style={[styles.quickIcon, { backgroundColor: theme.primarySoft }]}
-                            >
-                              <Ionicons name={action.icon} size={20} color={theme.primary} />
-                            </View>
-                            <Text
-                              numberOfLines={1}
-                              adjustsFontSizeToFit
-                              style={[typeScale.label, { fontSize: 13, color: theme.foreground }]}
-                            >
-                              {action.label}
-                            </Text>
-                          </PressableScale>
-                        </Rise>
-                      ))}
-                    </View>
-                  ) : null}
+                            {action.label}
+                          </Text>
+                        </PressableScale>
+                      </Rise>
+                    ))}
+                  </View>
 
                   <View style={styles.captureRow}>
                     <CaptureTile
@@ -490,7 +499,12 @@ export function AddSheet({
                           icon: action.icon,
                           label: action.label,
                           hint: action.hint,
-                          onPress: () => go(action.pathname),
+                          onPress: () =>
+                            action.pathname === '/add/done'
+                              ? open('done')
+                              : action.pathname === '/add/planned'
+                                ? open('planned')
+                                : go(action.pathname),
                         }))}
                       />
                     </View>
@@ -624,6 +638,7 @@ function OptionList({
 const styles = StyleSheet.create({
   frame: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
+    flexShrink: 1,
     borderTopLeftRadius: radius.xxxl + 4,
     borderTopRightRadius: radius.xxxl + 4,
     borderBottomWidth: 0,

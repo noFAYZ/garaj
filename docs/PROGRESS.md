@@ -1082,6 +1082,79 @@ session had already fixed the same odometer-unit bug in both separately.
 
 ---
 
+## The add forms: one design on the web and the phone (2026-10-12)
+
+Supersedes the wizard above. Adding a vehicle and adding to activity now ask the same things,
+in the same order and words, on both platforms — the rules live once in `@vehicle-os/ui`
+(`add-forms.ts`, and `quick-entry.ts`, the line reader, moved there from the web).
+
+- **Vehicle: five answers or one sentence.** Card (photo, name, type, garage) → a ✦ line that
+  reads a description (`/ai/vehicle-draft`, then `/ai/vehicle-lookup`) or decodes a VIN → make,
+  model, year, plate, odometer. The type follows the make. What is read with no question of its
+  own — VIN, variant, colour, price paid, factory specs — rides along as removable chips; the
+  rest is on the vehicle's page. Web `add-vehicle-dialog.tsx`, phone `app/add/vehicle.tsx`.
+- **Activity: kind rail → ✦ line → figures → facts → photo key and a button that reads back**
+  ("Add fuel · $62.40"). A hand beats the line, the line beats the receipt read through
+  `/ai/entry-draft`. Reminder: job rail → line → once or repeats. Web `vehicle/add-entry.tsx`;
+  phone `components/add-activity.tsx`, one component for the + sheet and `/add/done`,
+  `/add/planned` (the old quick-entry form and the two separate screens are gone).
+- **Dropped from the forms:** variant/colour/purchase/engine hours/spec grid/papers fields on the
+  web vehicle sheet; priority, estimate, due-at-reading and note on the phone's reminder; the
+  "full tank" toggle (nothing read it).
+
+---
+
+## Stats: charts first, one layout on both (2026-10-13)
+
+The report (Overview, Refueling, Expenses, Services, Income, Routes) is now the same stack of
+cards on the web and the phone — web `vehicle/report-tabs.tsx` + `charts.tsx`, phone
+`components/vehicle-statistics.tsx` + `components/charts.tsx`; change one, change its twin.
+
+- **Each part leads with a chart whose head is its figure** (`ColumnChart` `label`/`trailing`;
+  hovering or tapping a column turns the head into that period). Under it a strip of key figures
+  (`Kpis`, three across, four as 2×2), then cards that are only pictures: a split bar into the
+  groups (tapping a group opens its tab), true cost as running vs value lost, a monthly sparkline
+  with its change on the year before, cost-against-worth lines, the health gauge with penalty
+  chips, condition bars two-up, the odometer drums over distance per year, a price ladder of
+  fuel stations, rank bars by kind and by payee.
+- **Words cut:** section numbers and glyph heads, every caption under a figure, the explanatory
+  paragraphs, the donut (the split bar says the same in a line), "next 12 months", "energy share"
+  and "dearest month" (each restated something already drawn). Empty and plan-walled parts are
+  one line.
+- **Entries fold away** under each part. On the web the folded card keeps Record, Correct and
+  Delete — still the one place an expense is corrected — and Worth/Condition keep Record a value,
+  Assess, and their history folded under (`<details>`). `HealthPanel`, `ValuePanel` and
+  `Readings` are gone.
+- **Home's dock icon is a dashboard:** Solar's `widget-5` (tiles of mixed sizes), added to the
+  shared icon list as `dashboard` and generated into both platforms' icon files.
+- **The phone's report parts are tabs, not chips:** words on a hairline rule, the chosen one in ink
+  with a copper bar under it that glides to the next and scrolls into view — the filled chips read
+  as the Logs' category filters. The vehicle's top bar is the white surface, with no rule under it.
+- **One figure face.** Numbers are Cascadia Mono everywhere: the web loads it (`next/font`, first in
+  `--font-mono`) instead of falling to each system's monospace, and the phone bundles it in place
+  of Geist Mono (`figure` is the `Mono` role in `lib/fonts.tsx`).
+- **Logs rows:** the title, then a kind badge (a dot of its hue, the name in tracked capitals on a
+  wash of it), the day in the figures' mono and the place. Flush right: the cost in the web ledger's
+  semibold mono, its cents smaller and muted, then the fuel that
+  went in and the odometer's change since the reading before — green when it rose, red when a
+  reading went down (`odometerDeltas` now reports drops instead of hiding them). The kind mark is a
+  squircle lit top-down in its report hue. The reading itself and the note are the entry's screen's.
+- **Month headings in Logs:** a slim strip the sheet's full width, square-ended — the month in
+  small tracked capitals with its year quieter, its total as a small badge at the right. No ring and
+  no road through it: the road joins only a month's own entries, none above its first or below its
+  last. A pressed row's wash is square, the row's full width. The spend bar is gone, and the maths
+  that scaled it (`spendScale`, `barShare`) with it.
+- **Logs reach the screen's edges:** 8pt either side, enough for a pressed row's wash.
+- **The phone's vehicle hero, tightened:** the name left the space under the stage for the bar,
+  beside back; the VIN sits beside the plate on the stage's foot; the dash (odometer, this month's
+  spend, health, next job) docks up over the stage's foot as one object with it, its figures larger
+  and in the web's semibold, untracked mono.
+- **The vehicle hero is on Logs only.** Reminders, Stats, Docs (and Drivers on the web) show the
+  vehicle as a bar instead: photo or make badge, name, plate, and the ⋯ menu — phone
+  `VehicleTopBar pinned` with `VehicleHeaderTitle`, web `VehicleBar` in the vehicle layout.
+
+---
+
 ## The vehicle hero's gallery
 
 - **The hero image is the vehicle's whole gallery**, not just its primary photo. The primary

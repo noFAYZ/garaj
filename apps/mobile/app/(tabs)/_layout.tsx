@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { dashboardQuery } from '@vehicle-os/api-client/react';
 import { AddSheet } from '@/components/add-sheet';
 import { Dock, type DockAction, type DockItem } from '@/components/dock';
+import type { QuickAction } from '@/components/add-activity';
 import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { haptic } from '@/lib/motion';
@@ -20,8 +21,8 @@ import { useTheme } from '@/lib/theme';
  * unchanged — it is off the bar, not gone.
  */
 const TABS: readonly DockItem[] = [
-  // The web's own icons for the same places: its header's garage, its vehicles, its task list.
-  { key: 'index', label: 'Garage', icon: 'garage' },
+  // The web's own icon set. Garage is the dashboard the app opens on, so it wears tiles, not a door.
+  { key: 'index', label: 'Garage', icon: 'dashboard' },
   { key: 'vehicles', label: 'Vehicles', icon: 'vehicles' },
   { key: 'tasks', label: 'Tasks', icon: 'task' },
 ];
@@ -77,7 +78,10 @@ interface TabBarProps {
  */
 function TabBar({ state, navigation }: TabBarProps) {
   const router = useRouter();
-  const [sheet, setSheet] = useState<{ file: PickedFile | null } | null>(null);
+  const [sheet, setSheet] = useState<{
+    file: PickedFile | null;
+    quick?: QuickAction;
+  } | null>(null);
   const activeName = state.routes[state.index]?.name ?? '';
   const attention = useQuery(dashboardQuery(api)).data?.attention;
   const late = attention?.overdueTasks ?? 0;
@@ -102,23 +106,32 @@ function TabBar({ state, navigation }: TabBarProps) {
   };
 
   /*
-   * What the key deals, in the order a thumb reaches for them at a pump. Each form asks which
-   * vehicle; the fill-up and the service arrive already set to their kind.
+   * What the key deals, in the order a thumb reaches for them at a pump — the vehicle's own dock's
+   * order. The pump-side three open their quick entry in the drawer, which asks which vehicle on
+   * top, so a fill-up never leaves this screen; the rest go to their forms.
    */
+  const quick = (kind: QuickAction) => () => setSheet({ file: null, quick: kind });
   const actions: DockAction[] = [
     {
       key: 'fuel',
       emoji: '⛽',
       label: 'Fill-up',
       hint: 'Litres, cost, odometer',
-      onPress: () => router.push({ pathname: '/add/done', params: { kind: 'FUEL' } }),
+      onPress: quick('fuel'),
+    },
+    {
+      key: 'odometer',
+      emoji: '🗺️',
+      label: 'Odometer reading',
+      hint: 'Just the number',
+      onPress: quick('odometer'),
     },
     {
       key: 'service',
-      emoji: '🔧',
+      emoji: '🧰',
       label: 'Service done',
       hint: 'What was done, and what it cost',
-      onPress: () => router.push({ pathname: '/add/done', params: { kind: 'MAINTENANCE' } }),
+      onPress: quick('service'),
     },
     {
       key: 'planned',
@@ -171,7 +184,13 @@ function TabBar({ state, navigation }: TabBarProps) {
         onLongPress: () => void camera(),
       }}
     >
-      {sheet ? <AddSheet initialFile={sheet.file} onClose={() => setSheet(null)} /> : null}
+      {sheet ? (
+        <AddSheet
+          initialFile={sheet.file}
+          initialQuick={sheet.quick}
+          onClose={() => setSheet(null)}
+        />
+      ) : null}
     </Dock>
   );
 }

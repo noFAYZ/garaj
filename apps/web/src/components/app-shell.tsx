@@ -69,9 +69,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-dvh bg-background">
+      
       <header className="header-scroll sticky top-0 z-20">
         {/* On a phone, open search takes the logo's and the navigation's place. */}
-        <div className="group/header mx-auto flex h-16 max-w-3xl items-center gap-2 px-4 sm:gap-3">
+        <div className="group/header mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:gap-3">
           <Link
             href="/"
             aria-label="Garaj home"
@@ -163,7 +164,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Route changes cross-fade instead of cutting; the header above stays put. */}
       {/* The bottom padding keeps the last row clear of the GarajAI pill. */}
-      <main className="mx-auto max-w-3xl px-4 pb-24 pt-8">
+      <main className="mx-auto max-w-5xl px-4 pb-24 pt-8">
         <ViewTransition>{children}</ViewTransition>
       </main>
 

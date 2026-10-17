@@ -5,3 +5,5 @@ export * from './activity';
 export * from './health';
 export * from './vehicle-makes';
 export * from './report';
+export * from './quick-entry';
+export * from './add-forms';

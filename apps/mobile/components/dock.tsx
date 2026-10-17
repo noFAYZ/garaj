@@ -25,6 +25,8 @@ export type DockItem = {
   label: string;
   /** From the web's own icon set, so a place wears the same glyph on both. */
   icon: IconName;
+  /** Worn where you are: the solid twin of an outlined `icon`. */
+  activeIcon?: IconName;
   /** A colour when something waits behind this section, nothing when it does not. */
   dot?: string | null;
   /** How many wait there — the web's count on its Reminders tab. Wins over `dot`. */
@@ -288,7 +290,10 @@ export function Dock({
   );
 }
 
-/** A place's icon: the web's duotone glyph, muted when you are elsewhere, copper and popped in when you arrive. */
+/**
+ * A place's icon from the web's set: muted when you are elsewhere, copper and popped in when you
+ * arrive, and solid there where the place has a solid twin.
+ */
 function TabIcon({ item, focused }: { item: DockItem; focused: boolean }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
@@ -308,7 +313,11 @@ function TabIcon({ item, focused }: { item: DockItem; focused: boolean }) {
   const count = item.count ?? 0;
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
-      <Icon name={item.icon} size={22} color={focused ? theme.primary : theme.mutedForeground} />
+      <Icon
+        name={focused ? (item.activeIcon ?? item.icon) : item.icon}
+        size={22}
+        color={focused ? theme.primary : theme.mutedForeground}
+      />
       {count > 0 ? (
         <View
           style={[

@@ -64,7 +64,7 @@ export function minorUnitExponent(currency: CurrencyCode): number {
  */
 let knownCurrencies: Set<string> | null | undefined;
 
-function isKnownCurrency(code: string): boolean {
+export function isKnownCurrency(code: string): boolean {
   if (knownCurrencies === undefined) {
     knownCurrencies =
       typeof Intl.supportedValuesOf === 'function'

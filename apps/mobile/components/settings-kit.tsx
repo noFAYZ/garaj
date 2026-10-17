@@ -1,18 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Children, Fragment, useEffect, useState, type ReactNode } from 'react';
+import { Animated, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { queryKeys } from '@vehicle-os/api-client/react';
 import type { Garage, UpdateUserProfile, UserProfile } from '@vehicle-os/contracts';
-import { Eyebrow } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
-import { enqueue, flush } from '@/lib/offline';
+import { signOut, useSession } from '@/lib/auth';
+import { haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
+import { clearQueue, enqueue, flush } from '@/lib/offline';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 
 /*
- * The pieces every settings screen is built from, so the tree reads as one place: a group of
- * rows under an eyebrow, a row that names a thing and shows its value, and the usage meter.
+ * The pieces every settings screen is built from, so the tree reads as one place: a soft card of
+ * rows under a quiet name, hairlines between them, and a row that names a thing — a line icon, the
+ * word — and shows its value, a control or the way in.
  */
 
 export const pad = (value: number) => String(value).padStart(2, '0');
@@ -37,7 +40,71 @@ export function SettingsPage({ children }: { children: ReactNode }) {
   );
 }
 
-/** Rows that belong together, under a name; hairlines between them are the gaps. */
+/**
+ * A settings screen's own header, where it draws one: the way back in a soft round key, the title
+ * beside it, large, and at the far side the screen's one action, if it has one. Back goes where
+ * the person came from — or home, with nowhere to go back.
+ */
+export function SettingsHeader({ title, trailing }: { title: string; trailing?: ReactNode }) {
+  const theme = useTheme();
+  const router = useRouter();
+  return (
+    <Rise style={styles.header}>
+      <PressableScale
+        onPress={() => (router.canGoBack() ? router.back() : router.navigate('/'))}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        hitSlop={6}
+        scaleTo={0.9}
+        style={[styles.back, groupSurface(theme)]}
+      >
+        <Ionicons name="arrow-back" size={19} color={theme.foreground} />
+      </PressableScale>
+      <Text
+        accessibilityRole="header"
+        numberOfLines={1}
+        style={[styles.title, { flexShrink: 1, color: theme.foreground }]}
+      >
+        {title}
+      </Text>
+      {trailing ? <View style={styles.headerAction}>{trailing}</View> : null}
+    </Rise>
+  );
+}
+
+/**
+ * The warm wash a settings screen sits on: copper light from the top corner and a softer peach
+ * from the other, gone well before the middle — the cards over it let a little through.
+ */
+export function SettingsWash() {
+  const theme = useTheme();
+  const { width } = useWindowDimensions();
+  return (
+    <Svg
+      pointerEvents="none"
+      width={width}
+      height={520}
+      style={styles.wash}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Defs>
+        <RadialGradient id="wash-copper" cx="100%" cy="0%" rx="85%" ry="75%">
+          <Stop offset="0" stopColor={theme.primary} stopOpacity={theme.dark ? 0.24 : 0.17} />
+          <Stop offset="1" stopColor={theme.primary} stopOpacity={0} />
+        </RadialGradient>
+        <RadialGradient id="wash-peach" cx="0%" cy="10%" rx="70%" ry="60%">
+          <Stop offset="0" stopColor={theme.warning} stopOpacity={theme.dark ? 0.08 : 0.1} />
+          <Stop offset="1" stopColor={theme.warning} stopOpacity={0} />
+        </RadialGradient>
+      </Defs>
+      <Rect width={width} height={520} fill="url(#wash-peach)" />
+      <Rect width={width} height={520} fill="url(#wash-copper)" />
+    </Svg>
+  );
+}
+
+/** Rows that belong together, on one card under a quiet name, a hairline between each. */
 export function Group({
   title,
   footer,
@@ -52,9 +119,17 @@ export function Group({
   const theme = useTheme();
   return (
     <Rise index={index} style={{ gap: spacing.sm }}>
-      {title ? <Eyebrow>{title}</Eyebrow> : null}
-      <View style={[styles.group, { backgroundColor: theme.border, borderColor: theme.hairline }]}>
-        {children}
+      {title ? (
+        <Text style={[styles.groupTitle, { color: theme.mutedForeground }]}>{title}</Text>
+      ) : null}
+      <View style={[styles.group, groupSurface(theme)]}>
+        {/* Rows can be conditional: only the ones there get a hairline between them. */}
+        {Children.toArray(children).map((child, place) => (
+          <Fragment key={place}>
+            {place > 0 ? <View style={[styles.rule, { backgroundColor: theme.border }]} /> : null}
+            {child}
+          </Fragment>
+        ))}
       </View>
       {footer ? (
         <Text style={[typeScale.caption, { color: theme.mutedForeground, paddingHorizontal: 4 }]}>
@@ -65,9 +140,16 @@ export function Group({
   );
 }
 
+/** A card's surface on a settings screen: the resting card, a little of the page through it. */
+export const groupSurface = (theme: ReturnType<typeof useTheme>) => ({
+  backgroundColor: `${theme.card}E8`,
+  borderColor: theme.hairline,
+});
+
 /**
- * A settings row: an icon tile, the label, and on the right its value, a control, or the way in.
+ * A settings row: a line icon, the label, and on the right its value, a control, or the way in.
  * `tone` colours the value's dot for a state (all sent, waiting, failing); `badge` is a count.
+ * The icon is muted and bare — the label carries the row, colour is kept for state.
  */
 export function Row({
   icon,
@@ -79,6 +161,7 @@ export function Row({
   badge,
   destructive = false,
   stacked = false,
+  chevron = true,
   onPress,
   children,
 }: {
@@ -92,30 +175,28 @@ export function Row({
   destructive?: boolean;
   /** The control under the label, full width — for one with more options than fit beside it. */
   stacked?: boolean;
+  /** The way in, at the right; off for a row that acts rather than opens — signing out. */
+  chevron?: boolean;
   onPress?: () => void;
   children?: ReactNode;
 }) {
   const theme = useTheme();
+  const [pressed, setPressed] = useState(false);
   const toneColor = tone ? theme[tone] : undefined;
   const ink = destructive ? theme.destructive : theme.foreground;
   const tile = (
-    <View
-      style={[
-        styles.rowIcon,
-        { backgroundColor: destructive ? theme.destructiveSoft : theme.muted },
-      ]}
-    >
-      <Ionicons name={icon} size={17} color={ink} />
+    <View style={styles.rowIcon}>
+      <Ionicons name={icon} size={19} color={destructive ? ink : theme.mutedForeground} />
     </View>
   );
 
   if (stacked) {
     return (
-      <View style={[styles.stackedRow, { backgroundColor: theme.card }]}>
+      <View style={styles.stackedRow}>
         <View style={styles.stackedTop}>
           {tile}
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[typeScale.label, { fontWeight: '600', color: ink }]}>{label}</Text>
+            <Text style={[styles.label, { color: ink }]}>{label}</Text>
             {hint ? (
               <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>{hint}</Text>
             ) : null}
@@ -130,7 +211,7 @@ export function Row({
     <>
       {tile}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={[typeScale.label, { fontWeight: '600', color: ink }]}>
+        <Text numberOfLines={1} style={[styles.label, { color: ink }]}>
           {label}
         </Text>
         {hint ? (
@@ -141,15 +222,23 @@ export function Row({
       </View>
       {children}
       {badge ? (
-        <View style={[styles.badge, { backgroundColor: theme.primary }]}>
+        // Keyed by the count, so a new one arrives with a pop.
+        <Pop key={badge} style={[styles.badge, { backgroundColor: theme.primary }]}>
           <Text style={[typeScale.caption, figure, { color: theme.primaryForeground }]}>
             {badge > 99 ? '99+' : badge}
           </Text>
-        </View>
+        </Pop>
       ) : null}
       {value !== undefined ? (
         <View style={styles.valueRow}>
-          {toneColor ? <View style={[styles.dot, { backgroundColor: toneColor }]} /> : null}
+          {/* Waiting is live — it changes by itself — so its dot breathes; a settled state does not. */}
+          {toneColor ? (
+            tone === 'warning' ? (
+              <Pulse color={toneColor} size={7} />
+            ) : (
+              <View style={[styles.dot, { backgroundColor: toneColor }]} />
+            )
+          ) : null}
           <Text
             numberOfLines={1}
             style={[
@@ -162,7 +251,7 @@ export function Row({
           </Text>
         </View>
       ) : null}
-      {onPress ? <Ionicons name="chevron-forward" size={16} color={theme.borderStrong} /> : null}
+      {onPress && chevron ? <Lean on={pressed} /> : null}
     </>
   );
 
@@ -174,73 +263,73 @@ export function Row({
       }}
       accessibilityRole="button"
       accessibilityLabel={[label, value, badge ? `${badge} new` : null].filter(Boolean).join(', ')}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
       scaleTo={0.99}
-      style={[styles.row, { backgroundColor: theme.card }]}
+      // A wash short of the tile's own colour, so the tile still reads under the thumb.
+      style={[styles.row, pressed ? { backgroundColor: `${theme.muted}A6` } : null]}
     >
       {body}
     </PressableScale>
   ) : (
-    <View accessible style={[styles.row, { backgroundColor: theme.card }]}>
+    <View accessible style={styles.row}>
       {body}
     </View>
   );
 }
 
-/**
- * How much of a ceiling is used, drawn as the garage it is: a bay per place, the taken ones
- * filled, the free ones dashed. Past a dozen places bays stop being countable, so it becomes a
- * bar. Full reads amber — the next one needs a bigger plan.
- */
-export function Bays({ used, limit, label }: { used: number; limit: number; label: string }) {
+/** A row's way in: a chevron that leans the way it goes while the row is held. */
+function Lean({ on }: { on: boolean }) {
   const theme = useTheme();
-  const full = used >= limit;
-  const fill = full ? theme.warning : theme.foreground;
+  const reduce = useReduceMotion();
+  const [lean] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (reduce) return;
+    Animated.spring(lean, {
+      toValue: on ? 1 : 0,
+      useNativeDriver: true,
+      speed: on ? 40 : 18,
+      bounciness: on ? 0 : 12,
+    }).start();
+  }, [lean, on, reduce]);
   return (
-    <View
-      accessible
-      accessibilityRole="progressbar"
-      accessibilityLabel={`${label}: ${used} of ${limit}`}
-      accessibilityValue={{ min: 0, max: limit, now: Math.min(used, limit) }}
-      style={{ gap: 6 }}
+    <Animated.View
+      style={{
+        transform: [{ translateX: lean.interpolate({ inputRange: [0, 1], outputRange: [0, 3] }) }],
+      }}
     >
-      <View style={styles.baysTop}>
-        <Eyebrow>{label}</Eyebrow>
-        <Text
-          style={[typeScale.caption, figure, { color: full ? theme.warning : theme.foreground }]}
-        >
-          {pad(used)}
-          <Text style={{ color: theme.mutedForeground }}> / {pad(limit)}</Text>
-        </Text>
-      </View>
-      {limit <= 12 ? (
-        <View style={styles.bays}>
-          {Array.from({ length: limit }, (_, index) => (
-            <View
-              key={index}
-              style={[
-                styles.bay,
-                index < used
-                  ? { backgroundColor: fill }
-                  : { borderWidth: 1.5, borderStyle: 'dashed', borderColor: theme.borderStrong },
-              ]}
-            />
-          ))}
-        </View>
-      ) : (
-        <View style={[styles.track, { backgroundColor: theme.muted }]}>
-          <View
-            style={[
-              styles.trackFill,
-              {
-                width: `${Math.max(Math.min(used / limit, 1) * 100, used ? 2 : 0)}%`,
-                backgroundColor: fill,
-              },
-            ]}
-          />
-        </View>
-      )}
-    </View>
+      <Ionicons
+        name="chevron-forward"
+        size={15}
+        color={on ? theme.foreground : theme.borderStrong}
+      />
+    </Animated.View>
   );
+}
+
+/**
+ * Signing out, as one step: the session ends, this account's unsent writes go with it — left
+ * behind they would go out under the next person's session on this phone, rejected and lost or
+ * recorded as theirs — the cache on disk is cleared, and the sign-in screen takes over.
+ */
+export function useSignOut() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { refresh } = useSession();
+  const [leaving, setLeaving] = useState(false);
+  const leave = async () => {
+    setLeaving(true);
+    try {
+      await signOut();
+      await clearQueue();
+      queryClient.clear();
+      await refresh();
+      router.replace('/sign-in');
+    } finally {
+      setLeaving(false);
+    }
+  };
+  return { leave, leaving };
 }
 
 /**
@@ -248,8 +337,10 @@ export function Bays({ used, limit, label }: { used: number; limit: number; labe
  * one set on a train sticks), and put back if the server refuses. Changing the currency moves the
  * garages this person owns with it — a garage's currency is what its totals are quoted in; shared
  * garages belong to someone else and keep theirs.
+ *
+ * `quiet` drops the saved buzz, for a switch that already ticked under the thumb: one feel a press.
  */
-export function useProfileUpdate() {
+export function useProfileUpdate({ quiet = false }: { quiet?: boolean } = {}) {
   const queryClient = useQueryClient();
 
   const adoptCurrency = async (currency: string) => {
@@ -284,7 +375,7 @@ export function useProfileUpdate() {
       if (context?.previous) queryClient.setQueryData(['me'], context.previous);
     },
     onSuccess: async (_next, body) => {
-      haptic.success();
+      if (!quiet) haptic.success();
       // The queue returns only the fields sent, not the profile: merge, never replace.
       queryClient.setQueryData<UserProfile>(['me'], (current) =>
         current ? { ...current, ...body } : current,
@@ -297,34 +388,38 @@ export function useProfileUpdate() {
 }
 
 const styles = StyleSheet.create({
-  page: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.xl },
-  group: {
-    borderRadius: radius.xxl,
-    overflow: 'hidden',
-    gap: StyleSheet.hairlineWidth,
+  page: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, gap: spacing.lg + 4 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 44 },
+  back: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  title: { fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: -0.6 },
+  headerAction: { marginLeft: 'auto' },
+  wash: { position: 'absolute', top: 0, left: 0 },
+  groupTitle: { fontSize: 13, lineHeight: 17, fontWeight: '500', paddingHorizontal: 4 },
+  group: { borderRadius: radius.xl + 2, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
+  rule: { height: StyleSheet.hairlineWidth, marginHorizontal: spacing.lg },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    minHeight: 56,
-    paddingHorizontal: spacing.md + 2,
-    paddingVertical: spacing.sm + 2,
+    minHeight: 52,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   stackedRow: {
     gap: spacing.md,
-    paddingHorizontal: spacing.md + 2,
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md + 2,
   },
   stackedTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  rowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  rowIcon: { width: 22, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 14.5, lineHeight: 20, fontWeight: '500', letterSpacing: -0.1 },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -341,9 +436,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  baysTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  bays: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  bay: { width: 18, height: 18, borderRadius: 6 },
-  track: { height: 8, borderRadius: 999, overflow: 'hidden' },
-  trackFill: { height: '100%', borderRadius: 999 },
 });

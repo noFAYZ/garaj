@@ -1,6 +1,8 @@
 /**
- * Albert Sans — the web's face — and Geist Mono for figures, applied to every `<Text>` and
- * `<TextInput>` in the app.
+ * Albert Sans — the web's face — and Cascadia Mono for figures, applied to every `<Text>` and
+ * `<TextInput>` in the app. The web loads the same two files, so a figure is the same shape on
+ * both (it once fell to each system's monospace: Cascadia on Windows, SF Mono on a Mac, and the
+ * phone's Geist Mono beside neither).
  *
  * React Native has no cascade: a font set on a container reaches nothing below it, so the
  * alternatives are a `fontFamily` on every text style in the app or one patch here.
@@ -22,11 +24,11 @@ import {
   AlbertSans_800ExtraBold,
 } from '@expo-google-fonts/albert-sans';
 import {
-  GeistMono_400Regular,
-  GeistMono_500Medium,
-  GeistMono_600SemiBold,
-  GeistMono_700Bold,
-} from '@expo-google-fonts/geist-mono';
+  CascadiaMono_400Regular,
+  CascadiaMono_500Medium,
+  CascadiaMono_600SemiBold,
+  CascadiaMono_700Bold,
+} from '@expo-google-fonts/cascadia-mono';
 
 /*
  * Each weight is its own family, which is how expo-google-fonts ships them — `fontWeight` does
@@ -46,17 +48,17 @@ const SANS: Record<string, string> = {
   bold: 'AlbertSans_700Bold',
 };
 const MONO: Record<string, string> = {
-  '100': 'GeistMono_400Regular',
-  '200': 'GeistMono_400Regular',
-  '300': 'GeistMono_400Regular',
-  '400': 'GeistMono_400Regular',
-  normal: 'GeistMono_400Regular',
-  '500': 'GeistMono_500Medium',
-  '600': 'GeistMono_600SemiBold',
-  '700': 'GeistMono_700Bold',
-  '800': 'GeistMono_700Bold',
-  '900': 'GeistMono_700Bold',
-  bold: 'GeistMono_700Bold',
+  '100': 'CascadiaMono_400Regular',
+  '200': 'CascadiaMono_400Regular',
+  '300': 'CascadiaMono_400Regular',
+  '400': 'CascadiaMono_400Regular',
+  normal: 'CascadiaMono_400Regular',
+  '500': 'CascadiaMono_500Medium',
+  '600': 'CascadiaMono_600SemiBold',
+  '700': 'CascadiaMono_700Bold',
+  '800': 'CascadiaMono_700Bold',
+  '900': 'CascadiaMono_700Bold',
+  bold: 'CascadiaMono_700Bold',
 };
 
 export function useAppFonts(): boolean {
@@ -66,10 +68,10 @@ export function useAppFonts(): boolean {
     AlbertSans_600SemiBold,
     AlbertSans_700Bold,
     AlbertSans_800ExtraBold,
-    GeistMono_400Regular,
-    GeistMono_500Medium,
-    GeistMono_600SemiBold,
-    GeistMono_700Bold,
+    CascadiaMono_400Regular,
+    CascadiaMono_500Medium,
+    CascadiaMono_600SemiBold,
+    CascadiaMono_700Bold,
     /*
      * The icon font too. `@expo/vector-icons` otherwise loads it lazily on first use, and every
      * glyph drawn before it lands is an empty box — the tab bar, the bell and + came up blank.
@@ -98,9 +100,9 @@ function patch(component: unknown) {
     const element = original.apply(this, args);
     const flat = StyleSheet.flatten(element.props.style);
     const family = flat?.fontFamily;
-    // A style that names a real family — the icon font — keeps it. `GeistMono` is a role, not a file.
-    if (family && family !== 'GeistMono') return element;
-    const table = family === 'GeistMono' ? MONO : SANS;
+    // A style that names a real family — the icon font — keeps it. `Mono` is a role, not a file.
+    if (family && family !== 'Mono') return element;
+    const table = family === 'Mono' ? MONO : SANS;
     const fontFamily = table[String(flat?.fontWeight ?? '400')] ?? table['400'];
     return cloneElement(element, {
       /*

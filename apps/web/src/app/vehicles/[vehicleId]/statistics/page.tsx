@@ -3,6 +3,7 @@
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { isReportPeriod, type ReportPeriod } from '@vehicle-os/ui';
 import { EmptyState } from '@/components/ui/primitives';
+import { cn } from '@/lib/utils';
 import { PrintHeading } from '@/components/print-report';
 import {
   isReportTab,
@@ -52,7 +53,7 @@ export default function StatisticsPage() {
   const label = REPORT_TABS.find((entry) => entry.value === tab)!.label;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <PrintHeading
         title={`Vehicle report · ${label}`}
         subject={report.vehicle?.displayName}
@@ -68,7 +69,13 @@ export default function StatisticsPage() {
       {report.error ? (
         <EmptyState title="Could not load the report" description={report.error.message} />
       ) : (
-        <section key={tab} aria-label={label} className="animate-rise">
+        // The last window's figures stay up, dimmed, while the next one loads over them.
+        <section
+          key={tab}
+          aria-label={label}
+          aria-busy={report.refreshing}
+          className={cn('animate-rise transition-opacity', report.refreshing && 'opacity-50')}
+        >
           {tab === 'overview' ? (
             <OverviewTab report={report} onTab={(next) => go({ tab: next })} />
           ) : tab === 'refueling' ? (

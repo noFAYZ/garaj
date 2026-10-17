@@ -185,7 +185,7 @@ export function NotificationBell() {
         >
           {/* Swings from its hanger on hover, the way a bell would. */}
           <Bell
-            className="size-4 origin-top transition-transform duration-300 ease-out group-hover:rotate-12"
+            className="size-5 origin-top transition-transform duration-300 ease-out group-hover:rotate-12"
             aria-hidden="true"
           />
           {unread > 0 ? (

@@ -1,17 +1,18 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, G, Line, Path } from 'react-native-svg';
-import { haptic, PressableScale } from '@/lib/motion';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
+import Svg, { Circle, Line, Path } from 'react-native-svg';
+import { STATUS } from '@/lib/chart-colors';
+import { ease, haptic, PressableScale, useReduceMotion } from '@/lib/motion';
 import { figure, spacing, typeScale, useTheme } from '@/lib/theme';
 
 /*
- * The Stats section's charts, drawn with react-native-svg and plain views.
+ * The Stats section's charts, drawn with react-native-svg and plain views — the web's
+ * `components/charts.tsx`, form for form, so a report reads the same on both.
  *
  * House rules, from the data-viz method: thin marks; a 2pt gap in the card's own colour between
  * touching fills rather than an outline; bars capped in width and rounded only at the data end;
- * hairline grid; one axis; a legend whenever there is more than one series, and a tap — the
- * phone's hover — that reads any mark out in words.
+ * hairline grid; one axis; colour carries the series and a word or a swatch always rides beside
+ * it; a tap — the phone's hover — reads any mark out.
  */
 
 export interface Slice {
@@ -22,136 +23,6 @@ export interface Slice {
   color: string;
 }
 
-/**
- * Part of a whole, as a ring. The centre says the total until a slice is chosen, then that slice;
- * the key underneath names every slice with its share and amount, so no slice is told by colour
- * alone. Slices keep the order they are given — the palette was validated for those neighbours.
- */
-export function Donut({
-  slices,
-  total,
-  centre,
-  onOpen,
-  size = 148,
-  thickness = 18,
-}: {
-  slices: readonly Slice[];
-  total: string;
-  centre: string;
-  /** Makes each key row the way into what it counts; the ring still reads a slice out. */
-  onOpen?: (key: string) => void;
-  size?: number;
-  thickness?: number;
-}) {
-  const theme = useTheme();
-  const [chosen, setChosen] = useState<string | null>(null);
-  const sum = slices.reduce((acc, slice) => acc + slice.value, 0) || 1;
-  const radius = (size - thickness) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const gap = slices.length > 1 ? 2 : 0;
-  const active = slices.find((slice) => slice.key === chosen) ?? null;
-  const choose = (key: string) => {
-    haptic.selection();
-    setChosen((current) => (current === key ? null : key));
-  };
-
-  let offset = 0;
-  const arcs = slices.map((slice) => {
-    const length = (slice.value / sum) * circumference;
-    const arc = { slice, dash: Math.max(0.5, length - gap), offset };
-    offset += length;
-    return arc;
-  });
-
-  return (
-    <View style={styles.donutRow}>
-      <View
-        accessible
-        accessibilityLabel={`${centre}: ${total}. ${slices
-          .map((slice) => `${slice.label} ${Math.round((slice.value / sum) * 100)}%`)
-          .join(', ')}`}
-        style={{ width: size, height: size }}
-      >
-        <Svg width={size} height={size}>
-          <G rotation={-90} origin={`${size / 2}, ${size / 2}`}>
-            {arcs.map(({ slice, dash, offset: start }) => (
-              <Circle
-                key={slice.key}
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                fill="none"
-                stroke={slice.color}
-                strokeWidth={thickness}
-                strokeDasharray={`${dash} ${circumference}`}
-                strokeDashoffset={-start}
-                opacity={active && active.key !== slice.key ? 0.3 : 1}
-                onPress={() => choose(slice.key)}
-              />
-            ))}
-          </G>
-        </Svg>
-        <View pointerEvents="none" style={styles.donutCentre}>
-          <Text
-            numberOfLines={1}
-            style={[typeScale.overline, styles.centreLabel, { color: theme.mutedForeground }]}
-          >
-            {(active?.label ?? centre).toUpperCase()}
-          </Text>
-          <Text
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            style={[figure, styles.centreValue, { color: theme.foreground }]}
-          >
-            {active?.display ?? total}
-          </Text>
-          {active ? (
-            <Text style={[figure, styles.centreShare, { color: theme.mutedForeground }]}>
-              {Math.round((active.value / sum) * 100)}%
-            </Text>
-          ) : null}
-        </View>
-      </View>
-
-      <View style={styles.key}>
-        {slices.map((slice) => {
-          const selected = active?.key === slice.key;
-          return (
-            <PressableScale
-              key={slice.key}
-              onPress={() => {
-                if (!onOpen) return choose(slice.key);
-                haptic.selection();
-                onOpen(slice.key);
-              }}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-              accessibilityLabel={`${slice.label}: ${slice.display}, ${Math.round((slice.value / sum) * 100)}%`}
-              accessibilityHint={onOpen ? `Opens ${slice.label}` : undefined}
-              scaleTo={0.97}
-              style={[styles.keyRow, selected && { backgroundColor: theme.muted }]}
-            >
-              <View style={[styles.keySwatch, { backgroundColor: slice.color }]} />
-              <Text
-                numberOfLines={1}
-                style={[typeScale.caption, styles.keyLabel, { color: theme.foreground }]}
-              >
-                {slice.label}
-              </Text>
-              <Text style={[figure, styles.keyShare, { color: theme.mutedForeground }]}>
-                {Math.round((slice.value / sum) * 100)}%
-              </Text>
-              {onOpen ? (
-                <Ionicons name="chevron-forward" size={12} color={theme.mutedForeground} />
-              ) : null}
-            </PressableScale>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
 export interface Series {
   key: string;
   label: string;
@@ -160,13 +31,15 @@ export interface Series {
   points: readonly { x: number; y: number }[];
 }
 
+const share = (value: number, total: number) => `${Math.round((value / (total || 1)) * 100)}%`;
+
 /**
  * Lines over time, on one axis. A touch anywhere on the plot moves a crosshair to the nearest
- * moment and the key above reads every series out there; let go and it rests on the latest.
+ * moment and the readout above names every series there; let go and it rests on the latest.
  *
  * The scale fits the data rather than starting at zero — lines are read by their shape, and a
  * zero floor would flatten two figures near 80k into one line. An optional `reference` draws a
- * level (an average) as a quiet rule, labelled.
+ * level (an average) as a quiet dashed rule.
  */
 export function LineChart({
   series,
@@ -174,7 +47,7 @@ export function LineChart({
   formatX,
   formatAxis = formatY,
   reference,
-  height = 150,
+  height = 112,
   area = false,
 }: {
   series: readonly Series[];
@@ -208,7 +81,14 @@ export function LineChart({
   const toX = (x: number) =>
     maxX === minX ? plotWidth / 2 : ((x - minX) / (maxX - minX)) * plotWidth;
   const toY = (y: number) => top + (1 - (y - minY) / (maxY - minY)) * plotHeight;
-  const ticks = [maxY - pad, (maxY + minY) / 2, minY + pad];
+  const ticks = [maxY - pad, minY + pad];
+  const path = (points: readonly { x: number; y: number }[]) =>
+    points
+      .map(
+        (point, index) =>
+          `${index === 0 ? 'M' : 'L'}${toX(point.x).toFixed(1)} ${toY(point.y).toFixed(1)}`,
+      )
+      .join(' ');
 
   // The moment under the finger, or the latest; each series read at its last point up to it.
   const at = cursor ?? maxX;
@@ -224,17 +104,22 @@ export function LineChart({
       xs[0]!,
     );
   };
+  const only = series.length === 1 ? series[0]! : null;
 
   return (
     <View style={{ gap: spacing.sm }}>
       <View style={styles.readout}>
-        <Text style={[figure, styles.readoutDate, { color: theme.mutedForeground }]}>
+        <Text style={[figure, styles.axisText, { color: theme.mutedForeground }]}>
           {formatX(at).toUpperCase()}
         </Text>
         {reading.map(({ line, point }) => (
           <View key={line.key} style={styles.readoutItem}>
-            <View style={[styles.keySwatch, { backgroundColor: line.color }]} />
-            <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>{line.label}</Text>
+            <View style={[styles.swatch, { backgroundColor: line.color }]} />
+            {series.length > 1 ? (
+              <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+                {line.label}
+              </Text>
+            ) : null}
             <Text style={[figure, styles.readoutValue, { color: theme.foreground }]}>
               {point ? formatY(point.y) : '—'}
             </Text>
@@ -296,29 +181,19 @@ export function LineChart({
                 strokeWidth={1}
               />
             ) : null}
-            {area && series.length === 1 && series[0]!.points.length > 1 ? (
+            {(area || only) && only && only.points.length > 1 ? (
               <Path
-                d={`${series[0]!.points
-                  .map(
-                    (point, index) =>
-                      `${index === 0 ? 'M' : 'L'}${toX(point.x).toFixed(1)} ${toY(point.y).toFixed(1)}`,
-                  )
-                  .join(' ')} L${toX(series[0]!.points[series[0]!.points.length - 1]!.x)} ${
+                d={`${path(only.points)} L${toX(only.points[only.points.length - 1]!.x)} ${
                   top + plotHeight
-                } L${toX(series[0]!.points[0]!.x)} ${top + plotHeight} Z`}
-                fill={series[0]!.color}
-                opacity={0.12}
+                } L${toX(only.points[0]!.x)} ${top + plotHeight} Z`}
+                fill={only.color}
+                opacity={area ? 0.14 : 0.07}
               />
             ) : null}
             {series.map((line) => (
               <Path
                 key={line.key}
-                d={line.points
-                  .map(
-                    (point, index) =>
-                      `${index === 0 ? 'M' : 'L'}${toX(point.x).toFixed(1)} ${toY(point.y).toFixed(1)}`,
-                  )
-                  .join(' ')}
+                d={path(line.points)}
                 fill="none"
                 stroke={line.color}
                 strokeWidth={2}
@@ -359,15 +234,15 @@ export function LineChart({
       </View>
 
       <View style={styles.xAxis}>
-        <Text style={[figure, styles.xLabel, { color: theme.mutedForeground }]}>
+        <Text style={[figure, styles.axisText, { color: theme.mutedForeground }]}>
           {formatX(minX).toUpperCase()}
         </Text>
         {reference ? (
-          <Text style={[figure, styles.xLabel, { color: theme.mutedForeground }]}>
+          <Text style={[figure, styles.axisText, { color: theme.mutedForeground }]}>
             ┄ {reference.label}
           </Text>
         ) : null}
-        <Text style={[figure, styles.xLabel, { color: theme.mutedForeground, marginRight: 44 }]}>
+        <Text style={[figure, styles.axisText, { color: theme.mutedForeground, marginRight: 44 }]}>
           {formatX(maxX).toUpperCase()}
         </Text>
       </View>
@@ -385,10 +260,11 @@ export interface ColumnBucket {
 }
 
 /**
- * Columns over time: one series, several stacked, or two side by side (`group`). A tap reads a
- * column out in the header — its period, its total and each series beside its swatch — and a
- * second tap lets go, back to the window's total. A quiet period is a hairline, not a gap:
- * nothing spent and nothing known are opposites.
+ * Columns over time, headed by their own figure: one series, several stacked, or two side by
+ * side (`group`). At rest the head says `label` and the window's total (or `total`); a tap on a
+ * column turns it into that column's period and figure, each series beside its swatch, and a
+ * second tap lets go. A quiet period is a hairline, not a gap: nothing spent and nothing known
+ * are opposites. The columns rise from the axis in a wave from the oldest.
  */
 export function ColumnChart({
   buckets,
@@ -396,19 +272,47 @@ export function ColumnChart({
   mode = 'stack',
   format,
   formatAxis = format,
-  caption,
-  height = 120,
+  label,
+  total,
+  trailing,
+  legend = true,
+  large = true,
+  height = 112,
 }: {
   buckets: readonly ColumnBucket[];
   series: readonly { key: string; label: string; color: string }[];
   mode?: 'stack' | 'group';
   format: (value: number) => string;
   formatAxis?: (value: number) => string;
-  caption: string;
+  /** What the resting figure is: "Running cost". */
+  label: string;
+  /** The resting figure, when it is not the sum of the columns (an average, say). */
+  total?: number;
+  /** Beside the label: a count, an action. */
+  trailing?: ReactNode;
+  /** The series key; off where a split under the chart names them instead. */
+  legend?: boolean;
+  /** The card's headline figure, or a smaller one inside a card that has its own. */
+  large?: boolean;
   height?: number;
 }) {
   const theme = useTheme();
+  const reduce = useReduceMotion();
   const [chosen, setChosen] = useState<number | null>(null);
+  const [grow] = useState(() => new Animated.Value(reduce ? 1 : 0));
+  useEffect(() => {
+    if (reduce) return;
+    const animation = Animated.timing(grow, {
+      toValue: 1,
+      duration: 900,
+      delay: 150,
+      easing: ease.out,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [grow, reduce]);
+
   const totals = buckets.map((bucket) =>
     series.reduce((sum, line) => sum + (bucket.values[line.key] ?? 0), 0),
   );
@@ -427,22 +331,36 @@ export function ColumnChart({
       ? (shown.values[series[0]!.key] ?? 0)
       : shown
         ? totals[chosen!]!
-        : totals.reduce((sum, value) => sum + value, 0);
+        : (total ?? totals.reduce((sum, value) => sum + value, 0));
 
   return (
-    <View style={{ gap: spacing.sm }}>
+    <View style={{ gap: spacing.md }}>
       <View style={{ gap: 2 }}>
-        <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-          {shown ? shown.long : caption}
-        </Text>
-        <Text style={[figure, styles.headline, { color: theme.foreground }]}>
+        <View style={styles.headRow}>
+          <Text
+            numberOfLines={1}
+            style={[typeScale.overline, { flex: 1, color: theme.mutedForeground }]}
+          >
+            {shown ? shown.long : label}
+          </Text>
+          {trailing}
+        </View>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          style={[
+            figure,
+            large ? styles.headline : styles.headlineSmall,
+            { color: theme.foreground },
+          ]}
+        >
           {format(headline)}
         </Text>
-        {series.length > 1 ? (
+        {legend && series.length > 1 ? (
           <View style={styles.readout}>
             {series.map((line) => (
               <View key={line.key} style={styles.readoutItem}>
-                <View style={[styles.keySwatch, { backgroundColor: line.color }]} />
+                <View style={[styles.swatch, { backgroundColor: line.color }]} />
                 <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
                   {line.label}
                 </Text>
@@ -459,11 +377,11 @@ export function ColumnChart({
 
       <View>
         {/* The peak and its half, labelled at the right, under the marks. */}
-        {[1, 0.5].map((share) => (
+        {[1, 0.5].map((part) => (
           <View
-            key={share}
+            key={part}
             pointerEvents="none"
-            style={[styles.gridRow, { top: (1 - share) * height }]}
+            style={[styles.gridRow, { top: (1 - part) * height }]}
           >
             <View
               style={{
@@ -473,7 +391,7 @@ export function ColumnChart({
               }}
             />
             <Text style={[figure, styles.gridLabel, { color: theme.mutedForeground }]}>
-              {formatAxis(peak * share)}
+              {formatAxis(peak * part)}
             </Text>
           </View>
         ))}
@@ -489,6 +407,7 @@ export function ColumnChart({
         >
           {buckets.map((bucket, index) => {
             const selected = chosen === index;
+            const from = (index / Math.max(1, buckets.length)) * 0.4;
             return (
               <PressableScale
                 key={bucket.key}
@@ -502,12 +421,23 @@ export function ColumnChart({
                   .join(', ')}`}
                 accessibilityState={{ selected }}
                 scaleTo={0.92}
-                style={[styles.column, { opacity: chosen !== null && !selected ? 0.4 : 1 }]}
+                style={[styles.column, { opacity: chosen !== null && !selected ? 0.35 : 1 }]}
               >
-                <View
+                <Animated.View
                   style={[
                     styles.stack,
-                    { flexDirection: mode === 'stack' ? 'column-reverse' : 'row' },
+                    {
+                      flexDirection: mode === 'stack' ? 'column-reverse' : 'row',
+                      transform: [
+                        {
+                          scaleY: grow.interpolate({
+                            inputRange: [from, from + 0.6],
+                            outputRange: [0, 1],
+                            extrapolate: 'clamp',
+                          }),
+                        },
+                      ],
+                    },
                   ]}
                 >
                   {totals[index] === 0 ? (
@@ -540,7 +470,7 @@ export function ColumnChart({
                       );
                     })
                   )}
-                </View>
+                </Animated.View>
               </PressableScale>
             );
           })}
@@ -568,35 +498,49 @@ export function ColumnChart({
   );
 }
 
-/** Magnitudes compared, largest first: label and figure, then a bar against the largest or `max`. */
+/**
+ * Magnitudes compared, largest first: the name and its count, the figure, and a bar against the
+ * largest (or `max`). `columns={2}` sets short bars side by side, for scores out of a hundred.
+ */
 export function RankBars({
   rows,
   max,
+  columns = 1,
 }: {
   rows: readonly {
     key: string;
     label: string;
-    note?: string;
+    count?: number;
     value: number;
     display: string;
     color: string;
   }[];
   max?: number;
+  columns?: 1 | 2;
 }) {
   const theme = useTheme();
   const top = max ?? (Math.max(...rows.map((row) => row.value), 0) || 1);
   return (
-    <View style={{ gap: 12 }}>
+    <View style={columns === 2 ? styles.rankGrid : { gap: 11 }}>
       {rows.map((row) => (
         <View
           key={row.key}
           accessible
-          accessibilityLabel={`${row.label}: ${row.display}${row.note ? `, ${row.note}` : ''}`}
-          style={{ gap: 5 }}
+          accessibilityLabel={`${row.label}: ${row.display}${row.count ? `, ${row.count}` : ''}`}
+          style={[{ gap: 5 }, columns === 2 ? styles.rankCell : null]}
         >
           <View style={styles.between}>
-            <Text numberOfLines={1} style={[typeScale.label, { flex: 1, color: theme.foreground }]}>
+            <Text
+              numberOfLines={1}
+              style={[typeScale.label, styles.rankLabel, { color: theme.foreground }]}
+            >
               {row.label}
+              {row.count ? (
+                <Text style={[figure, { color: theme.mutedForeground }]}>
+                  {'  '}
+                  {String(row.count).padStart(2, '0')}
+                </Text>
+              ) : null}
             </Text>
             <Text style={[figure, styles.readoutValue, { color: theme.foreground }]}>
               {row.display}
@@ -613,51 +557,168 @@ export function RankBars({
               ]}
             />
           </View>
-          {row.note ? (
-            <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-              {row.note}
-            </Text>
-          ) : null}
         </View>
       ))}
     </View>
   );
 }
 
-/** A whole in two or three parts, side by side with a gap of card between, and a key with figures. */
-export function SplitBar({ parts }: { parts: readonly Slice[] }) {
+/**
+ * A whole in a few parts: one bar of them side by side with a gap of card between, and a key of
+ * each part's share. `onSelect` makes each key the way into what it counts.
+ */
+export function SplitBar({
+  parts,
+  onSelect,
+}: {
+  parts: readonly Slice[];
+  onSelect?: (key: string) => void;
+}) {
   const theme = useTheme();
-  const total = parts.reduce((sum, part) => sum + part.value, 0) || 1;
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  const shown = parts.filter((part) => part.value > 0);
   return (
-    <View style={{ gap: spacing.sm }}>
+    <View style={{ gap: 10 }}>
       <View style={styles.split}>
-        {parts.map((part) => (
+        {shown.map((part) => (
           <View
             key={part.key}
-            style={{ flex: part.value / total, backgroundColor: part.color, borderRadius: 3 }}
+            style={{ flex: part.value, minWidth: 3, backgroundColor: part.color, borderRadius: 3 }}
           />
         ))}
       </View>
-      <View style={{ gap: 6 }}>
-        {parts.map((part) => (
-          <View key={part.key} style={styles.between}>
-            <View style={[styles.keySwatch, { backgroundColor: part.color }]} />
-            <Text
-              numberOfLines={1}
-              style={[typeScale.caption, { flex: 1, color: theme.mutedForeground }]}
-            >
+      <View style={styles.keyRow}>
+        {shown.map((part) => (
+          <PressableScale
+            key={part.key}
+            onPress={
+              onSelect
+                ? () => {
+                    haptic.selection();
+                    onSelect(part.key);
+                  }
+                : undefined
+            }
+            disabled={!onSelect}
+            accessibilityRole={onSelect ? 'button' : 'text'}
+            accessibilityLabel={`${part.label}: ${part.display}, ${share(part.value, total)}`}
+            accessibilityHint={onSelect ? `Opens ${part.label}` : undefined}
+            scaleTo={0.95}
+            style={[styles.keyItem, onSelect ? { backgroundColor: theme.muted } : styles.keyPlain]}
+          >
+            <View style={[styles.swatch, { backgroundColor: part.color }]} />
+            <Text style={[typeScale.caption, { fontWeight: '600', color: theme.foreground }]}>
               {part.label}
             </Text>
-            <Text style={[figure, styles.readoutValue, { color: theme.foreground }]}>
-              {part.display}
-              <Text style={{ color: theme.mutedForeground }}>
-                {'  '}
-                {Math.round((part.value / total) * 100)}%
-              </Text>
+            <Text style={[figure, styles.keyShare, { color: theme.mutedForeground }]}>
+              {share(part.value, total)}
             </Text>
-          </View>
+          </PressableScale>
         ))}
       </View>
+    </View>
+  );
+}
+
+/** A trend at a glance: one line over a soft fill, its latest point marked. Oldest first. */
+export function Spark({
+  values,
+  color,
+  height = 36,
+}: {
+  values: readonly number[];
+  color: string;
+  height?: number;
+}) {
+  const [width, setWidth] = useState(0);
+  const theme = useTheme();
+  const high = Math.max(...values, 0) || 1;
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  const point = (value: number, index: number) =>
+    [index * step, 3 + (1 - value / high) * (height - 6)] as const;
+  const line = values
+    .map((value, index) => {
+      const [x, y] = point(value, index);
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const [lastX, lastY] = point(values[values.length - 1] ?? 0, values.length - 1);
+  return (
+    <View
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ height }}
+    >
+      {width > 0 && values.length > 1 ? (
+        <Svg width={width} height={height} style={{ overflow: 'visible' }}>
+          <Path d={`${line} L${width} ${height} L0 ${height} Z`} fill={color} opacity={0.14} />
+          <Path d={line} fill="none" stroke={color} strokeWidth={1.75} strokeLinejoin="round" />
+          <Circle
+            cx={lastX}
+            cy={lastY}
+            r={3.5}
+            fill={color}
+            stroke={theme.card}
+            strokeWidth={1.5}
+          />
+        </Svg>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Prices side by side on one scale, cheapest to dearest: each place a dot on the span between
+ * them, the figure at the end. The cheapest wears the good-news colour.
+ */
+export function Ladder({
+  rows,
+  color,
+}: {
+  rows: readonly { key: string; label: string; value: number; display: string }[];
+  color: string;
+}) {
+  const theme = useTheme();
+  const low = Math.min(...rows.map((row) => row.value));
+  const high = Math.max(...rows.map((row) => row.value));
+  return (
+    <View style={{ gap: 12 }}>
+      {rows.map((row, index) => {
+        const at = high === low ? 0.5 : (row.value - low) / (high - low);
+        const best = index === 0 && rows.length > 1;
+        return (
+          <View
+            key={row.key}
+            accessible
+            accessibilityLabel={`${row.label}: ${row.display}${best ? ', cheapest' : ''}`}
+            style={styles.ladderRow}
+          >
+            <Text
+              numberOfLines={1}
+              style={[typeScale.label, styles.ladderLabel, { color: theme.foreground }]}
+            >
+              {row.label}
+            </Text>
+            <View style={styles.ladderTrack}>
+              <View style={[styles.ladderLine, { backgroundColor: theme.border }]} />
+              <View
+                style={[
+                  styles.ladderDot,
+                  {
+                    left: `${at * 100}%`,
+                    backgroundColor: best ? STATUS.good : color,
+                    borderColor: theme.card,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={[figure, styles.ladderValue, { color: theme.foreground }]}>
+              {row.display}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -669,28 +730,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  donutRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  donutCentre: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 26,
-  },
-  centreLabel: { fontSize: 9, lineHeight: 12 },
-  centreValue: { fontSize: 17, lineHeight: 21, fontWeight: '700' },
-  centreShare: { fontSize: 11, fontWeight: '600' },
-  key: { flex: 1, minWidth: 0, gap: 2 },
-  keyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 6,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  keySwatch: { width: 9, height: 9, borderRadius: 3 },
-  keyLabel: { flex: 1, fontWeight: '600' },
-  keyShare: { fontSize: 11, fontWeight: '700' },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 22 },
+  headline: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -1 },
+  headlineSmall: { fontSize: 20, lineHeight: 25, fontWeight: '700', letterSpacing: -0.6 },
+  swatch: { width: 8, height: 8, borderRadius: 2.5 },
   readout: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -698,16 +741,14 @@ const styles = StyleSheet.create({
     columnGap: 12,
     rowGap: 4,
   },
-  readoutDate: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   readoutItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   readoutValue: { fontSize: 12, fontWeight: '700' },
+  axisText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.4 },
   yLabel: { position: 'absolute', right: 0, width: 40, fontSize: 9, textAlign: 'right' },
   xAxis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -4 },
-  xLabel: { fontSize: 9, fontWeight: '600' },
   columns: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, paddingRight: 40 },
   column: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'flex-end' },
-  ticks: { flexDirection: 'row', gap: 4, paddingRight: 40, marginTop: 4 },
-  headline: { fontSize: 22, lineHeight: 27, fontWeight: '700' },
+  ticks: { flexDirection: 'row', gap: 4, paddingRight: 40, marginTop: 5 },
   gridRow: {
     position: 'absolute',
     left: 0,
@@ -724,10 +765,38 @@ const styles = StyleSheet.create({
     gap: 2,
     alignItems: 'flex-end',
     justifyContent: 'flex-start',
+    transformOrigin: 'bottom',
   },
   quiet: { width: '100%', height: 2, borderRadius: 1, alignSelf: 'flex-end' },
   tick: { flex: 1, fontSize: 9, fontWeight: '600', textAlign: 'center' },
-  track: { height: 6, borderRadius: 999, overflow: 'hidden' },
+  rankLabel: { flex: 1, fontSize: 13 },
+  rankGrid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: spacing.lg, rowGap: 11 },
+  rankCell: { flexBasis: '45%', flexGrow: 1, minWidth: 0 },
+  track: { height: 5, borderRadius: 999, overflow: 'hidden' },
   fill: { height: '100%', borderRadius: 999 },
-  split: { flexDirection: 'row', gap: 2, height: 10 },
+  split: { flexDirection: 'row', gap: 2, height: 8 },
+  keyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  keyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  keyPlain: { paddingHorizontal: 0, marginRight: 8 },
+  keyShare: { fontSize: 11, fontWeight: '700' },
+  ladderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  ladderLabel: { width: '34%', fontSize: 13 },
+  ladderTrack: { flex: 1, height: 14, justifyContent: 'center', marginHorizontal: 6 },
+  ladderLine: { height: 2, borderRadius: 1 },
+  ladderDot: {
+    position: 'absolute',
+    width: 12,
+    height: 12,
+    marginLeft: -6,
+    borderRadius: 6,
+    borderWidth: 2,
+  },
+  ladderValue: { minWidth: 48, fontSize: 12, fontWeight: '700', textAlign: 'right' },
 });

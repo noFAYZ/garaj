@@ -1,20 +1,36 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   Animated,
+  Easing,
   Image,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   useColorScheme,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Line } from 'react-native-svg';
+import Svg, {
+  Circle,
+  Defs,
+  Ellipse,
+  G,
+  Line,
+  LinearGradient,
+  Path,
+  Polygon,
+  RadialGradient,
+  Rect,
+  Stop,
+} from 'react-native-svg';
 import type { Dashboard, Garage, Vehicle } from '@vehicle-os/contracts';
+import type { DocumentType } from '@vehicle-os/domain';
 import { dashboardQuery, garagesQuery, vehiclesQuery } from '@vehicle-os/api-client/react';
 import { dueGauge, groupByMonth, spanOfDays } from '@vehicle-os/ui';
 import logoTextLight from '@/assets/logo-text-light.png';
@@ -23,36 +39,38 @@ import { BrandLogo } from '@/components/brand-logo';
 import { useDockSpace } from '@/components/dock';
 import { NotificationBell } from '@/components/notification-bell';
 import { photoKey, RemoteImage } from '@/components/remote-image';
-import {
-  EntryCard,
-  EntryHead,
-  Fact,
-  Facts,
-  MonthHeading,
-  startsDay,
-  TimelineRow,
-} from '@/components/timeline';
-import { useSpent, VehicleCard, vehicleIcon } from '@/components/vehicle-card';
+import { EmptyBay, Showroom, ShowroomSkeleton, type BayFlag } from '@/components/showroom';
+import { LedgerMonth, LedgerRow } from '@/components/timeline';
+import { useSpent, vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
-import { formatDistance, humanise } from '@/lib/format';
-import { Chip, SectionHeading, SectionLink } from '@/lib/instrument';
+import { jobEmoji } from '@/lib/emoji';
+import { ledgerDate } from '@/lib/ledger';
+import { formatDistance, formatMoney, humanise } from '@/lib/format';
+import { Glyph, SectionHeading, SectionLink } from '@/lib/instrument';
 import {
   ease,
+  Gauge,
   haptic,
   PressableScale,
+  Pulse,
   Rise,
-  spring,
   useReduceMotion,
   useScrollY,
 } from '@/lib/motion';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
-import { Button, CompactHeader, Empty, Face, Ground, Skeleton } from '@/lib/ui';
+import { figure, radius, rimmed, spacing, typeScale, useTheme, type Theme } from '@/lib/theme';
+import { Button, CompactHeader, Empty, Face, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 const PAGE = spacing.lg;
 const DAY = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
 const TIME = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+
+/** Pull to rev: iOS overscrolls past the top, so the pull can drive a tachometer. */
+const REV = Platform.OS === 'ios';
+/** How far a pull goes to put the needle on the stop — about where iOS starts refreshing. */
+const REV_FULL = 120;
+const REV_SIZE = 92;
 
 /** Morning from five, afternoon from noon, evening from six — and evening again until five. */
 function salutationFor(hour: number) {
@@ -72,9 +90,13 @@ function useNow(every = 30_000) {
 }
 
 /**
- * The garage right now (PRD §25) — the web's home, at a phone's width: the greeting panel with the
- * day, the person, their vehicles as a hand of cards and what needs them; the garages as floors of
- * bays; the vehicles; and the recent record as the logbook it is.
+ * The garage right now (PRD §25), opened like one: the dash, where the cluster greets the person,
+ * lights a telltale for whatever is waiting and reads it out; their vehicles, each in its own lit
+ * bay behind a door that rolls up the first time; the garages as floors of bays; and the recent
+ * record as the logbook it is.
+ *
+ * On iOS the pull to refresh is a rev: the overscroll drives a tachometer, the thumb feels each
+ * thousand, and the stop is where the garage is read again.
  */
 export default function GarageScreen() {
   const theme = useTheme();
@@ -82,28 +104,52 @@ export default function GarageScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const dockSpace = useDockSpace();
-  const { y, onScroll } = useScrollY();
+  const [refreshing, setRefreshing] = useState(false);
+  // Where the hero starts and ends on the page: the road under it sinks into the page by its end.
+  const [hero, setHero] = useState<{ y: number; end: number }>();
+  // The rev's last thousand and whether it is refreshing, read by the scroll listener.
+  const engine = useRef({ rpm: 0, refreshing: false });
+  const { y, onScroll } = useScrollY(
+    REV
+      ? (offset) => {
+          if (engine.current.refreshing) return;
+          const rpm = Math.max(0, Math.min(8, Math.floor((-offset / REV_FULL) * 8)));
+          if (rpm > engine.current.rpm) haptic.selection();
+          engine.current.rpm = rpm;
+        }
+      : undefined,
+  );
   const dashboard = useQuery(dashboardQuery(api));
   const vehicles = useQuery(vehiclesQuery(api));
   const garages = useQuery(garagesQuery(api));
   const profile = useProfile();
-  const [garageFilter, setGarageFilter] = useState<string | null>(null);
 
   const data = dashboard.data;
   const vehicleList = vehicles.data?.data ?? [];
   const garageList = garages.data ?? [];
   const spent = useSpent(vehicleList);
+  const items = data ? itemsFrom(data.attention) : [];
+  const flags = flagsByVehicle(items);
 
   const byGarage = new Map<string, Vehicle[]>();
   for (const vehicle of vehicleList) {
     byGarage.set(vehicle.garageId, [...(byGarage.get(vehicle.garageId) ?? []), vehicle]);
   }
   const attention = attentionByGarage(data?.attention, vehicles.data?.data);
-  // A filter left pointing at a garage that has since gone falls back to everything.
-  const activeFilter = garageList.some((garage) => garage.id === garageFilter)
-    ? garageFilter
-    : null;
-  const shownVehicles = activeFilter ? (byGarage.get(activeFilter) ?? []) : vehicleList;
+  const parked = !vehicles.isPending && vehicleList.length > 0;
+
+  const refresh = () => {
+    engine.current.refreshing = true;
+    // On iOS the needle has just hit the stop: the limiter, felt.
+    if (REV) haptic.warning();
+    setRefreshing(true);
+    void Promise.allSettled([dashboard.refetch(), vehicles.refetch(), garages.refetch()]).then(
+      () => {
+        engine.current.refreshing = false;
+        setRefreshing(false);
+      },
+    );
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.background }}>
@@ -116,16 +162,18 @@ export default function GarageScreen() {
         ]}
         refreshControl={
           <RefreshControl
-            refreshing={dashboard.isFetching && !dashboard.isPending}
-            onRefresh={() => {
-              void dashboard.refetch();
-              void vehicles.refetch();
-              void garages.refetch();
-            }}
-            tintColor={theme.primary}
+            refreshing={refreshing}
+            onRefresh={refresh}
+            // On iOS the tachometer is the indicator; the system spinner would sit over it.
+            tintColor={REV ? 'transparent' : theme.primary}
+            colors={[theme.primary]}
+            progressBackgroundColor={theme.popover}
           />
         }
       >
+        <RoadAhead y={y} top={insets.top} end={hero?.end} />
+        {REV ? <RevMeter y={y} refreshing={refreshing} top={insets.top} /> : null}
+
         <Rise style={styles.topBar}>
           <Image
             source={scheme === 'light' ? logoText : logoTextLight}
@@ -180,11 +228,27 @@ export default function GarageScreen() {
           </Rise>
         ) : (
           <>
-            <Rise index={1}>
-              {data ? (
-                <Greeting name={profile.data?.name ?? ''} dashboard={data} vehicles={vehicleList} />
+            <View
+              onLayout={(event) => {
+                const { y: at, height } = event.nativeEvent.layout;
+                setHero({ y: Math.round(at), end: Math.round(at + height) });
+              }}
+              // Never so short that the road has no room below the horizon: with nothing waiting
+              // the hero is a line or two, and the scenery takes the space instead.
+              style={hero ? { minHeight: insets.top + HORIZON_AT + ROAD_MIN - hero.y } : null}
+            >
+              <Rise index={1}>
+                <Hero name={profile.data?.name ?? ''} data={data} items={items} />
+              </Rise>
+            </View>
+
+            <Rise index={2}>
+              {vehicles.isPending ? (
+                <ShowroomSkeleton />
+              ) : parked ? (
+                <Showroom vehicles={vehicleList} spent={spent} flags={flags} />
               ) : (
-                <Skeleton width="100%" height={220} radius={radius.xxxl} />
+                <EmptyBay onAdd={() => router.push('/add/vehicle')} />
               )}
             </Rise>
 
@@ -192,7 +256,7 @@ export default function GarageScreen() {
              * The garages, as a rail rather than a line of text — and the way to add one sits at
              * the end of the row it will join.
              */}
-            <Rise index={2} style={styles.section}>
+            <Rise index={3} style={styles.section}>
               <SectionHeading
                 title="Garages"
                 count={garages.isPending ? undefined : garageList.length}
@@ -228,69 +292,6 @@ export default function GarageScreen() {
               </ScrollView>
             </Rise>
 
-            <Rise index={3} style={styles.section}>
-              <SectionHeading
-                title="Vehicles"
-                count={vehicles.isPending ? undefined : vehicleList.length}
-                trailing={
-                  vehicleList.length > 0 ? (
-                    <SectionLink label="See all" onPress={() => router.push('/vehicles')} />
-                  ) : null
-                }
-              />
-              {/* One garage is the common case, and a filter with one option is not a choice. */}
-              {garageList.length > 1 && vehicleList.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={{ marginHorizontal: -PAGE }}
-                  contentContainerStyle={styles.chips}
-                >
-                  <Chip
-                    label="All"
-                    count={vehicleList.length}
-                    selected={activeFilter === null}
-                    onPress={() => setGarageFilter(null)}
-                  />
-                  {garageList.map((garage) => (
-                    <Chip
-                      key={garage.id}
-                      label={garage.name}
-                      count={byGarage.get(garage.id)?.length ?? 0}
-                      selected={activeFilter === garage.id}
-                      onPress={() => setGarageFilter(garage.id)}
-                    />
-                  ))}
-                </ScrollView>
-              ) : null}
-              {vehicles.isPending ? (
-                <Skeleton width="100%" height={300} radius={radius.xxl} />
-              ) : shownVehicles.length === 0 ? (
-                <View style={{ height: 300 }}>
-                  <Empty
-                    title="No vehicles yet"
-                    description="Add a car, motorcycle, bicycle, boat — anything with a story worth keeping."
-                    action={
-                      <Button
-                        label="Add your first vehicle"
-                        icon="add"
-                        variant="primary"
-                        onPress={() => router.push('/add/vehicle')}
-                      />
-                    }
-                  />
-                </View>
-              ) : (
-                <View style={{ gap: spacing.md }}>
-                  {shownVehicles.map((vehicle, index) => (
-                    <Rise key={vehicle.id} index={index}>
-                      <VehicleCard vehicle={vehicle} spent={spent.get(vehicle.id)} />
-                    </Rise>
-                  ))}
-                </View>
-              )}
-            </Rise>
-
             {data && data.recentActivity.length > 0 ? (
               <Rise index={4} style={styles.section}>
                 <RecentActivity data={data} />
@@ -304,14 +305,1037 @@ export default function GarageScreen() {
   );
 }
 
+/*
+ * The sun comes up and the road draws in once a session, the first time the garage opens, as the
+ * bays' door rolls up. ponytail: a module flag, so a remount (a sign-out and back) does not replay it.
+ */
+let driven = false;
+
 type Flag = 'late' | 'soon';
+type Kind = 'service' | 'papers' | 'recalls' | 'tasks';
+type Point = { x: number; y: number };
+
+/** The lanes, by where their feet land either side of the vanishing point, in screen widths. */
+const LANES = [
+  { k: -1.75, light: 'tail', weight: 2.6 },
+  { k: -1.28, light: 'tail', weight: 1.9 },
+  { k: -0.9, light: 'tail', weight: 1.3 },
+  { k: -0.38, light: 'head', weight: 1.3 },
+  { k: 0.06, light: 'head', weight: 1.9 },
+  { k: 0.56, light: 'head', weight: 2.6 },
+] as const;
+/** The central reservation between the carriageways, and the road's two edges. */
+const DIVIDER = -0.64;
+const EDGES = [-2.4, 1.1] as const;
+/** The vanishing point, across the screen — where the sun sits on the horizon. */
+const VP_X = 0.76;
+/** Below the safe area: the horizon, level with the name. */
+const HORIZON_AT = 142;
+/** The last stretch of road, over which it sinks into the page. */
+const SINK = 130;
+/** Where the road ends until the hero below it has been measured, below the safe area. */
+const ROAD_END = 300;
+/** The least road there is below the horizon; a hero with less to say grows to show it. */
+const ROAD_MIN = 120;
+const SUN = 30;
+
+/** The hills on the horizon, far then near: across as a share of the screen, height above it. */
+const HILLS = [
+  [
+    [0.42, 0],
+    [0.5, 8],
+    [0.57, 5],
+    [0.64, 16],
+    [0.71, 10],
+    [0.79, 21],
+    [0.87, 12],
+    [0.95, 19],
+    [1.04, 11],
+  ],
+  [
+    [0.55, 0],
+    [0.62, 5],
+    [0.69, 3],
+    [0.76, 9],
+    [0.84, 6],
+    [0.92, 12],
+    [1.04, 5],
+  ],
+] as const;
+/** The lights along the central reservation, by how deep into the picture each stands. */
+const LAMP_DEPTHS = [1.45, 1.85, 2.4, 3.1, 4, 5.3, 7, 9.4, 12.5] as const;
+/** City lights at the horizon by night, out of focus: across, up from the horizon, radius, colour. */
+const BOKEH = [
+  [0.53, 24, 3, 'head'],
+  [0.6, 33, 4, 'head'],
+  [0.67, 41, 3, 'tail'],
+  [0.86, 36, 5, 'head'],
+  [0.92, 46, 3, 'tail'],
+  [0.97, 30, 6, 'head'],
+] as const;
+/** A few stars by night, across and down as shares of the sky. */
+const STARS = [
+  [0.5, 0.38],
+  [0.6, 0.58],
+  [0.67, 0.3],
+  [0.82, 0.46],
+  [0.9, 0.28],
+  [0.95, 0.62],
+  [0.57, 0.76],
+  [0.73, 0.68],
+] as const;
+/** Cloud bands by day: across, up from the horizon, length as a share of the screen, thickness. */
+const CLOUDS = [
+  [0.46, 58, 0.2, 3],
+  [0.58, 40, 0.3, 4],
+  [0.74, 66, 0.18, 3],
+] as const;
+/** The traffic: on which lane, which way, and how often. */
+const CARS = [
+  { lane: 0, away: true, duration: 3600, gap: 900 },
+  { lane: 1, away: true, duration: 4400, gap: 2600 },
+  { lane: 4, away: false, duration: 3200, gap: 1700 },
+  { lane: 5, away: false, duration: 3900, gap: 3400 },
+] as const;
+const CAR_W = 58;
+const CAR_H = 12;
+
+/** A smooth line through points: each corner rounded off by a curve to the next midpoint. */
+function smooth(points: readonly Point[]): string {
+  const first = points[0]!;
+  let d = `M ${first.x} ${first.y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i]!;
+    const q = points[i + 1]!;
+    d += ` Q ${p.x} ${p.y} ${(p.x + q.x) / 2} ${(p.y + q.y) / 2}`;
+  }
+  const last = points[points.length - 1]!;
+  return `${d} L ${last.x} ${last.y}`;
+}
+
+/**
+ * The page's own picture, under the top bar and the greeting: a drive into the sunset. The sun
+ * sits on the horizon level with the name, behind two ranges of hills; a highway runs off to it,
+ * lights along its central reservation shrinking toward the sun, its lanes long-exposure light
+ * trails — taillights going away, headlights coming — and now and then a car's lights travel them.
+ * It is painted straight onto the page and sinks into it where the hero ends, so it has no edge:
+ * by night a red sun goes down behind dark hills and the trails glow, under stars; by day the sun
+ * is peach on sand-coloured hills, the trails red and copper, with a few bands of cloud.
+ *
+ * The first time a session, the sun rises from behind the horizon and the road opens out toward
+ * you; the sun's glow breathes; the traffic stops under reduce motion; and as the page scrolls the
+ * picture rises a little slower than it and fades.
+ */
+function RoadAhead({
+  y,
+  top,
+  end,
+}: {
+  y: Animated.Value;
+  top: number;
+  /** Where the hero's last line sits on the page: the road has gone by there. */
+  end: number | undefined;
+}) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const { width } = useWindowDimensions();
+  const [lit] = useState(() => new Animated.Value(driven || reduce ? 1 : 0));
+  const [breath] = useState(() => new Animated.Value(1));
+  const night = theme.dark;
+  const height = end ?? top + ROAD_END;
+  const ground = height + 60;
+  const vp = { x: width * VP_X, y: top + HORIZON_AT };
+  // A short hero — nothing waiting — leaves a short road: it sinks over most of what there is.
+  const sink = Math.min(SINK, (height - vp.y) * 0.75);
+  const paint = night ? '#ffffff' : theme.borderStrong;
+  const tone = night
+    ? {
+        tail: '#ff5a43',
+        head: '#ffe5c0',
+        sun: ['#ffcb85', '#e2532a'],
+        glow: '#ff8f4d',
+        hills: ['#2a1c16', '#1b1310'],
+        road: '#1a1411',
+        lamp: '#ffd7a3',
+        pole: '#4a3a31',
+      }
+    : {
+        tail: theme.destructive,
+        head: theme.primary,
+        sun: ['#ffe3ba', '#f0874a'],
+        glow: '#ffac6b',
+        hills: ['#ead5bf', '#dfc3a8'],
+        road: '#e7dccf',
+        lamp: '#c96f3b',
+        pole: '#c8b29d',
+      };
+  const foot = (k: number): Point => ({ x: vp.x + k * width, y: ground });
+  // A point `s` of the way from the vanishing point (0) to a foot (1).
+  const along = (to: Point, s: number): Point => ({
+    x: vp.x + (to.x - vp.x) * s,
+    y: vp.y + (to.y - vp.y) * s,
+  });
+  // How much of the road is left at a height on the page: 1 until it starts to sink, 0 at its end.
+  const left = (at: number) => Math.min(1, Math.max(0, (height - at) / sink));
+  // Every lane shares its horizon and its ground, so one set of stops fades them all into the page.
+  const sAt = (at: number) => (at - vp.y) / (ground - vp.y);
+  const [sinks, gone] = [sAt(height - sink), sAt(height)];
+  const divider = foot(DIVIDER);
+  const [leftEdge, rightEdge] = [foot(EDGES[0]), foot(EDGES[1])];
+
+  useEffect(() => {
+    if (driven || reduce) return;
+    const draw = Animated.timing(lit, {
+      toValue: 1,
+      duration: 1500,
+      delay: 120,
+      easing: ease.out,
+      useNativeDriver: true,
+    });
+    draw.start(({ finished }) => {
+      if (finished) driven = true;
+    });
+    return () => draw.stop();
+  }, [lit, reduce]);
+
+  useEffect(() => {
+    if (reduce) return;
+    const to = (toValue: number) =>
+      Animated.timing(breath, {
+        toValue,
+        duration: 2600,
+        easing: ease.inOut,
+        useNativeDriver: true,
+      });
+    const loop = Animated.loop(Animated.sequence([to(0.7), to(1)]));
+    loop.start();
+    return () => loop.stop();
+  }, [breath, reduce]);
+
+  /** A stroke's gradient along a lane: out of the horizon, full where the road is near, gone into the page. */
+  const fading = (id: string, to: Point, color: string, strongest: number) => (
+    <LinearGradient
+      key={id}
+      id={id}
+      gradientUnits="userSpaceOnUse"
+      x1={vp.x}
+      y1={vp.y}
+      x2={to.x}
+      y2={to.y}
+    >
+      <Stop offset="0" stopColor={color} stopOpacity={0} />
+      <Stop offset="0.2" stopColor={color} stopOpacity={strongest * 0.3} />
+      <Stop offset={sinks} stopColor={color} stopOpacity={strongest} />
+      <Stop offset={gone} stopColor={color} stopOpacity={0} />
+    </LinearGradient>
+  );
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[
+        styles.road,
+        {
+          height,
+          // It lags the page a little and is gone before the lag could carry it under the bays.
+          opacity: y.interpolate({
+            inputRange: [0, 260],
+            outputRange: [1, 0],
+            extrapolate: 'clamp',
+          }),
+          transform: [
+            {
+              translateY: y.interpolate({
+                inputRange: [0, 300],
+                outputRange: [0, 75],
+                extrapolate: 'clamp',
+              }),
+            },
+          ],
+        },
+      ]}
+    >
+      {/* The sky: the light from the horizon, and stars by night or cloud by day. */}
+      <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
+        <Defs>
+          <RadialGradient
+            id="rd-sky"
+            gradientUnits="userSpaceOnUse"
+            cx={vp.x}
+            cy={vp.y}
+            fx={vp.x}
+            fy={vp.y}
+            rx={width * 0.8}
+            ry={HORIZON_AT}
+          >
+            <Stop offset="0" stopColor={theme.primary} stopOpacity={night ? 0.42 : 0.22} />
+            <Stop offset="0.5" stopColor={theme.primary} stopOpacity={night ? 0.1 : 0.06} />
+            <Stop offset="1" stopColor={theme.primary} stopOpacity={0} />
+          </RadialGradient>
+          <RadialGradient id="rd-tail">
+            <Stop offset="0" stopColor={tone.tail} stopOpacity={0.9} />
+            <Stop offset="1" stopColor={tone.tail} stopOpacity={0} />
+          </RadialGradient>
+          <RadialGradient id="rd-head">
+            <Stop offset="0" stopColor={tone.head} stopOpacity={0.9} />
+            <Stop offset="1" stopColor={tone.head} stopOpacity={0} />
+          </RadialGradient>
+          <LinearGradient id="rd-cloud" x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0" stopColor="#ffffff" stopOpacity={0} />
+            <Stop offset="0.5" stopColor="#ffffff" stopOpacity={0.85} />
+            <Stop offset="1" stopColor="#ffffff" stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect width={width} height={height} fill="url(#rd-sky)" />
+        {night
+          ? STARS.map(([across, down], index) => (
+              <Circle
+                key={index}
+                cx={across * width}
+                cy={top + down * (vp.y - top)}
+                r={0.8}
+                fill="#ffffff"
+                opacity={0.5}
+              />
+            ))
+          : CLOUDS.map(([across, up, long, thick], index) => (
+              <Rect
+                key={index}
+                x={across * width}
+                y={vp.y - up}
+                width={long * width}
+                height={thick}
+                rx={thick / 2}
+                fill="url(#rd-cloud)"
+              />
+            ))}
+        {night
+          ? BOKEH.map(([across, up, r, light], index) => (
+              <Circle
+                key={index}
+                cx={across * width}
+                cy={vp.y - up}
+                r={r}
+                fill={`url(#rd-${light})`}
+                opacity={0.5}
+              />
+            ))
+          : null}
+      </Svg>
+
+      {/* The sun's own glow, breathing, and coming up with it. */}
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: Animated.multiply(lit, breath) }]}>
+        <Svg width={width} height={height}>
+          <Defs>
+            <RadialGradient
+              id="rd-glow"
+              gradientUnits="userSpaceOnUse"
+              cx={vp.x}
+              cy={vp.y}
+              fx={vp.x}
+              fy={vp.y}
+              rx={width * 0.42}
+              ry={62}
+            >
+              <Stop offset="0" stopColor={tone.glow} stopOpacity={night ? 0.55 : 0.42} />
+              <Stop offset="1" stopColor={tone.glow} stopOpacity={0} />
+            </RadialGradient>
+          </Defs>
+          <Rect width={width} height={height} fill="url(#rd-glow)" />
+        </Svg>
+      </Animated.View>
+
+      {/* The sun, rising from behind the horizon: the sky above it clips it at the horizon. */}
+      <View style={[styles.sky, { height: vp.y + 0.5 }]}>
+        <Animated.View
+          style={[
+            styles.sun,
+            {
+              left: vp.x - SUN * 2,
+              top: vp.y - SUN * 2,
+              transform: [
+                {
+                  translateY: lit.interpolate({ inputRange: [0, 1], outputRange: [SUN * 1.7, 0] }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Svg width={SUN * 4} height={SUN * 4}>
+            <Defs>
+              <RadialGradient id="rd-halo">
+                <Stop offset="0.45" stopColor={tone.sun[1]} stopOpacity={night ? 0.5 : 0.35} />
+                <Stop offset="1" stopColor={tone.sun[1]} stopOpacity={0} />
+              </RadialGradient>
+              <LinearGradient id="rd-disc" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor={tone.sun[0]} />
+                <Stop offset="1" stopColor={tone.sun[1]} />
+              </LinearGradient>
+            </Defs>
+            <Circle cx={SUN * 2} cy={SUN * 2} r={SUN * 2} fill="url(#rd-halo)" />
+            <Circle cx={SUN * 2} cy={SUN * 2} r={SUN} fill="url(#rd-disc)" />
+          </Svg>
+        </Animated.View>
+      </View>
+
+      {/* The hills the sun goes down behind, each melting in from the left. */}
+      <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
+        <Defs>
+          {HILLS.map((range, index) => (
+            <LinearGradient
+              key={index}
+              id={`rd-hill-${index}`}
+              gradientUnits="userSpaceOnUse"
+              x1={range[0][0] * width}
+              y1={0}
+              x2={(range[0][0] + 0.12) * width}
+              y2={0}
+            >
+              <Stop offset="0" stopColor={tone.hills[index]} stopOpacity={0} />
+              <Stop offset="1" stopColor={tone.hills[index]} stopOpacity={1} />
+            </LinearGradient>
+          ))}
+          <LinearGradient id="rd-horizon" x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0.3" stopColor={paint} stopOpacity={0} />
+            <Stop offset={VP_X} stopColor={paint} stopOpacity={night ? 0.16 : 0.5} />
+            <Stop offset="1" stopColor={paint} stopOpacity={night ? 0.05 : 0.2} />
+          </LinearGradient>
+        </Defs>
+        {HILLS.map((range, index) => {
+          const points = range.map(([across, up]) => ({ x: across * width, y: vp.y - up }));
+          return (
+            <Path
+              key={index}
+              d={`${smooth(points)} L ${width + 4} ${vp.y} L ${points[0]!.x} ${vp.y} Z`}
+              fill={`url(#rd-hill-${index})`}
+            />
+          );
+        })}
+        <Rect y={vp.y} width={width} height={1} fill="url(#rd-horizon)" />
+      </Svg>
+
+      {/* The road, opening out from the horizon toward you the first time. */}
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            opacity: lit,
+            transformOrigin: `${Math.round(VP_X * 100)}% ${Math.round((vp.y / height) * 100)}%`,
+            transform: [{ scale: lit.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }],
+          },
+        ]}
+      >
+        <Svg width={width} height={height}>
+          <Defs>
+            <LinearGradient
+              id="rd-tarmac"
+              gradientUnits="userSpaceOnUse"
+              x1={0}
+              y1={vp.y}
+              x2={0}
+              y2={height}
+            >
+              <Stop offset="0" stopColor={tone.road} stopOpacity={1} />
+              <Stop
+                offset={(height - sink - vp.y) / (height - vp.y)}
+                stopColor={tone.road}
+                stopOpacity={1}
+              />
+              <Stop offset="1" stopColor={tone.road} stopOpacity={0} />
+            </LinearGradient>
+            <RadialGradient id="rd-lamp">
+              <Stop offset="0" stopColor={tone.lamp} stopOpacity={0.85} />
+              <Stop offset="1" stopColor={tone.lamp} stopOpacity={0} />
+            </RadialGradient>
+            {LANES.map((lane, index) =>
+              fading(`rd-lane-${index}`, foot(lane.k), tone[lane.light], 1),
+            )}
+            {EDGES.map((k, index) =>
+              fading(`rd-edge-${index}`, foot(k), paint, night ? 0.12 : 0.55),
+            )}
+          </Defs>
+          <Polygon
+            points={`${vp.x - 1},${vp.y} ${vp.x + 1},${vp.y} ${rightEdge.x},${rightEdge.y} ${leftEdge.x},${leftEdge.y}`}
+            fill="url(#rd-tarmac)"
+          />
+          {EDGES.map((k, index) => {
+            const end = foot(k);
+            return (
+              <Line
+                key={k}
+                x1={vp.x}
+                y1={vp.y}
+                x2={end.x}
+                y2={end.y}
+                stroke={`url(#rd-edge-${index})`}
+                strokeWidth={1.4}
+              />
+            );
+          })}
+          {/* Each trail twice: a wide faint bloom, then the streak itself. */}
+          {LANES.map((lane, index) => {
+            const end = foot(lane.k);
+            return (
+              <G key={index}>
+                <Line
+                  x1={vp.x}
+                  y1={vp.y}
+                  x2={end.x}
+                  y2={end.y}
+                  stroke={`url(#rd-lane-${index})`}
+                  strokeOpacity={night ? 0.18 : 0.1}
+                  strokeWidth={lane.weight * 5}
+                  strokeLinecap="round"
+                />
+                <Line
+                  x1={vp.x}
+                  y1={vp.y}
+                  x2={end.x}
+                  y2={end.y}
+                  stroke={`url(#rd-lane-${index})`}
+                  strokeWidth={lane.weight}
+                  strokeLinecap="round"
+                />
+              </G>
+            );
+          })}
+          {/* The painted line down the reservation, its dashes shortening into the distance. */}
+          {Array.from({ length: 12 }, (_, index) => {
+            const depth = 1 + index * 0.75;
+            const near = along(divider, 1 / depth);
+            const far = along(divider, 1 / (depth + 0.38));
+            return (
+              <Line
+                key={index}
+                x1={near.x}
+                y1={near.y}
+                x2={far.x}
+                y2={far.y}
+                stroke={paint}
+                strokeOpacity={(night ? 0.28 : 0.6) * left(near.y)}
+                strokeWidth={2.4 / depth}
+              />
+            );
+          })}
+          {/* The lights down the reservation: a pole, a T of arms, a lamp at each end. */}
+          {LAMP_DEPTHS.map((depth) => {
+            const s = 1 / depth;
+            const base = along(divider, s);
+            const head = { x: base.x, y: base.y - 52 * s };
+            const arm = 11 * s;
+            const shown = left(base.y);
+            if (shown === 0) return null;
+            return (
+              <G key={depth} opacity={shown}>
+                <Line
+                  x1={base.x}
+                  y1={base.y}
+                  x2={head.x}
+                  y2={head.y}
+                  stroke={tone.pole}
+                  strokeWidth={Math.max(0.6, 2.2 * s)}
+                />
+                <Line
+                  x1={head.x - arm}
+                  y1={head.y}
+                  x2={head.x + arm}
+                  y2={head.y}
+                  stroke={tone.pole}
+                  strokeWidth={Math.max(0.5, 1.6 * s)}
+                />
+                {night
+                  ? [-arm, arm].map((dx) => (
+                      <Circle
+                        key={dx}
+                        cx={head.x + dx}
+                        cy={head.y + 1.5 * s}
+                        r={14 * s}
+                        fill="url(#rd-lamp)"
+                      />
+                    ))
+                  : null}
+                {[-arm, arm].map((dx) => (
+                  <Circle
+                    key={dx}
+                    cx={head.x + dx}
+                    cy={head.y + 1.5 * s}
+                    r={Math.max(0.7, 2.2 * s)}
+                    fill={tone.lamp}
+                  />
+                ))}
+              </G>
+            );
+          })}
+        </Svg>
+        {reduce
+          ? null
+          : CARS.map((car, index) => (
+              <Car
+                key={index}
+                {...car}
+                vp={vp}
+                to={foot(LANES[car.lane].k)}
+                light={LANES[car.lane].light}
+                color={tone[LANES[car.lane].light]}
+                gone={gone}
+              />
+            ))}
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+/**
+ * A car's lights on its lane: going away, they shrink toward the horizon and slow as they go;
+ * coming, they grow and quicken toward you and sink into the page with the road. Straight lanes,
+ * so a native-driven translate is the whole journey.
+ */
+function Car({
+  vp,
+  to,
+  light,
+  color,
+  gone,
+  away,
+  duration,
+  gap,
+}: {
+  vp: Point;
+  to: Point;
+  /** Whose lights: names the gradient, which a colour's `#` cannot. */
+  light: 'tail' | 'head';
+  color: string;
+  /** How far along the lane the road has sunk into the page. */
+  gone: number;
+  away: boolean;
+  duration: number;
+  gap: number;
+}) {
+  const [t] = useState(() => new Animated.Value(0));
+  // `s` along the lane: 0 at the horizon, 1 at its foot; they live where the road shows.
+  const near = gone * 0.85;
+  const [from, end] = away ? [near, 0.04] : [0.04, near];
+  const dx = to.x - vp.x;
+  const dy = to.y - vp.y;
+
+  useEffect(() => {
+    const drive = Animated.loop(
+      Animated.sequence([
+        Animated.delay(gap),
+        Animated.timing(t, {
+          toValue: 1,
+          duration,
+          easing: away ? Easing.out(Easing.quad) : Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    drive.start();
+    return () => drive.stop();
+  }, [t, gap, duration, away]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.car,
+        {
+          left: vp.x - CAR_W / 2,
+          top: vp.y - CAR_H / 2,
+          opacity: away
+            ? t.interpolate({ inputRange: [0, 0.2, 0.75, 1], outputRange: [0, 1, 0.8, 0] })
+            : t.interpolate({ inputRange: [0, 0.35, 0.75, 1], outputRange: [0, 1, 1, 0] }),
+          transform: [
+            {
+              translateX: t.interpolate({ inputRange: [0, 1], outputRange: [dx * from, dx * end] }),
+            },
+            {
+              translateY: t.interpolate({ inputRange: [0, 1], outputRange: [dy * from, dy * end] }),
+            },
+            { rotate: `${(Math.atan2(dy, dx) * 180) / Math.PI}deg` },
+            { scale: t.interpolate({ inputRange: [0, 1], outputRange: [from, end] }) },
+          ],
+        },
+      ]}
+    >
+      <Svg width={CAR_W} height={CAR_H}>
+        <Defs>
+          <RadialGradient id={`rd-car-${light}`}>
+            <Stop offset="0" stopColor="#ffffff" stopOpacity={1} />
+            <Stop offset="0.35" stopColor={color} stopOpacity={0.95} />
+            <Stop offset="1" stopColor={color} stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+        <Ellipse
+          cx={CAR_W / 2}
+          cy={CAR_H / 2}
+          rx={CAR_W / 2}
+          ry={CAR_H / 2}
+          fill={`url(#rd-car-${light})`}
+        />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+/** What the hero counts, in the order it chips them; tasks are counted, never listed. */
+const KINDS = [
+  { key: 'service', label: 'Service' },
+  { key: 'papers', label: 'Papers' },
+  { key: 'recalls', label: 'Recalls' },
+  { key: 'tasks', label: 'Tasks' },
+] as const satisfies readonly { key: Kind; label: string }[];
+
+/** What a kind reads — how many, and how many of those are late — or `null` before the dashboard. */
+function readKind(
+  key: Kind,
+  items: readonly Item[],
+  attention: Dashboard['attention'] | undefined,
+): { count: number; late: number } | null {
+  if (!attention) return null;
+  if (key === 'tasks') {
+    return {
+      count: attention.overdueTasks + attention.tasksDueToday,
+      late: attention.overdueTasks,
+    };
+  }
+  const mine = items.filter((item) => item.kind === key);
+  return { count: mine.length, late: mine.filter((item) => item.tone === 'late').length };
+}
+
+/** How long each thing ahead stays on the card before the next takes its place. */
+const DWELL = 4600;
+
+/**
+ * Glass over the road: smoked by night, frosted by day — dark or light enough to read on over the
+ * brightest trail, its top edge catching the light.
+ */
+const glass = (theme: Theme) =>
+  theme.dark
+    ? {
+        backgroundColor: 'rgba(18,13,11,0.6)',
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderTopColor: 'rgba(255,255,255,0.2)',
+      }
+    : {
+        backgroundColor: 'rgba(255,255,255,0.74)',
+        borderColor: theme.hairline,
+        borderTopColor: 'rgba(255,255,255,0.95)',
+      };
+
+/**
+ * The top of the page, standing on the road ahead: the day and the time, the person — their name
+ * large — then what is ahead of them: a chip for each kind of thing waiting, its dot the colour of
+ * the worst of it and its edge lit while one of its own is on the card, and the card, which turns
+ * through them by itself, most urgent first. A chip turns it to its kind.
+ */
+function Hero({
+  name,
+  data,
+  items,
+}: {
+  name: string;
+  /** `undefined` while the dashboard loads. */
+  data: Dashboard | undefined;
+  items: readonly Item[];
+}) {
+  const theme = useTheme();
+  const router = useRouter();
+  const now = useNow();
+  // Where the card is: it only counts up, and is read modulo what there is to read.
+  const [at, setAt] = useState(0);
+  const firstName = name.trim().split(/\s+/)[0] ?? '';
+  const salutation = salutationFor(now.getHours());
+  const briefing = items.length === 0 ? data?.briefing : undefined;
+  const current = items.length > 0 ? items[at % items.length] : undefined;
+
+  return (
+    <View>
+      <View style={styles.heroTop}>
+        <Text style={[figure, styles.day, { color: theme.mutedForeground }]}>
+          {DAY.format(now).replace(',', '').toUpperCase()}
+        </Text>
+        <Clock now={now} />
+      </View>
+
+      <View
+        accessible
+        accessibilityRole="header"
+        accessibilityLabel={firstName ? `${salutation}, ${firstName}` : salutation}
+      >
+        {firstName ? (
+          <>
+            <Text style={[styles.salutation, { color: theme.mutedForeground }]}>{salutation},</Text>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              style={[styles.name, { color: theme.foreground }]}
+            >
+              {firstName}
+            </Text>
+          </>
+        ) : (
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            style={[styles.name, { color: theme.foreground }]}
+          >
+            {salutation}
+          </Text>
+        )}
+      </View>
+
+      {/* A chip for each kind with something waiting — a kind with nothing says nothing. */}
+      <View style={styles.chips}>
+        {KINDS.map(({ key, label }) => {
+          const reading = readKind(key, items, data?.attention);
+          if (!reading || reading.count === 0) return null;
+          const first = items.findIndex((item) => item.kind === key);
+          const tone = reading.late ? theme.destructive : theme.warning;
+          return (
+            <PressableScale
+              key={key}
+              onPress={() => {
+                haptic.selection();
+                if (key === 'tasks') router.push('/tasks');
+                else if (first >= 0) setAt(first);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`${label}: ${reading.count}${reading.late ? `, ${reading.late} late` : ' coming up'}`}
+              accessibilityHint={key === 'tasks' ? 'Opens Tasks' : 'Shows the first of them'}
+              accessibilityState={{ selected: current?.kind === key }}
+              hitSlop={4}
+              scaleTo={0.94}
+              style={[
+                styles.chip,
+                glass(theme),
+                current?.kind === key
+                  ? { borderColor: `${tone}80`, borderTopColor: `${tone}80` }
+                  : null,
+              ]}
+            >
+              {reading.late ? (
+                <Pulse color={theme.destructive} size={6} />
+              ) : (
+                <View style={[styles.chipDot, { backgroundColor: theme.warning }]} />
+              )}
+              <Text style={[styles.chipLabel, { color: theme.foreground }]}>{label}</Text>
+              <Text style={[figure, styles.chipCount, { color: theme.mutedForeground }]}>
+                {reading.count}
+              </Text>
+            </PressableScale>
+          );
+        })}
+      </View>
+
+      <Ahead items={items} briefing={briefing} at={at} onStep={setAt} />
+    </View>
+  );
+}
+
+/**
+ * What is ahead, one at a time on a glass card that turns by itself every few seconds: the face
+ * slides away and the next slides in, its glyph popping up. Each thing goes to its vehicle; with
+ * nothing waiting it reads out the garage's briefing. A screen reader can turn it with its Next
+ * action. Under reduce motion it still turns — the card is the only way to see the rest — but the
+ * new face is simply there.
+ */
+function Ahead({
+  items,
+  briefing,
+  at,
+  onStep,
+}: {
+  items: readonly Item[];
+  /** The dashboard's sentences when nothing is waiting; `undefined` while it loads. */
+  briefing: readonly string[] | undefined;
+  at: number;
+  onStep: Dispatch<SetStateAction<number>>;
+}) {
+  const theme = useTheme();
+  const router = useRouter();
+  const reduce = useReduceMotion();
+  const count = items.length > 0 ? items.length : (briefing?.length ?? 0);
+  const [shown, setShown] = useState(at);
+  // The face: -1 leaving to the left, 0 in place, 1 waiting on the right to come in.
+  const [swap] = useState(() => new Animated.Value(0));
+  const arriving = useRef(false);
+
+  useEffect(() => {
+    if (at === shown) return;
+    if (reduce || count === 0 || at % count === shown % count) {
+      setShown(at);
+      return;
+    }
+    const leave = Animated.timing(swap, {
+      toValue: -1,
+      duration: 170,
+      easing: ease.in,
+      useNativeDriver: true,
+    });
+    leave.start(({ finished }) => {
+      if (!finished) return;
+      swap.setValue(1);
+      arriving.current = true;
+      setShown(at);
+    });
+    return () => leave.stop();
+    // Only a new place starts a turn; `shown` catches up to it.
+  }, [at]);
+
+  // The next face comes in once it is the one drawn, so the old one never flashes on its way.
+  useEffect(() => {
+    if (!arriving.current) return;
+    arriving.current = false;
+    Animated.spring(swap, { toValue: 0, useNativeDriver: true, speed: 14, bounciness: 5 }).start();
+  }, [shown, swap]);
+
+  // Each stays a while, then the next takes its place; a jump from a chip starts its stay afresh.
+  useEffect(() => {
+    if (count < 2) return;
+    const stay = setTimeout(() => onStep((value) => value + 1), DWELL);
+    return () => clearTimeout(stay);
+  }, [at, count, onStep]);
+
+  const place = count > 0 ? shown % count : 0;
+  const item = items[place];
+  const next = {
+    accessibilityActions: count > 1 ? [{ name: 'next', label: 'Next' }] : undefined,
+    onAccessibilityAction: () => onStep((value) => value + 1),
+  };
+  const line = item ? undefined : briefing?.[place];
+  const face = {
+    opacity: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 1, 0] }),
+    transform: [
+      { translateX: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [-22, 0, 22] }) },
+    ],
+  };
+  const pop = {
+    transform: [
+      { scale: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0.85, 1, 0.55] }) },
+    ],
+  };
+
+  return (
+    <View>
+      {item ? (
+        <PressableScale
+          onPress={() => router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })}
+          accessibilityRole="button"
+          accessibilityLabel={`${item.title}, ${item.vehicle}, ${item.due}`}
+          accessibilityHint={`Opens ${item.vehicle}`}
+          {...next}
+          scaleTo={0.98}
+          style={[styles.glass, glass(theme)]}
+        >
+          <Animated.View
+            style={[
+              styles.glassTile,
+              pop,
+              {
+                backgroundColor: item.tone === 'late' ? theme.destructiveSoft : theme.warningSoft,
+                borderColor: `${item.tone === 'late' ? theme.destructive : theme.warning}40`,
+              },
+            ]}
+          >
+            <Glyph size={22}>{item.emoji}</Glyph>
+          </Animated.View>
+          <Animated.View style={[styles.glassText, face]}>
+            <Text numberOfLines={1} style={[styles.glassTitle, { color: theme.foreground }]}>
+              {item.title}
+            </Text>
+            {/* When leads: a narrow card cuts the vehicle's name, never how late it is. */}
+            <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
+              <Text
+                style={{
+                  fontWeight: '600',
+                  color: item.tone === 'late' ? theme.destructive : theme.warning,
+                }}
+              >
+                {item.due}
+              </Text>{' '}
+              · {item.vehicle}
+            </Text>
+          </Animated.View>
+          <Ionicons name="chevron-forward" size={16} color={theme.mutedForeground} />
+        </PressableScale>
+      ) : line !== undefined ? (
+        <View accessible accessibilityLabel={line} {...next} style={[styles.glass, glass(theme)]}>
+          <View style={[styles.tickerDot, { backgroundColor: theme.primary }]} />
+          <Animated.Text
+            numberOfLines={2}
+            style={[typeScale.label, styles.tickerText, face, { color: theme.foreground }]}
+          >
+            {line.split(NUMBERS).map((part, i) =>
+              i % 2 === 1 ? (
+                <Text key={i} style={[figure, { fontWeight: '600' }]}>
+                  {part}
+                </Text>
+              ) : (
+                part
+              ),
+            )}
+          </Animated.Text>
+        </View>
+      ) : (
+        <View style={[styles.glass, glass(theme)]}>
+          <Skeleton width={42} height={42} radius={13} />
+          <View style={[styles.glassText, { gap: 7 }]}>
+            <Skeleton width="64%" height={13} />
+            <Skeleton width="46%" height={10} />
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** Whole numbers in a sentence, with their thousands and decimals — never a full stop after. */
+const NUMBERS = /(\d+(?:[.,]\d+)*)/;
+
+/** The time, its colon blinking the seconds away — on the native driver, so nothing re-renders. */
+function Clock({ now }: { now: Date }) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const [blink] = useState(() => new Animated.Value(1));
+  useEffect(() => {
+    if (reduce) return;
+    const to = (toValue: number) =>
+      Animated.timing(blink, {
+        toValue,
+        duration: 90,
+        easing: ease.standard,
+        useNativeDriver: true,
+      });
+    const loop = Animated.loop(
+      Animated.sequence([Animated.delay(410), to(0.15), Animated.delay(410), to(1)]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [blink, reduce]);
+  const style = [figure, styles.day, { color: theme.foreground }];
+  return (
+    <View accessible accessibilityLabel={TIME.format(now)} style={styles.clock}>
+      <Text style={style}>{pad(now.getHours())}</Text>
+      <Animated.Text style={[style, { opacity: blink }]}>:</Animated.Text>
+      <Text style={style}>{pad(now.getMinutes())}</Text>
+    </View>
+  );
+}
 
 interface Item {
   key: string;
   tone: Flag;
+  /** The chip it counts under. */
+  kind: Exclude<Kind, 'tasks'>;
   title: string;
-  detail: string;
+  vehicle: string;
+  /** When, in words: "Overdue by 3 months", "Expires in 4 days". */
+  due: string;
   vehicleId: string;
+  /** The job's glyph, in the web's own artwork. */
+  emoji: string;
 }
 
 /** A schedule's due in words, as the web's `readDue` says it. */
@@ -322,6 +1346,23 @@ function dueLine(plan: Dashboard['attention']['maintenance'][number]['plan'], un
     ? formatDistance(Math.abs(gauge.remaining), unit)
     : spanOfDays(Math.abs(gauge.remaining));
   return gauge.remaining < 0 ? `Overdue by ${amount}` : `Due in ${amount}`;
+}
+
+/** A paper's glyph: the notification's own for the kinds it names, a note for the rest. */
+const PAPER: Partial<Record<DocumentType, string>> = {
+  REGISTRATION: '📋',
+  INSURANCE: '🛡️',
+  WARRANTY: '🧾',
+  INSPECTION_REPORT: '🔍',
+};
+
+/** A recall's component as a person reads it: NHTSA's `EQUIPMENT:OTHER:LABELS` as `Equipment · Other · Labels`. */
+function readable(text: string): string {
+  if (text !== text.toUpperCase()) return text;
+  return text
+    .split(':')
+    .map((part) => humanise(part.trim()))
+    .join(' · ');
 }
 
 /**
@@ -337,9 +1378,12 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
       key: `plan-${due.plan.id}`,
       rank: late ? 0 : 3,
       tone: late ? 'late' : 'soon',
+      kind: 'service',
       title: due.plan.title,
-      detail: `${due.vehicleName} · ${dueLine(due.plan, due.odometerUnit)}`,
+      vehicle: due.vehicleName,
+      due: dueLine(due.plan, due.odometerUnit),
       vehicleId: due.vehicleId,
+      emoji: jobEmoji(due.plan.title),
     });
   }
   for (const paper of attention.documents) {
@@ -348,15 +1392,17 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
       key: `doc-${paper.document.id}`,
       rank: days < 0 ? 1 : 4,
       tone: days < 0 ? 'late' : 'soon',
+      kind: 'papers',
       title: paper.document.title,
-      detail: `${paper.vehicleName} · ${
+      vehicle: paper.vehicleName,
+      due:
         days < 0
           ? `Expired ${spanOfDays(-days)} ago`
           : days === 0
             ? 'Expires today'
-            : `Expires in ${spanOfDays(days)}`
-      }`,
+            : `Expires in ${spanOfDays(days)}`,
       vehicleId: paper.vehicleId,
+      emoji: PAPER[paper.document.documentType] ?? '📝',
     });
   }
   for (const recall of attention.recalls) {
@@ -364,248 +1410,96 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
       key: `recall-${recall.notificationId}`,
       rank: 2,
       tone: 'late',
-      title: recall.component || recall.campaign,
-      detail: `${recall.vehicleName} · May be under recall`,
+      kind: 'recalls',
+      title: readable(recall.component || recall.campaign),
+      vehicle: recall.vehicleName,
+      due: 'May be under recall',
       vehicleId: recall.vehicleId,
+      emoji: '⚠️',
     });
   }
   return items.sort((a, b) => a.rank - b.rank);
 }
 
-/** How many of them the greeting names; the rest are counted. */
-const SHOWN = 3;
-
-/**
- * The top of the home screen — the web's greeting, as a panel over workshop graph paper: the day
- * and the time in mono, the salutation with the name a step quieter, the person's vehicles as a
- * fanned hand of cards, and what needs them as pills that go straight to the vehicle concerned.
- */
-function Greeting({
-  name,
-  dashboard,
-  vehicles,
-}: {
-  name: string;
-  dashboard: Dashboard;
-  vehicles: readonly Vehicle[];
-}) {
-  const theme = useTheme();
-  const router = useRouter();
-  const now = useNow();
-  const firstName = name.trim().split(/\s+/)[0] ?? '';
-  const items = itemsFrom(dashboard.attention);
-
-  return (
-    <View style={[styles.greeting, { backgroundColor: theme.card }, rimmed(theme)]}>
-      <Ground />
-      <View style={styles.greetingTop}>
-        <Text style={[figure, styles.day, { color: theme.mutedForeground }]}>
-          {DAY.format(now).replace(',', '').toUpperCase()}
-          {'  ·  '}
-          {pad(now.getHours())}:{pad(now.getMinutes())}
-        </Text>
-        <Fleet vehicles={vehicles} onPress={() => router.push('/vehicles')} />
-      </View>
-
-      <Text accessibilityRole="header" style={[typeScale.display, { color: theme.foreground }]}>
-        {salutationFor(now.getHours())}
-        {firstName ? (
-          <>
-            ,{'\n'}
-            <Text style={{ color: theme.mutedForeground }}>{firstName}</Text>
-          </>
-        ) : null}
-      </Text>
-
-      {items.length > 0 ? (
-        <View style={styles.needs}>
-          <Text style={[typeScale.overline, { color: theme.mutedForeground }]}>
-            Needs you
-            <Text style={[figure, { letterSpacing: 0 }]}> {pad(items.length)}</Text>
-          </Text>
-          {items.slice(0, SHOWN).map((item, index) => (
-            <Rise key={item.key} index={index + 2}>
-              <PressableScale
-                onPress={() =>
-                  router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
-                }
-                accessibilityRole="button"
-                accessibilityLabel={`${item.title}, ${item.detail}`}
-                scaleTo={0.97}
-                style={[styles.pill, { backgroundColor: `${theme.background}99` }]}
-              >
-                <View
-                  style={[
-                    styles.pillDot,
-                    { backgroundColor: item.tone === 'late' ? theme.destructive : theme.warning },
-                  ]}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={[typeScale.caption, styles.pillTitle, { color: theme.foreground }]}
-                >
-                  {item.title}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={[typeScale.caption, { flexShrink: 1, color: theme.mutedForeground }]}
-                >
-                  {item.detail}
-                </Text>
-              </PressableScale>
-            </Rise>
-          ))}
-          {items.length > SHOWN ? (
-            <PressableScale
-              onPress={() => router.push('/tasks')}
-              accessibilityRole="button"
-              accessibilityLabel={`${items.length - SHOWN} more`}
-              scaleTo={0.95}
-              style={styles.more}
-            >
-              <Text style={[figure, styles.moreText, { color: theme.mutedForeground }]}>
-                +{items.length - SHOWN}
-              </Text>
-            </PressableScale>
-          ) : null}
-        </View>
-      ) : null}
-    </View>
-  );
+/** What each vehicle is waiting on, for the mark over its bay. */
+function flagsByVehicle(items: readonly Item[]): ReadonlyMap<string, BayFlag> {
+  const out = new Map<string, BayFlag>();
+  for (const item of items) {
+    const flag = out.get(item.vehicleId) ?? { late: 0, soon: 0 };
+    flag[item.tone] += 1;
+    out.set(item.vehicleId, flag);
+  }
+  return out;
 }
 
-/** How far each card sits from the middle of the hand, at rest and fanned — the web's values, scaled. */
-const HAND = { step: 22, fan: 34, tilt: 7, fanTilt: 11 } as const;
-const HAND_CARD = { width: 78, height: 64 } as const;
-
 /**
- * The person's vehicles as a hand of cards, three at most, the best picture held in front. Dealt
- * on arrival — from a stack into the hand — and spread wider while the thumb is on them, as the
- * web's spread under the pointer. A press opens the vehicles.
+ * The pull to refresh, on iOS, as a rev: a tachometer hanging in the overscroll, its needle on the
+ * pull — native-driven, so it is exactly where the thumb is — its redline where iOS starts the
+ * refresh. While the garage is read again the engine idles high, the needle hunting round its
+ * reading; then the page settles and the needle drops as it goes.
  */
-function Fleet({ vehicles, onPress }: { vehicles: readonly Vehicle[]; onPress: () => void }) {
+function RevMeter({ y, refreshing, top }: { y: Animated.Value; refreshing: boolean; top: number }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
-  const [spread] = useState(() => new Animated.Value(reduce ? 1 : 0));
+  const [idle] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
-    if (reduce) return;
-    Animated.spring(spread, {
-      toValue: 1,
-      delay: 240,
-      useNativeDriver: true,
-      ...spring.pop,
-    }).start();
-  }, [spread, reduce]);
+    if (!refreshing || reduce) {
+      idle.setValue(0);
+      return;
+    }
+    const hunt = (toValue: number, ms: number) =>
+      Animated.timing(idle, { toValue, duration: ms, easing: ease.inOut, useNativeDriver: true });
+    const loop = Animated.loop(Animated.sequence([hunt(1, 130), hunt(-0.6, 190), hunt(0, 150)]));
+    loop.start();
+    return () => loop.stop();
+  }, [refreshing, reduce, idle]);
 
-  const shown = [...vehicles]
-    .sort(
-      (a, b) =>
-        Number(Boolean(b.primaryPhoto?.thumbnailUrl)) -
-        Number(Boolean(a.primaryPhoto?.thumbnailUrl)),
-    )
-    .slice(0, 3);
-  if (shown.length === 0) return null;
-  // The best card in the middle, in front: [2nd, 1st, 3rd].
-  const hand = shown.length === 3 ? [shown[1]!, shown[0]!, shown[2]!] : shown;
-  const middle = (hand.length - 1) / 2;
-  const front = shown[0]!.id;
-  const fan = (to: number) =>
-    reduce
-      ? spread.setValue(to)
-      : Animated.timing(spread, {
-          toValue: to,
-          duration: 420,
-          easing: ease.out,
-          useNativeDriver: true,
-        }).start();
+  const progress = Animated.add(
+    y.interpolate({ inputRange: [-REV_FULL, 0], outputRange: [1, 0], extrapolate: 'clamp' }),
+    idle.interpolate({ inputRange: [-1, 1], outputRange: [-0.035, 0.035] }),
+  ).interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' });
 
   return (
-    <PressableScale
-      onPress={onPress}
-      onPressIn={() => fan(2)}
-      onPressOut={() => fan(1)}
-      accessibilityRole="button"
-      accessibilityLabel={`Your vehicles: ${shown.map((vehicle) => vehicle.displayName).join(', ')}`}
-      scaleTo={1}
-      style={styles.hand}
+    <Animated.View
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[
+        styles.rev,
+        {
+          // Centred in the gap the pull opens: it rides down at half the pull.
+          top: top + spacing.sm / 2 - REV_SIZE / 2 - 10,
+          opacity: y.interpolate({
+            inputRange: [-56, -14],
+            outputRange: [1, 0],
+            extrapolate: 'clamp',
+          }),
+          transform: [
+            {
+              translateY: y.interpolate({
+                inputRange: [-400, 0],
+                outputRange: [-200, 0],
+                extrapolate: 'clamp',
+              }),
+            },
+          ],
+        },
+      ]}
     >
-      {hand.map((vehicle) => {
-        const offset = hand.indexOf(vehicle) - middle;
-        const photo = vehicle.primaryPhoto?.thumbnailUrl ? vehicle.primaryPhoto : null;
-        return (
-          <Animated.View
-            key={vehicle.id}
-            style={[
-              styles.handCard,
-              {
-                backgroundColor: theme.muted,
-                borderColor: theme.card,
-                zIndex: 10 - Math.abs(offset) * 2,
-              },
-              lift(theme),
-              {
-                transform: [
-                  {
-                    translateX: spread.interpolate({
-                      inputRange: [0, 1, 2],
-                      outputRange: [0, offset * HAND.step, offset * HAND.fan],
-                    }),
-                  },
-                  { translateY: Math.abs(offset) * 5 },
-                  {
-                    rotate: spread.interpolate({
-                      inputRange: [0, 1, 2],
-                      outputRange: [
-                        '0deg',
-                        `${offset * HAND.tilt}deg`,
-                        `${offset * HAND.fanTilt}deg`,
-                      ],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            {photo ? (
-              <RemoteImage
-                uri={photo.thumbnailUrl}
-                cacheKey={photoKey(photo, 'thumb')}
-                style={photo.isCutout ? styles.handCutout : StyleSheet.absoluteFill}
-                contentFit={photo.isCutout ? 'contain' : 'cover'}
-                transition={200}
-                accessible={false}
-              />
-            ) : (
-              <View style={styles.handBadge}>
-                {vehicle.make ? (
-                  <View style={[styles.handLogo, { backgroundColor: theme.cardRaised }]}>
-                    <BrandLogo make={vehicle.make} size={30} />
-                  </View>
-                ) : (
-                  <Ionicons
-                    name={vehicleIcon(vehicle.vehicleType)}
-                    size={22}
-                    color={theme.mutedForeground}
-                  />
-                )}
-              </View>
-            )}
-            {vehicle.id === front ? (
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.handName,
-                  { color: theme.foreground, backgroundColor: `${theme.background}D9` },
-                ]}
-              >
-                {vehicle.displayName}
-              </Text>
-            ) : null}
-          </Animated.View>
-        );
-      })}
-    </PressableScale>
+      <Gauge
+        progress={progress}
+        size={REV_SIZE}
+        redlineFrom={0.8}
+        marks={['0', '1', '2', '3', '4', '5', '6', '7', '8']}
+        label=""
+      >
+        <Text style={[figure, styles.revUnit, { color: theme.mutedForeground }]}>×1000</Text>
+      </Gauge>
+      <Text style={[typeScale.overline, styles.revWord, { color: theme.mutedForeground }]}>
+        {refreshing ? 'Revving' : 'Pull to rev'}
+      </Text>
+    </Animated.View>
   );
 }
 
@@ -890,39 +1784,46 @@ function NewGarageTile({ onPress }: { onPress: () => void }) {
 function RecentActivity({ data }: { data: Dashboard }) {
   const router = useRouter();
   const months = groupByMonth(data.recentActivity);
+  let row = 0;
   return (
     <>
       <SectionHeading title="Recent activity" />
-      <View style={{ gap: spacing.sm }}>
+      <View>
         {months.map((group) => (
           <View key={group.key}>
-            <MonthHeading group={group} />
-            <View style={{ marginTop: spacing.sm }}>
-              {group.items.map((item, index) => (
-                <TimelineRow
+            <LedgerMonth group={group} />
+            {group.items.map((item, place) => {
+              const kind = humanise(item.eventType);
+              const titled =
+                item.title.trim() !== '' && item.title.trim().toLowerCase() !== kind.toLowerCase();
+              const when = ledgerDate(item.occurredAt);
+              return (
+                <LedgerRow
                   key={item.id}
+                  eventType={item.eventType}
+                  title={titled ? item.title : kind}
                   occurredAt={item.occurredAt}
-                  firstOfDay={startsDay(group.items, index)}
-                  last={index === group.items.length - 1}
-                  index={index}
-                >
-                  <EntryCard
-                    onPress={() =>
-                      router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
-                    }
-                    accessibilityLabel={`${humanise(item.eventType)}: ${item.title}, ${item.vehicleName}`}
-                    accessibilityHint={`Opens ${item.vehicleName}`}
-                  >
-                    <EntryHead eventType={item.eventType} title={item.title} cost={item.cost}>
-                      <Facts>
-                        <Fact icon="car-sport-outline">{item.vehicleName}</Fact>
-                        <Fact icon="time-outline">{TIME.format(new Date(item.occurredAt))}</Fact>
-                      </Facts>
-                    </EntryHead>
-                  </EntryCard>
-                </TimelineRow>
-              ))}
-            </View>
+                  previousAt={place > 0 ? group.items[place - 1]!.occurredAt : undefined}
+                  nextAt={group.items[place + 1]?.occurredAt}
+                  // On this page every entry can be a different vehicle, so it is named.
+                  meta={[item.vehicleName]}
+                  cost={item.cost}
+                  onPress={() =>
+                    router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
+                  }
+                  accessibilityLabel={[
+                    when,
+                    `${kind}: ${item.title}`,
+                    item.vehicleName,
+                    item.cost ? formatMoney(item.cost) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(', ')}
+                  accessibilityHint={`Opens ${item.vehicleName}`}
+                  index={row++}
+                />
+              );
+            })}
           </View>
         ))}
       </View>
@@ -931,77 +1832,73 @@ function RecentActivity({ data }: { data: Dashboard }) {
 }
 
 const styles = StyleSheet.create({
-  page: { paddingHorizontal: PAGE, gap: spacing.xxl + 4 },
+  page: { paddingHorizontal: PAGE, gap: spacing.xl },
   section: { gap: spacing.md },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
-    marginBottom: -spacing.md,
+    marginBottom: -spacing.sm,
   },
   // The wordmark is 1500 x 421.
   logo: { height: 24, width: Math.round((24 * 1500) / 421) },
   topActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
 
-  greeting: {
-    borderRadius: radius.xxxl,
-    padding: spacing.lg + 2,
-    gap: spacing.md,
-    overflow: 'hidden',
-  },
-  greetingTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    minHeight: 24,
-  },
-  day: { fontSize: 11, lineHeight: 16, fontWeight: '600', letterSpacing: 1 },
-  needs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 },
-  pill: {
-    maxWidth: '100%',
+  road: { position: 'absolute', top: 0, left: 0, right: 0 },
+  sky: { position: 'absolute', top: 0, left: 0, right: 0, overflow: 'hidden' },
+  sun: { position: 'absolute', width: SUN * 4, height: SUN * 4 },
+  car: { position: 'absolute', width: CAR_W, height: CAR_H },
+  heroTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    borderRadius: 999,
-    paddingLeft: 10,
-    paddingRight: spacing.md,
-    paddingVertical: 6,
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
-  pillDot: { width: 8, height: 8, borderRadius: 4 },
-  pillTitle: { flexShrink: 0, maxWidth: 140, fontWeight: '600' },
-  more: { paddingHorizontal: 4, paddingVertical: 6 },
-  moreText: { fontSize: 12 },
+  day: { fontSize: 11, lineHeight: 16, fontWeight: '600', letterSpacing: 1 },
+  clock: { flexDirection: 'row' },
+  salutation: { fontSize: 16, lineHeight: 21, fontWeight: '500', letterSpacing: -0.2 },
+  name: { fontSize: 44, lineHeight: 48, fontWeight: '700', letterSpacing: -1.8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12, marginBottom: 10 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 28,
+    paddingHorizontal: 11,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  chipDot: { width: 6, height: 6, borderRadius: 3 },
+  chipLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  chipCount: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  glass: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minHeight: 68,
+    padding: 12,
+    borderRadius: radius.xxl,
+    borderWidth: 1,
+  },
+  glassTile: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  glassText: { flex: 1, minWidth: 0, gap: 2 },
+  glassTitle: { fontSize: 15.5, lineHeight: 20, fontWeight: '600', letterSpacing: -0.2 },
+  tickerDot: { width: 6, height: 6, borderRadius: 3 },
+  tickerText: { flex: 1, fontWeight: '500' },
 
-  hand: { width: 150, height: 80, marginTop: -4 },
-  handCard: {
-    position: 'absolute',
-    bottom: 4,
-    left: (150 - HAND_CARD.width) / 2,
-    ...HAND_CARD,
-    borderRadius: 14,
-    borderWidth: 3,
-    overflow: 'hidden',
-    transformOrigin: 'bottom',
-  },
-  handCutout: { position: 'absolute', left: 6, right: 6, top: 4, bottom: 14 },
-  handBadge: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 12 },
-  handLogo: { width: 34, height: 34, borderRadius: 10, overflow: 'hidden' },
-  handName: {
-    position: 'absolute',
-    left: 3,
-    right: 3,
-    bottom: 3,
-    borderRadius: 7,
-    overflow: 'hidden',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    fontSize: 9,
-    fontWeight: '700',
-  },
+  rev: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  revUnit: { fontSize: 8, lineHeight: 10, fontWeight: '600' },
+  revWord: { fontSize: 9, lineHeight: 11, marginTop: -6 },
 
   rail: { gap: spacing.md, paddingHorizontal: PAGE, paddingVertical: 2 },
-  chips: { gap: 6, paddingHorizontal: PAGE },
   garage: {
     width: GARAGE,
     borderRadius: radius.xxl,

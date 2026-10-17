@@ -10,7 +10,26 @@
  * the person — the form shows every value it took, and any field set by hand wins.
  */
 
-import type { EventType } from '@vehicle-os/domain';
+/**
+ * The kinds a line can name: the domain's event types this reader knows words for. Typed here
+ * rather than imported, as the rest of this package is, and a subset, so it fits an `EventType`.
+ */
+export type SaidKind =
+  | 'FUEL'
+  | 'CHARGE'
+  | 'MAINTENANCE'
+  | 'REPAIR'
+  | 'CLEANING'
+  | 'INSPECTION'
+  | 'INSURANCE'
+  | 'REGISTRATION'
+  | 'EXPENSE'
+  | 'TRIP'
+  | 'MODIFICATION'
+  | 'ACCIDENT'
+  | 'PURCHASE'
+  | 'SALE'
+  | 'NOTE';
 
 export type TokenKind = 'kind' | 'money' | 'odometer' | 'quantity' | 'date' | 'place' | 'interval';
 
@@ -23,7 +42,7 @@ export interface Token {
 export interface ParsedDone {
   /** What is left once every figure, date and place is taken out; '' when nothing is. */
   title: string;
-  kind: EventType | null;
+  kind: SaidKind | null;
   /** In the currency's major unit, as typed: "62.40". */
   amount: string | null;
   /**
@@ -67,7 +86,7 @@ const plus = (today: Date, days: number, months = 0) =>
  * The words that say what kind of entry it is, by kind. Whole words only, the first one in the
  * line wins, and they stay in the title — "Oil and filter change" is still called that.
  */
-const KIND_WORDS: readonly [EventType, readonly string[]][] = [
+const KIND_WORDS: readonly [SaidKind, readonly string[]][] = [
   [
     'FUEL',
     [
@@ -232,7 +251,7 @@ export function parseDone(
 ): ParsedDone {
   const day0 = startOf(today);
   type Money = { amount: string; currency: string | null };
-  type Value = string | number | Money | { quantity: string; implies: EventType };
+  type Value = string | number | Money | { quantity: string; implies: SaidKind };
   const rules: Rule<Value>[] = [
     {
       kind: 'money',
@@ -334,11 +353,11 @@ export function parseDone(
   );
 
   const first = <K extends TokenKind>(kind: K) => taken.find((token) => token.kind === kind);
-  const quantity = first('quantity')?.value as { quantity: string; implies: EventType } | undefined;
+  const quantity = first('quantity')?.value as { quantity: string; implies: SaidKind } | undefined;
 
   return {
     title: remainder(line, [...taken, ...(place ? [place] : [])]),
-    kind: (kinds[0]?.value as EventType | undefined) ?? quantity?.implies ?? null,
+    kind: (kinds[0]?.value as SaidKind | undefined) ?? quantity?.implies ?? null,
     amount: (first('money')?.value as Money | undefined)?.amount ?? null,
     currency: (first('money')?.value as Money | undefined)?.currency ?? null,
     odometer: (first('odometer')?.value as number | undefined) ?? null,
@@ -464,7 +483,7 @@ const QUANTITY = /^\s*(\d[\d.,]*\s?(?:l|kwh|gal))\b[\s,;·—-]*/i;
  * A fill's quantity from the front of its note — where `parseDone` puts it — and what is left of
  * the note after it, so the logbook can show the quantity as a fact.
  */
-export function fillQuantity(eventType: EventType, note: string | null) {
+export function fillQuantity(eventType: string, note: string | null) {
   const match = eventType === 'FUEL' || eventType === 'CHARGE' ? QUANTITY.exec(note ?? '') : null;
   return match
     ? { quantity: match[1]!.replace(/kwh$/i, 'kWh'), rest: note!.slice(match[0].length).trim() }

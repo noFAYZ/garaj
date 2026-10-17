@@ -13,7 +13,7 @@ import { Modal, MODAL_BAR } from '@/components/ui/modal';
 import { Button } from '@/components/ui/primitives';
 import { ConfirmDelete } from '@/components/ui/row-actions';
 import { formatDistance, formatMoney, humanise } from '@/lib/format';
-import { fillQuantity } from '@/lib/quick-entry';
+import { fillQuantity } from '@vehicle-os/ui';
 import { cn } from '@/lib/utils';
 
 /** What is filed against one entry: its photographs and its papers. */
