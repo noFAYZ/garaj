@@ -17,7 +17,9 @@ export function AddActivityScreen({ mode }: { mode: ActivityMode }) {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ vehicleId?: string; kind?: string } & FileParams>();
+  const params = useLocalSearchParams<
+    { vehicleId?: string; kind?: string; line?: string } & FileParams
+  >();
   // The dock's fan opens this on the kind it named — "Service", "Expense".
   const kind = EVENT_TYPES.includes(params.kind as EventType) ? (params.kind as EventType) : null;
   const [dirty, setDirty] = useState(false);
@@ -35,6 +37,8 @@ export function AddActivityScreen({ mode }: { mode: ActivityMode }) {
         vehicleId={params.vehicleId}
         initialMode={mode}
         initialKind={kind}
+        // A due service's "Log it" names it, so the form offers that schedule first.
+        initialLine={params.line ?? ''}
         initialPhoto={fromParams(params)}
         footerInset={Math.max(insets.bottom, spacing.sm)}
         onDirty={setDirty}

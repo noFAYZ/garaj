@@ -34,21 +34,22 @@ type Money = { amountMinor: number; currency: string };
 /** The day's column, at the row's left edge. */
 const DAY = 30;
 /** The rail's column; the glyph is centred in it, on a ground that breaks the road round it. */
-const RAIL = 34;
-const RING = 34;
+const RAIL = 30;
+const RING = 30;
 /**
- * Between a row's columns. The glyph is 22 in its 34, so its own 6 each side and this make the
- * day → glyph and glyph → title gaps the same 10: one rhythm across the row.
+ * Between a row's columns. The glyph is 20 in its 30, so its own 5 each side and this make the
+ * day → glyph and glyph → title gaps the same 9: one rhythm across the row.
  */
 const COLUMN_GAP = 4;
 const LINE = 1.5;
-/** The ring's top inside its row, and so where its middle falls. */
-const RING_TOP = 16;
+/** The ring's top inside its row, and so where its middle falls: the air between entries. */
+const RING_TOP = 13;
 const RING_MID = RING_TOP + RING / 2;
 /** Rows reach past the page's gutter by this much, so a pressed row's wash has room round it. */
 const BLEED = spacing.sm;
 
 const MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short' });
+const WEEKDAY = new Intl.DateTimeFormat(DATE_LOCALE, { weekday: 'short' });
 
 /**
  * What the ledger is drawn on, when it is not the page: a month's node and the road's end are cut
@@ -98,7 +99,6 @@ function Segments({
  */
 export function LedgerMonth({ group }: { group: MonthGroup<Dated> }) {
   const theme = useTheme();
-  const surface = useContext(LedgerSurface) ?? theme.background;
   const [year, month] = group.key.split('-').map(Number) as [number, number];
   const total = monthSpend(group.items);
 
@@ -107,7 +107,7 @@ export function LedgerMonth({ group }: { group: MonthGroup<Dated> }) {
       accessible
       accessibilityRole="header"
       accessibilityLabel={`${group.label}${total ? `, spent ${formatMoney(total)}` : ''}`}
-      style={[styles.month, { backgroundColor: theme.muted }]}
+      style={styles.month}
     >
       <Text numberOfLines={1} style={[styles.monthName, { color: theme.foreground }]}>
         {MONTH.format(new Date(year, month - 1, 1)).toUpperCase()}
@@ -115,7 +115,7 @@ export function LedgerMonth({ group }: { group: MonthGroup<Dated> }) {
         <Text style={[styles.monthYear, { color: theme.mutedForeground }]}> {year}</Text>
       </Text>
       {total ? (
-        <View style={[styles.stamp, { backgroundColor: surface }]}>
+        <View style={[styles.stamp, { backgroundColor: theme.muted }]}>
           <Text style={[figure, styles.stampText, { color: theme.mutedForeground }]}>
             {formatMoney(total, true)}
           </Text>
@@ -167,6 +167,9 @@ const KIND_LABEL: Partial<Record<EventType, string>> = {
   CONDITION_CHECK: 'Condition',
   DOCUMENT_ADDED: 'Document',
 };
+
+/** The kind in a word, as the filter says it. */
+const kindWord = (eventType: EventType) => KIND_LABEL[eventType] ?? humanise(eventType);
 
 /**
  * `$1,059.80` → `$1,059` and `.80`; a currency without cents keeps all of it whole, and so does a
@@ -244,6 +247,7 @@ export function LedgerRow({
   const [draw] = useState(() => new Animated.Value(reduce ? 1 : 0));
   const [pressed, setPressed] = useState(false);
   const rest = meta.filter(Boolean).join(' · ');
+  const hue = HUE[eventType];
   const leadsDay = !previousAt || !sameDay(previousAt, occurredAt);
   const endsDay = !nextAt || !sameDay(occurredAt, nextAt);
   const [whole, cents] = cost ? splitCents(cost) : ['', ''];
@@ -309,13 +313,20 @@ export function LedgerRow({
                 <Text numberOfLines={1} style={[styles.title, { color: theme.foreground }]}>
                   {title}
                 </Text>
+                {/*
+                 * The kind as a dot of its hue — the glyph beside it already names it — then what
+                 * else the entry records; with nothing else, the kind's own word.
+                 */}
                 <View style={styles.facts}>
-                  <KindBadge eventType={eventType} />
-                  {rest ? (
-                    <Text numberOfLines={1} style={[styles.meta, { color: theme.mutedForeground }]}>
-                      {rest}
-                    </Text>
-                  ) : null}
+                  <View
+                    style={[
+                      styles.kindDot,
+                      { backgroundColor: hue ? theme[hue] : theme.borderStrong },
+                    ]}
+                  />
+                  <Text numberOfLines={1} style={[styles.meta, { color: theme.mutedForeground }]}>
+                    {rest || kindWord(eventType)}
+                  </Text>
                 </View>
               </View>
               {/*
@@ -446,9 +457,10 @@ export function KindDisc({
 }
 
 /**
- * The day an entry happened, as a tear-off calendar: the month small over the day's number in the
- * figures' mono, inside a hairline tile — no fill, as the glyphs beside it have none. Today's is the
- * primary's, so the newest entries find themselves.
+ * The day an entry happened, as a tear-off calendar: the weekday small over the date in the
+ * figures' mono, inside a hairline tile — no fill, as the glyphs beside it have none. The month is
+ * the strip over its days, so the tile does not say it again. Today's is the primary's, so the
+ * newest entries find themselves.
  */
 function DayBadge({ occurredAt }: { occurredAt: string }) {
   const theme = useTheme();
@@ -461,7 +473,7 @@ function DayBadge({ occurredAt }: { occurredAt: string }) {
       style={[styles.day, { borderColor: today ? `${theme.primary}73` : theme.border }]}
     >
       <Text style={[styles.dayMonth, { color: today ? theme.primary : theme.mutedForeground }]}>
-        {MONTH.format(date).toUpperCase()}
+        {WEEKDAY.format(date).toUpperCase()}
       </Text>
       <Text style={[figure, styles.dayNumber, { color: today ? theme.primary : theme.foreground }]}>
         {date.getDate()}
@@ -515,7 +527,7 @@ export function KindBadge({ eventType }: { eventType: EventType }) {
     >
       <View style={[styles.badgeDot, { backgroundColor: tint ?? theme.mutedForeground }]} />
       <Text numberOfLines={1} style={[styles.badgeText, { color: theme.foreground }]}>
-        {(KIND_LABEL[eventType] ?? humanise(eventType)).toUpperCase()}
+        {kindWord(eventType).toUpperCase()}
       </Text>
     </View>
   );
@@ -551,9 +563,9 @@ export function LedgerPlaceholder({ rows = 4 }: { rows?: number }) {
     <View accessibilityRole="progressbar" accessibilityLabel="Loading activity">
       {Array.from({ length: rows }, (_, index) => (
         <View key={index} style={styles.row}>
-          <Skeleton width={DAY} height={RING} radius={9} style={styles.daySkeleton} />
+          <Skeleton width={DAY} height={RING} radius={8} style={styles.daySkeleton} />
           <View style={styles.rail}>
-            <Skeleton width={22} height={22} radius={11} style={{ marginTop: RING_MID - 11 }} />
+            <Skeleton width={20} height={20} radius={10} style={{ marginTop: RING_MID - 10 }} />
           </View>
           <View style={[styles.body, { gap: 7 }]}>
             <Skeleton width="46%" height={12} />
@@ -617,7 +629,7 @@ const styles = StyleSheet.create({
   down: { transformOrigin: 'top' },
   // A slim strip, the sheet's full width; the label lines up with the days' column.
   month: {
-    height: 28,
+    height: 24,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
@@ -652,14 +664,15 @@ const styles = StyleSheet.create({
     marginTop: RING_TOP,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 9,
+    borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  dayMonth: { fontSize: 8.5, lineHeight: 10, fontWeight: '700', letterSpacing: 0.8 },
-  dayNumber: { fontSize: 14, lineHeight: 17, fontWeight: '600', letterSpacing: -0.4 },
+  dayMonth: { fontSize: 7.5, lineHeight: 9, fontWeight: '700', letterSpacing: 0.7 },
+  dayNumber: { fontSize: 13.5, lineHeight: 16, fontWeight: '600', letterSpacing: -0.4 },
   dayColumn: { width: DAY },
   daySkeleton: { alignSelf: 'flex-start', marginTop: RING_TOP },
   facts: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  kindDot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -673,16 +686,16 @@ const styles = StyleSheet.create({
   badgeDot: { width: 5, height: 5, borderRadius: 2.5 },
   badgeText: { fontSize: 9, lineHeight: 12, fontWeight: '700', letterSpacing: 0.7 },
   aside: { fontWeight: '600' },
-  // The two lines centred on the mark: (2 × 13 + 20 + 4 + 17 − 34) ÷ 2 = RING_TOP.
-  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_TOP - 3 },
+  // The two lines (19 + 2 + 16) centred on the mark's middle: RING_MID − 37 ÷ 2.
+  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 18 },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
-  left: { flex: 1, minWidth: 0, gap: 4 },
+  left: { flex: 1, minWidth: 0, gap: 2 },
   right: { flexShrink: 0, alignItems: 'flex-end', gap: 1 },
   change: { fontSize: 11.5, lineHeight: 16, fontWeight: '600', letterSpacing: -0.2 },
   title: {
     minWidth: 0,
     fontSize: 14.5,
-    lineHeight: 20,
+    lineHeight: 19,
     fontWeight: '600',
     letterSpacing: -0.1,
   },

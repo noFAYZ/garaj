@@ -10,12 +10,12 @@ import {
   Text,
   TextInput,
   View,
-  useColorScheme,
   type TextInputProps,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import logoTextLight from '@/assets/logo-text-light.png';
 import logoText from '@/assets/logo-text.png';
+import { useScheme } from '@/lib/appearance';
 import { signIn, signUp, useSession } from '@/lib/auth';
 import { Eyebrow, Segmented } from '@/lib/instrument';
 import { haptic, Rise, useReduceMotion } from '@/lib/motion';
@@ -29,7 +29,7 @@ import { Button, Ground } from '@/lib/ui';
  */
 export default function SignInScreen() {
   const theme = useTheme();
-  const scheme = useColorScheme();
+  const scheme = useScheme();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   // Sent here by the server ending the session, rather than by signing out: say so.

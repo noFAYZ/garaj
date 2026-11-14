@@ -18,8 +18,8 @@ import { BayStage, Floor, Room } from '@/components/bay-stage';
 import { BrandLogo } from '@/components/brand-logo';
 import { kindOf } from '@/components/vehicle-hero';
 import { formatMoney, humanise } from '@/lib/format';
-import { Eyebrow, SectionLink } from '@/lib/instrument';
-import { ease, haptic, Odometer, PressableScale, Pulse, useReduceMotion } from '@/lib/motion';
+import { SectionLink } from '@/lib/instrument';
+import { ease, haptic, PressableScale, Pulse, useReduceMotion } from '@/lib/motion';
 import { figure, radius, rimmed, spacing, typeScale, useTheme, type Theme } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 
@@ -34,8 +34,8 @@ const PAGE = spacing.lg;
 const GAP = spacing.md;
 /** How much of the next bay shows at the edge: enough to say there is one. */
 const PEEK = 26;
-/** The stage's height, for its width. */
-const STAGE = 0.62;
+/** The stage's height, for its width: a bay, not a poster. */
+const STAGE = 0.5;
 /** The card's padding round its stage. */
 const BEZEL = 6;
 /** How far a card's shadow reaches past it, top and bottom. */
@@ -217,9 +217,6 @@ function Bay({
 }) {
   const theme = useTheme();
   const router = useRouter();
-  const reduce = useReduceMotion();
-  const [pressed, setPressed] = useState(false);
-  const [turn] = useState(() => new Animated.Value(0));
   const stage = width - BEZEL * 2;
   const height = Math.round(width * STAGE);
   const photo = vehicle.primaryPhoto?.thumbnailUrl ? vehicle.primaryPhoto : null;
@@ -249,23 +246,10 @@ function Bay({
     extrapolate: 'clamp',
   });
 
-  const press = (down: boolean) => {
-    setPressed(down);
-    if (reduce) return turn.setValue(down ? 1 : 0);
-    Animated.timing(turn, {
-      toValue: down ? 1 : 0,
-      duration: 300,
-      easing: ease.out,
-      useNativeDriver: true,
-    }).start();
-  };
-
   return (
     <Animated.View style={{ width, transform: [{ scale }] }}>
       <PressableScale
         onPress={() => router.push({ pathname: '/vehicle/[id]', params: { id: vehicle.id } })}
-        onPressIn={() => press(true)}
-        onPressOut={() => press(false)}
         accessibilityRole="button"
         accessibilityLabel={[
           vehicle.displayName,
@@ -355,72 +339,51 @@ function Bay({
           )}
         </BayStage>
 
+        {/*
+         * Who it is and where it stands, in two lines: the name with its paint, then the reading
+         * and the spend as figures — no labels, the units say what they are. The whole card is
+         * the way in; it gives under the thumb.
+         */}
         <View style={styles.info}>
           <View style={styles.nameRow}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={[typeScale.title, { color: theme.foreground }]}>
-                {vehicle.displayName}
-              </Text>
-              <View style={styles.kind}>
-                {photo && vehicle.make ? <BrandLogo make={vehicle.make} size={14} /> : null}
-                <Text
-                  numberOfLines={1}
-                  style={[typeScale.caption, { flexShrink: 1, color: theme.mutedForeground }]}
-                >
-                  {kind}
-                </Text>
-                {swatch ? (
-                  <View
-                    style={[
-                      styles.swatch,
-                      { backgroundColor: swatch, borderColor: theme.hairline },
-                    ]}
-                  />
-                ) : null}
-              </View>
-            </View>
-            {/* Says the whole card is the way in; turns toward where it goes under the thumb. */}
-            <Animated.View
-              style={[
-                styles.arrow,
-                { backgroundColor: pressed ? theme.primary : theme.muted },
-                {
-                  transform: [
-                    {
-                      rotate: turn.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: ['0deg', '-45deg'],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            >
-              <Ionicons
-                name="arrow-forward"
-                size={15}
-                color={pressed ? theme.primaryForeground : theme.mutedForeground}
+            {photo && vehicle.make ? <BrandLogo make={vehicle.make} size={16} /> : null}
+            <Text numberOfLines={1} style={[styles.name, { color: theme.foreground }]}>
+              {vehicle.displayName}
+            </Text>
+            {swatch ? (
+              <View
+                style={[styles.swatch, { backgroundColor: swatch, borderColor: theme.hairline }]}
               />
-            </Animated.View>
+            ) : null}
           </View>
-
+          {/*
+           * The two running figures on their panel, as before — an icon says which is which, not
+           * a label, and the reading is a plain figure, not a drum.
+           */}
           <View style={[styles.readings, { backgroundColor: `${theme.muted}99` }]}>
             <View style={styles.reading}>
-              <Eyebrow style={{ fontSize: 10 }}>Odometer</Eyebrow>
-              <View style={styles.readingLine}>
-                <Odometer value={vehicle.currentOdometer} size={13} />
-                {vehicle.currentOdometer !== null ? (
-                  <Text style={[typeScale.caption, { fontSize: 11, color: theme.mutedForeground }]}>
-                    {unit}
+              <Ionicons name="speedometer-outline" size={15} color={theme.mutedForeground} />
+              {vehicle.currentOdometer !== null ? (
+                <View style={styles.readingLine}>
+                  <Text
+                    numberOfLines={1}
+                    style={[figure, styles.readingValue, { color: theme.foreground }]}
+                  >
+                    {Math.round(vehicle.currentOdometer).toLocaleString()}
                   </Text>
-                ) : null}
-              </View>
+                  <Text style={[styles.readingUnit, { color: theme.mutedForeground }]}>{unit}</Text>
+                </View>
+              ) : (
+                <Text style={[figure, styles.readingValue, { color: theme.mutedForeground }]}>
+                  —
+                </Text>
+              )}
             </View>
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
             <View style={styles.reading}>
-              <Eyebrow style={{ fontSize: 10 }}>Spent</Eyebrow>
+              <Ionicons name="wallet-outline" size={15} color={theme.mutedForeground} />
               {spent === undefined ? (
-                <Skeleton width={64} height={17} style={{ marginTop: 2 }} />
+                <Skeleton width={64} height={15} />
               ) : (
                 <Text
                   numberOfLines={1}
@@ -580,20 +543,20 @@ export function ShowroomSkeleton() {
   return (
     <View style={[styles.card, bayCard(theme)]}>
       <Skeleton height={Math.round(width * STAGE)} radius={radius.xl} />
-      <View style={[styles.info, { gap: spacing.sm }]}>
-        <Skeleton width="55%" height={18} />
-        <Skeleton width="35%" height={12} />
-        <Skeleton height={46} radius={radius.lg} />
+      <View style={styles.info}>
+        <Skeleton width="50%" height={17} />
+        <Skeleton height={40} radius={radius.lg} />
       </View>
     </View>
   );
 }
 
 /**
- * A bay's card. On the white day page it is a white card lifted by a soft, wide shadow and a
- * hairline, not a tinted box; in the dark it stays the resting card with the lit rim.
+ * A bay's card — and Home's other solid cards. On the white day page it is a white card lifted by a
+ * soft, wide shadow and a hairline, not a tinted box; in the dark it stays the resting card with
+ * the lit rim.
  */
-const bayCard = (theme: Theme) =>
+export const bayCard = (theme: Theme) =>
   theme.dark
     ? { backgroundColor: theme.card, ...rimmed(theme) }
     : {
@@ -637,28 +600,31 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   stencilText: { fontSize: 20, fontWeight: '700', letterSpacing: 6, opacity: 0.55 },
-  info: { paddingHorizontal: 10, paddingTop: 12, paddingBottom: 6, gap: 12 },
+  info: { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 6, gap: 10 },
   emptyInfo: {
     alignItems: 'center',
     gap: spacing.xs,
     paddingHorizontal: spacing.lg,
     paddingBottom: 14,
   },
-  nameRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-  kind: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3, minWidth: 0 },
-  swatch: { width: 10, height: 10, borderRadius: 5, borderWidth: 1 },
-  arrow: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  name: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '700', letterSpacing: -0.35 },
+  swatch: { width: 9, height: 9, borderRadius: 5, borderWidth: 1 },
   readings: { flexDirection: 'row', borderRadius: radius.lg },
-  reading: { flex: 1, minWidth: 0, gap: 4, paddingHorizontal: spacing.md, paddingVertical: 9 },
-  readingLine: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  readingValue: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
-  divider: { width: StyleSheet.hairlineWidth },
+  reading: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  // The figure and its unit side by side, not nested: a nested text is dressed apart on a phone.
+  readingLine: { flexShrink: 1, flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+  readingValue: { flexShrink: 1, fontSize: 15, lineHeight: 20, fontWeight: '600' },
+  readingUnit: { fontSize: 11.5, lineHeight: 20, fontWeight: '500' },
+  divider: { width: StyleSheet.hairlineWidth, marginVertical: 8 },
   pagerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pager: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   pagerFigure: { fontSize: 12, lineHeight: 16, fontWeight: '600' },

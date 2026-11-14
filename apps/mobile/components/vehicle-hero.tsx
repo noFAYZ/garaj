@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import {
   Animated,
   Modal,
@@ -13,11 +13,11 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Defs, Ellipse, LinearGradient, RadialGradient, Rect, Stop } from 'react-native-svg';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import type { MonthlySpend, Vehicle, VehiclePhoto } from '@vehicle-os/contracts';
 import { healthBand, vinTail } from '@vehicle-os/ui';
 import type { NextUp } from '@/components/activity-feed';
-import { BayStage, GROUND } from '@/components/bay-stage';
+import { BayStage } from '@/components/bay-stage';
 import { BrandLogo } from '@/components/brand-logo';
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
@@ -26,9 +26,7 @@ import {
   ease,
   Gauge,
   haptic,
-  Odometer,
   PressableScale,
-  Pulse,
   Rise,
   useIgnition,
   useReduceMotion,
@@ -52,8 +50,6 @@ const DIAL = 24;
 const SPARK = 16;
 /** How far the dash docks up over the stage's foot: one object, the cluster on the showroom floor. */
 const DOCK = 30;
-/** An indicator's amber, as a car's — a light, not a status. */
-const AMBER = '#FFB238';
 
 /**
  * Year, make, type and variant — minus anything the name already says, so "2019 Mazda MX-5"
@@ -80,26 +76,16 @@ export function heroStage(screen: number, top: number) {
   return { width: screen, height: room + top, top };
 }
 
-/*
- * The vehicles whose indicators have flashed this session.
- * ponytail: module-level, so going back and forth to one vehicle flashes it once.
- */
-const unlocked = new Set<string>();
-
 /**
- * The vehicle, at the top of every one of its sections: the bay it stands in on Home, up close,
- * drawn up to the screen's top edge with the page's bar floating over it (`VehicleTopBar`).
+ * The vehicle, at the top of every one of its sections, drawn up to the screen's top edge with the
+ * page's bar floating over it (`VehicleTopBar`).
  *
- * The stage is the showroom's — the wall, the floor with its painted lines and the bay's number,
- * the strip light — with the vehicle on it: a cutout on the floor, a photo filling the bay, the
- * make's badge without either. The first time a session it is opened, its indicators flash twice
- * on the floor, felt as two taps: the car answering its key. On a scroll the scene moves slower
- * than the page; on a pull past the top the stage stays on the screen's edge and grows to fill
- * what the pull opens, its light humming while the vehicle is read again. A press opens the
- * gallery; held, it adds a photo.
+ * The stage is plain (user asked): the vehicle on the page's own ground — a photo filling it, a
+ * cutout standing with its shadow, the make's badge without either — and nothing moving but the
+ * vehicle coming into view. A press opens the gallery; held, it adds a photo.
  *
- * Its plate sits at the stage's foot, where a car wears one; under the stage the name, and the VIN.
- * Then the dash, one strip of readings with the job the vehicle needs next across its foot.
+ * Its plate sits at the stage's foot, where a car wears one, the VIN beside it. Then the dash, one
+ * strip of readings with the job the vehicle needs next across its foot.
  */
 export function VehicleHero({
   vehicle,
@@ -108,8 +94,6 @@ export function VehicleHero({
   health,
   next,
   bay,
-  y,
-  refreshing = false,
   onAddPhoto,
   onEdit,
   onLogOdometer,
@@ -126,10 +110,6 @@ export function VehicleHero({
   next?: NextUp | null;
   /** Its bay's number on Home, painted on the floor here too. */
   bay: number;
-  /** The page's scroll, for the stage's parallax and its stretch. */
-  y?: Animated.Value;
-  /** The vehicle is being read again: the strip light hums. */
-  refreshing?: boolean;
   onAddPhoto?: () => void;
   /** Where a vehicle with no plate or VIN sends you to fill them in. */
   onEdit?: () => void;
@@ -138,11 +118,9 @@ export function VehicleHero({
   onOpenPlanned?: () => void;
 }) {
   const theme = useTheme();
-  const reduce = useReduceMotion();
   const insets = useSafeAreaInsets();
   const { width: screen } = useWindowDimensions();
   const [viewing, setViewing] = useState(false);
-  const [hum] = useState(() => new Animated.Value(1));
   const stage = heroStage(screen, insets.top);
 
   // The primary photo leads: it is the one chosen to stand for the vehicle, and the cutout.
@@ -157,53 +135,6 @@ export function VehicleHero({
   const vin = vehicle.identificationNumber;
   const plate = vehicle.registrationIdentifier;
 
-  // The strip light hums while the vehicle is read again — the pull's answer, under the stage.
-  useEffect(() => {
-    if (!refreshing || reduce) {
-      hum.setValue(1);
-      return;
-    }
-    const to = (toValue: number) =>
-      Animated.timing(hum, { toValue, duration: 380, easing: ease.inOut, useNativeDriver: true });
-    const loop = Animated.loop(Animated.sequence([to(0.3), to(1)]));
-    loop.start();
-    return () => {
-      loop.stop();
-      hum.setValue(1);
-    };
-  }, [refreshing, reduce, hum]);
-
-  /*
-   * Pinned to the screen's top on a pull: it grows from its foot by exactly what the pull opens.
-   * On the way down the scene inside it moves slower than the page.
-   */
-  const stretch = y
-    ? {
-        transform: [
-          {
-            scale: y.interpolate({
-              inputRange: [-stage.height, 0],
-              outputRange: [2, 1],
-              extrapolate: 'clamp',
-            }),
-          },
-        ],
-      }
-    : null;
-  const scene = y
-    ? {
-        transform: [
-          {
-            translateY: y.interpolate({
-              inputRange: [0, stage.height],
-              outputRange: [0, stage.height * 0.4],
-              extrapolate: 'clamp',
-            }),
-          },
-        ],
-      }
-    : undefined;
-
   const openStage = () => {
     if (frames.length === 0) return onAddPhoto?.();
     haptic.light();
@@ -212,7 +143,7 @@ export function VehicleHero({
 
   return (
     <View style={styles.hero}>
-      <Animated.View style={[styles.stageSlot, stretch]}>
+      <View style={styles.stageSlot}>
         <PressableScale
           onPress={openStage}
           onLongPress={frames.length > 0 ? onAddPhoto : undefined}
@@ -244,13 +175,11 @@ export function VehicleHero({
             height={stage.height}
             inset={stage.top}
             number={bay}
-            lit={hum}
-            scene={scene}
+            plain
             style={styles.stage}
           >
             {/* Over a photo, the status bar and the bar's controls need a darker sky to sit on. */}
             {cover && !cover.isCutout ? <Sky height={stage.top + BAR + 24} /> : null}
-            <Unlock id={vehicle.id} width={stage.width} height={stage.height} top={stage.top} />
             <View pointerEvents="box-none" style={styles.foot}>
               <View pointerEvents="box-none" style={styles.marks}>
                 {/* The plate where a car wears it, low on the front: what tells this one apart. */}
@@ -335,7 +264,7 @@ export function VehicleHero({
             </View>
           </BayStage>
         </PressableScale>
-      </Animated.View>
+      </View>
 
       {/* The name is the bar's, beside back; the dash docks onto the stage's foot. */}
       <Dash
@@ -451,86 +380,11 @@ function BarButton({
 }
 
 /**
- * The car answering its key: both indicators flash twice on the floor of the bay, each flash a tap
- * under the thumb. Once a session a vehicle, never under reduce motion, gone once it has played.
- */
-function Unlock({
-  id,
-  width,
-  height,
-  top,
-}: {
-  id: string;
-  width: number;
-  height: number;
-  /** Where the room starts under the status bar. */
-  top: number;
-}) {
-  const theme = useTheme();
-  const reduce = useReduceMotion();
-  const [due] = useState(() => !reduce && !unlocked.has(id));
-  const [done, setDone] = useState(!due);
-  const [flash] = useState(() => new Animated.Value(0));
-  const room = height - top;
-
-  useEffect(() => {
-    if (!due) return;
-    unlocked.add(id);
-    const on = () =>
-      Animated.timing(flash, { toValue: 1, duration: 60, easing: ease.out, useNativeDriver: true });
-    const off = (ms: number) =>
-      Animated.timing(flash, { toValue: 0, duration: ms, easing: ease.in, useNativeDriver: true });
-    // As the page lands: on, off, on, and a longer fade.
-    const blink = Animated.sequence([
-      Animated.delay(450),
-      on(),
-      off(240),
-      Animated.delay(70),
-      on(),
-      off(420),
-    ]);
-    const first = setTimeout(haptic.light, 450);
-    const second = setTimeout(haptic.light, 450 + 60 + 240 + 70);
-    blink.start(({ finished }) => {
-      if (finished) setDone(true);
-    });
-    return () => {
-      blink.stop();
-      clearTimeout(first);
-      clearTimeout(second);
-    };
-  }, [due, flash, id]);
-
-  if (done) return null;
-  return (
-    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: flash }]}>
-      <Svg width={width} height={height}>
-        <Defs>
-          <RadialGradient id={`blink-${id}`} cx="50%" cy="50%" rx="50%" ry="50%">
-            <Stop offset="0" stopColor={AMBER} stopOpacity={theme.dark ? 0.8 : 0.65} />
-            <Stop offset="1" stopColor={AMBER} stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        {[0.15, 0.85].map((at) => (
-          <Ellipse
-            key={at}
-            cx={width * at}
-            cy={top + room * GROUND}
-            rx={width * 0.2}
-            ry={room * 0.14}
-            fill={`url(#blink-${id})`}
-          />
-        ))}
-      </Svg>
-    </Animated.View>
-  );
-}
-
-/**
- * The dash, one strip of readings: the odometer on its drums, this month's spend beside the half
- * year it closes, and the health on a small dial whose needle checks itself on arrival. Each is a
- * way in, the odometer to log a reading, the spend and the dial to Stats. Across its foot, when
- * there is one, the job the vehicle needs next, lit in its tone like a lamp on a cluster.
+ * The dash: three readings on tiles of their own — the odometer, this month's spend with the half
+ * year it closes, and the health on a small dial whose needle checks itself on arrival — each the
+ * same width, an icon by its word, so they stand apart without a line between them. Each tile is a
+ * way in: the odometer to log a reading, the spend and the dial to Stats. Under them, when there is
+ * one, the job the vehicle needs next, its status in its tone.
  */
 function Dash({
   vehicle,
@@ -563,6 +417,9 @@ function Dash({
             currency: monthly.currency,
           };
   const unit = vehicle.odometerUnit === 'MI' ? 'MI' : 'KM';
+  const reading = vehicle.currentOdometer;
+  // A small phone's tiles are a third of 288: tighter, a size down, the month left to the label.
+  const narrow = useWindowDimensions().width < 360;
 
   return (
     // The lift on a wrapper: a shadow on the view that clips its corners is clipped with them.
@@ -570,32 +427,39 @@ function Dash({
       <View style={[styles.dash, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
         <View style={styles.readings}>
           <DashCell
+            icon="speedometer-outline"
             label="Odometer"
             said={
-              vehicle.currentOdometer === null
+              reading === null
                 ? 'Odometer, no reading yet'
-                : `Odometer ${Math.round(vehicle.currentOdometer).toLocaleString()} ${unit.toLowerCase()}`
+                : `Odometer ${Math.round(reading).toLocaleString()} ${unit.toLowerCase()}`
             }
             index={2}
             hint="Record a new reading"
+            narrow={narrow}
             onPress={onLogOdometer}
           >
             <View style={styles.reading}>
-              <Odometer value={vehicle.currentOdometer} size={14} />
-              {vehicle.currentOdometer !== null ? (
+              <Value muted={reading === null} narrow={narrow}>
+                {reading === null ? '—' : Math.round(reading).toLocaleString()}
+              </Value>
+              {reading !== null ? (
                 <Text style={[figure, styles.unit, { color: theme.mutedForeground }]}>{unit}</Text>
               ) : null}
             </View>
             {vehicle.currentEngineHours !== null ? (
-              <Text style={[figure, styles.hours, { color: theme.mutedForeground }]}>
-                {vehicle.currentEngineHours.toLocaleString()} H · ENGINE
+              <Text
+                numberOfLines={1}
+                style={[figure, styles.hours, { color: theme.mutedForeground }]}
+              >
+                {vehicle.currentEngineHours.toLocaleString()} H ENGINE
               </Text>
             ) : null}
           </DashCell>
-          <Rule />
           <DashCell
+            icon="wallet-outline"
             label="Spent"
-            basis={MONTH.format(new Date())}
+            basis={narrow ? undefined : MONTH.format(new Date())}
             said={
               spent === undefined
                 ? 'Spent this month, loading'
@@ -605,33 +469,24 @@ function Dash({
             }
             index={3}
             hint="Opens Stats"
-            grow
+            narrow={narrow}
             onPress={onOpenStats}
           >
             <View style={styles.reading}>
               {spent === undefined ? (
-                <Skeleton width={52} height={16} />
+                <Skeleton width={48} height={16} />
               ) : (
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  style={[
-                    figure,
-                    styles.figure,
-                    styles.money,
-                    { color: spent === null ? theme.mutedForeground : theme.foreground },
-                  ]}
-                >
+                <Value muted={!spent} narrow={narrow}>
                   {spent ? formatMoney(spent, true) : '—'}
-                </Text>
+                </Value>
               )}
               {monthly && monthly.points.length > 1 ? (
                 <Spark points={monthly.points} month={thisMonth} />
               ) : null}
             </View>
           </DashCell>
-          <Rule />
           <DashCell
+            icon="pulse-outline"
             label="Health"
             said={
               health === undefined
@@ -642,6 +497,7 @@ function Dash({
             }
             index={4}
             hint="Opens Stats"
+            narrow={narrow}
             onPress={onOpenStats}
           >
             {/* Mounted with its score, so the needle's check runs to the reading, not to a blank. */}
@@ -656,40 +512,66 @@ function Dash({
   );
 }
 
-/** A hairline between two readings, short of the strip's edges. */
-function Rule() {
+/**
+ * A reading's figure: the mono at semibold, one line that shrinks to its tile rather than
+ * overflowing it — a six-figure odometer or a four-figure month still fits.
+ */
+function Value({
+  muted = false,
+  narrow = false,
+  children,
+}: {
+  muted?: boolean;
+  narrow?: boolean;
+  children: ReactNode;
+}) {
   const theme = useTheme();
-  return <View style={[styles.rule, { backgroundColor: theme.border }]} />;
+  return (
+    <Text
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.7}
+      style={[
+        figure,
+        styles.figure,
+        narrow ? styles.figureNarrow : null,
+        { color: muted ? theme.mutedForeground : theme.foreground },
+      ]}
+    >
+      {children}
+    </Text>
+  );
 }
 
 /**
- * A reading on the dash: its label over its figure. The whole cell is the way into its reading,
- * each rising into place in turn like the web's.
+ * A reading on the dash: on its own tile, its icon and word over its figure. The whole tile is the
+ * way into its reading, each rising into place in turn like the web's.
  */
 function DashCell({
+  icon,
   label,
   basis,
   said,
   index,
   hint,
-  grow = false,
+  narrow = false,
   onPress,
   children,
 }: {
+  icon: ComponentProps<typeof Ionicons>['name'];
   label: string;
   basis?: string;
   /** The reading, as a screen reader says it. */
   said: string;
   index: number;
   hint: string;
-  /** Takes the room the other readings leave. */
-  grow?: boolean;
+  narrow?: boolean;
   onPress?: () => void;
   children: ReactNode;
 }) {
   const theme = useTheme();
   return (
-    <Rise index={index} style={grow ? styles.grow : null}>
+    <Rise index={index} style={styles.cellSlot}>
       <PressableScale
         onPress={
           onPress
@@ -703,13 +585,16 @@ function DashCell({
         accessibilityRole="button"
         accessibilityLabel={said}
         accessibilityHint={hint}
-        scaleTo={0.95}
-        style={styles.cell}
+        scaleTo={0.96}
+        style={[styles.cell, narrow ? styles.cellNarrow : null, { backgroundColor: theme.muted }]}
       >
-        <Text numberOfLines={1} style={[styles.label, { color: theme.mutedForeground }]}>
-          {label.toUpperCase()}
-          {basis ? <Text style={figure}> · {basis.toUpperCase()}</Text> : null}
-        </Text>
+        <View style={styles.labelRow}>
+          <Ionicons name={icon} size={11} color={theme.mutedForeground} />
+          <Text numberOfLines={1} style={[styles.label, { color: theme.mutedForeground }]}>
+            {label.toUpperCase()}
+            {basis ? <Text style={[figure, styles.label]}> · {basis.toUpperCase()}</Text> : null}
+          </Text>
+        </View>
         {children}
       </PressableScale>
     </Rise>
@@ -817,13 +702,15 @@ function Spark({
 }
 
 /**
- * The job the vehicle needs next — late before soon — across the dash's foot: washed in its tone
- * while it is late or near, what it is, how it stands, and the way to the rest in Reminders.
+ * The job the vehicle needs next — late before soon — under the readings: its glyph, what it is,
+ * and how it stands as a status in its tone, as Home's Up next card says it; the way to the rest in
+ * Reminders. On the dash's own ground — the status carries the tone, not a wash across the row.
  */
 function NextUpRow({ next, onPress }: { next: NextUp; onPress?: () => void }) {
   const theme = useTheme();
-  const { soft, strong } = useToneColors(next.tone);
+  const { strong } = useToneColors(next.tone);
   const quiet = next.tone === 'neutral';
+  const tone = quiet ? theme.mutedForeground : strong;
   return (
     <Rise index={5}>
       <PressableScale
@@ -840,26 +727,17 @@ function NextUpRow({ next, onPress }: { next: NextUp; onPress?: () => void }) {
         accessibilityLabel={`Next up: ${next.title}, ${next.headline}`}
         accessibilityHint="Opens Reminders"
         scaleTo={0.98}
-        style={[
-          styles.next,
-          { borderTopColor: theme.border, backgroundColor: quiet ? undefined : soft },
-        ]}
+        style={styles.next}
       >
-        <View
-          style={[styles.nextTile, { backgroundColor: quiet ? theme.muted : theme.cardRaised }]}
-        >
-          <Glyph size={14}>{next.emoji}</Glyph>
-        </View>
+        <Glyph size={18}>{next.emoji}</Glyph>
         <Text numberOfLines={1} style={[styles.nextLine, { color: theme.foreground }]}>
           {next.title}
         </Text>
-        {next.tone === 'destructive' ? <Pulse color={strong} size={6} /> : null}
-        <Text
-          numberOfLines={1}
-          style={[styles.nextHeadline, { color: quiet ? theme.mutedForeground : strong }]}
-        >
-          {next.headline}
-        </Text>
+        <View style={[styles.nextStatus, { backgroundColor: quiet ? theme.muted : `${tone}1F` }]}>
+          <Text numberOfLines={1} style={[styles.nextHeadline, { color: tone }]}>
+            {next.headline}
+          </Text>
+        </View>
         <Ionicons name="chevron-forward" size={13} color={theme.mutedForeground} />
       </PressableScale>
     </Rise>
@@ -1077,23 +955,23 @@ export function VehicleHeroSkeleton() {
         style={[
           styles.stageSlot,
           styles.stage,
-          { height: stage.height, backgroundColor: theme.muted },
+          { height: stage.height, backgroundColor: theme.background },
         ]}
       />
       <View
         style={[styles.dock, styles.dash, { backgroundColor: theme.cardRaised }, rimmed(theme)]}
       >
         <View style={styles.readings}>
-          {(['ODOMETER', 'SPENT', 'HEALTH'] as const).map((label, index) => (
-            <Fragment key={label}>
-              {index > 0 ? <Rule /> : null}
-              <View style={[styles.cell, label === 'SPENT' ? styles.grow : null]}>
-                <Text style={[styles.label, { color: theme.mutedForeground }]}>{label}</Text>
-                <View style={styles.reading}>
-                  <Skeleton width={label === 'ODOMETER' ? 100 : 44} height={16} />
-                </View>
+          {(['ODOMETER', 'SPENT', 'HEALTH'] as const).map((label) => (
+            <View
+              key={label}
+              style={[styles.cellSlot, styles.cell, { backgroundColor: theme.muted }]}
+            >
+              <Text style={[styles.label, { color: theme.mutedForeground }]}>{label}</Text>
+              <View style={styles.reading}>
+                <Skeleton width={label === 'ODOMETER' ? 72 : 44} height={16} />
               </View>
-            </Fragment>
+            </View>
           ))}
         </View>
       </View>
@@ -1104,7 +982,7 @@ export function VehicleHeroSkeleton() {
 const styles = StyleSheet.create({
   hero: { gap: spacing.md },
   // Past the page's gutter to the screen's edges; grows from its foot when pulled.
-  stageSlot: { marginHorizontal: -GUTTER, transformOrigin: 'bottom' },
+  stageSlot: { marginHorizontal: -GUTTER },
   stage: {
     borderTopLeftRadius: 0,
     borderTopRightRadius: 0,
@@ -1178,20 +1056,28 @@ const styles = StyleSheet.create({
   // Docked up over the stage's foot; the hero's gap is cancelled so the overlap is exactly DOCK.
   dock: { marginTop: -(DOCK + spacing.md), borderRadius: radius.xxl },
   dash: { borderRadius: radius.xxl, overflow: 'hidden' },
-  readings: { flexDirection: 'row' },
-  grow: { flex: 1, minWidth: 0 },
-  rule: { width: StyleSheet.hairlineWidth, marginVertical: 12 },
-  cell: { paddingHorizontal: 14, paddingVertical: 12, gap: 6 },
-  label: { fontSize: 9.5, lineHeight: 12, fontWeight: '600', letterSpacing: 1 },
+  // Three tiles of one width, a little of the dash's white between and round them.
+  readings: { flexDirection: 'row', gap: 6, padding: 6 },
+  cellSlot: { flex: 1, minWidth: 0 },
+  cell: {
+    flexGrow: 1,
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    borderRadius: radius.lg + 2,
+  },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  cellNarrow: { paddingHorizontal: 8 },
+  label: { flexShrink: 1, fontSize: 7.5, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
   // Every figure keeps the dial's height, so the three sit on one line.
   reading: { height: DIAL, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  unit: { fontSize: 9, lineHeight: 12, fontWeight: '600', letterSpacing: 1.2 },
-  hours: { fontSize: 9.5, lineHeight: 12, fontWeight: '600', letterSpacing: 0.8 },
+  unit: { fontSize: 8, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
+  hours: { fontSize: 7.5, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
   // The web's figure: its mono at semibold, untracked.
-  figure: { fontSize: 18, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
-  money: { flexShrink: 1 },
+  figure: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
+  figureNarrow: { fontSize: 15 },
   spark: {
-    marginLeft: 'auto',
+    flexShrink: 0,
     height: SPARK,
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1202,20 +1088,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 8,
-    paddingLeft: 10,
-    paddingRight: 12,
+    paddingTop: 4,
+    paddingBottom: 10,
+    paddingHorizontal: 14,
   },
-  nextTile: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    alignItems: 'center',
+  nextLine: { flex: 1, minWidth: 0, fontSize: 13.5, lineHeight: 18, fontWeight: '600' },
+  // Its whole width before the title gives way: how late it is is never the part cut.
+  nextStatus: {
+    flexShrink: 0,
+    maxWidth: '55%',
+    height: 20,
     justifyContent: 'center',
+    paddingHorizontal: 7,
+    borderRadius: 6,
   },
-  nextLine: { flex: 1, fontSize: 13.5, lineHeight: 18, fontWeight: '600' },
-  nextHeadline: { fontSize: 11.5, lineHeight: 16, fontWeight: '600' },
+  nextHeadline: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
   plate: {
     height: 24,
     flexDirection: 'row',

@@ -30,6 +30,7 @@ import {
   useSignOut,
 } from '@/components/settings-kit';
 import { api } from '@/lib/api';
+import { setAppearance, useAppearance } from '@/lib/appearance';
 import { Segmented } from '@/lib/instrument';
 import { CURRENCIES, deviceTimeZone } from '@/lib/locale-options';
 import { haptic, PressableScale, Rise, useScrollY } from '@/lib/motion';
@@ -87,6 +88,7 @@ export default function SettingsScreen() {
   const { data: planState, plan } = usePlan();
   const update = useProfileUpdate({ quiet: true });
   const { leave, leaving } = useSignOut();
+  const appearance = useAppearance();
   const [pending, setPending] = useState<number | null>(null);
   const [pulling, setPulling] = useState(false);
 
@@ -191,6 +193,21 @@ export default function SettingsScreen() {
         </Group>
 
         <Group title="Preferences" index={3}>
+          {/* Kept on this phone, not the account: a dark screen at night is about where you are. */}
+          <Row icon="contrast-outline" label="Appearance">
+            <View style={styles.volume}>
+              <Segmented
+                small
+                value={appearance}
+                options={[
+                  { value: 'system', label: 'Auto', said: 'Match the phone' },
+                  { value: 'light', label: 'Light', said: 'Light' },
+                  { value: 'dark', label: 'Dark', said: 'Dark' },
+                ]}
+                onChange={setAppearance}
+              />
+            </View>
+          </Row>
           <Row icon="speedometer-outline" label="Distance">
             {me ? (
               <View style={styles.distance}>

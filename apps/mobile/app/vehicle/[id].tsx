@@ -275,8 +275,6 @@ export default function VehicleScreen() {
               health={health.isPending ? undefined : (health.data?.overall ?? null)}
               next={activity.data ? nextUp(activity.data.planned, data.odometerUnit) : undefined}
               bay={bay}
-              y={y}
-              refreshing={refreshing}
               onAddPhoto={addPhoto}
               onEdit={edit}
               // The reading opens the form that changes it; the spend and the gauge, Stats.

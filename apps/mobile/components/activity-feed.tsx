@@ -275,8 +275,6 @@ export function ActivityFeed({
           styles.book,
           {
             backgroundColor: theme.cardRaised,
-            // Only the top has an edge: the sides are the screen's, the foot the page's end.
-            borderTopColor: theme.dark ? theme.rim : theme.hairline,
             paddingBottom: spacing.sm + bottom,
           },
         ]}
@@ -1044,7 +1042,6 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     borderTopLeftRadius: radius.xxxl,
     borderTopRightRadius: radius.xxxl,
-    borderTopWidth: 1,
     overflow: 'hidden',
   },
   older: { alignItems: 'flex-start' },

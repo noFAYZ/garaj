@@ -23,6 +23,7 @@ import { api } from '@/lib/api';
 import { useSession } from '@/lib/auth';
 import { reportError } from '@/lib/crash';
 import { registerForPush } from '@/lib/push';
+import { appearanceReady } from '@/lib/appearance';
 import { useAppFonts } from '@/lib/fonts';
 import { flush, keptFiles, onPlanWall, onSynced } from '@/lib/offline';
 import { showUpgrade } from '@/lib/upgrade';
@@ -201,8 +202,13 @@ export default function RootLayout() {
   // whose cache belongs to the previous module instance.
   const [queryClient] = useState(createQueryClient);
   const [restored, setRestored] = useState(false);
+  // Light or dark as chosen in Settings: read under the splash, so the first frame is already in it.
+  const [schemed, setSchemed] = useState(false);
+  useEffect(() => {
+    void appearanceReady.then(() => setSchemed(true));
+  }, []);
 
-  const ready = fontsLoaded && !loading && restored;
+  const ready = fontsLoaded && !loading && restored && schemed;
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync().catch(() => undefined);
   }, [ready]);
@@ -230,7 +236,8 @@ export default function RootLayout() {
       onSuccess={() => setRestored(true)}
       onError={() => setRestored(true)}
     >
-      <StatusBar style="auto" />
+      {/* The app's scheme, not the phone's: they differ once one is chosen in Settings. */}
+      <StatusBar style={theme.dark ? 'light' : 'dark'} />
       <AuthGate>
         <Stack
           screenOptions={{
