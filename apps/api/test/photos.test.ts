@@ -48,6 +48,25 @@ describe('photos', () => {
   const completeUpload = (key: string, sizeBytes = 240_000) =>
     context.storage.put(key, { sizeBytes, mimeType: 'image/jpeg', checksum: 'abc123' });
 
+  it('gives a replayed offline upload the same photo and the same object', async () => {
+    const id = '9a8b7c6d-5e4f-4a3b-9c1d-0e1f2a3b4c5d';
+    const ask = async () =>
+      (
+        await as(context, alice).post(`/api/v1/vehicles/${vehicleId}/photos/upload-url`, {
+          id,
+          filename: 'side.jpg',
+          mimeType: 'image/jpeg',
+          sizeBytes: 240_000,
+        })
+      ).body as Ticket;
+
+    const first = await ask();
+    const replay = await ask();
+
+    expect(replay.photoId).toBe(id);
+    expect(replay.storageKey).toBe(first.storageKey);
+  });
+
   it('issues a ticket whose key is scoped to the garage and vehicle', async () => {
     const { status, ticket } = await requestTicket();
 

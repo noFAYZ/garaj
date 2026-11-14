@@ -18,6 +18,7 @@ import type { ActorContext, DocumentType } from '@vehicle-os/domain';
 import { newId } from '@vehicle-os/utils';
 import { ConflictError, NotFoundError, ValidationError } from '../../../../infrastructure/errors';
 import { recordAudit } from '../../../../infrastructure/audit';
+import { idConflict } from '../../../../infrastructure/idempotency';
 import type { CommandMeta } from '../../../garages/application/commands/create-garage';
 import type { StoragePort } from '../../../../infrastructure/storage/storage-port';
 import { vehicleDocumentKey } from '../../../../infrastructure/storage/storage-port';
@@ -41,25 +42,39 @@ export async function requestDocumentUpload(
   actor: ActorContext,
   vehicleId: string,
   garageId: string,
-  input: { filename: string; mimeType: string; sizeBytes: number },
+  input: { id?: string; filename: string; mimeType: string; sizeBytes: number },
 ): Promise<DocumentUploadTicket> {
-  const documentId = newId();
-  const storageKey = vehicleDocumentKey(garageId, vehicleId, documentId);
+  const documentId = input.id ?? newId();
+  let storageKey = vehicleDocumentKey(garageId, vehicleId, documentId);
 
-  await db.insert(schema.documents).values({
-    id: documentId,
-    vehicleId,
-    // Placeholders until finalize supplies the real ones. The columns are NOT NULL because
-    // a finalized document without a type or a title is not something any screen can show.
-    documentType: 'OTHER',
-    title: input.filename,
-    filename: input.filename,
-    mimeType: input.mimeType,
-    sizeBytes: input.sizeBytes,
-    storageKey,
-    uploadedAt: null,
-    uploadedBy: actor.userId,
-  });
+  const [inserted] = await db
+    .insert(schema.documents)
+    .values({
+      id: documentId,
+      vehicleId,
+      // Placeholders until finalize supplies the real ones. The columns are NOT NULL because
+      // a finalized document without a type or a title is not something any screen can show.
+      documentType: 'OTHER',
+      title: input.filename,
+      filename: input.filename,
+      mimeType: input.mimeType,
+      sizeBytes: input.sizeBytes,
+      storageKey,
+      uploadedAt: null,
+      uploadedBy: actor.userId,
+    })
+    .onConflictDoNothing({ target: schema.documents.id })
+    .returning({ id: schema.documents.id });
+
+  /*
+   * A replayed offline upload: the row is already there, so its own key gets a fresh link —
+   * the bytes go to the same object, and finalize lands on the same document.
+   */
+  if (!inserted) {
+    const existing = await findDocumentById(db, vehicleId, documentId);
+    if (!existing) throw idConflict('document');
+    storageKey = existing.storageKey;
+  }
 
   const upload = await storage.createUploadUrl(storageKey, input.mimeType, input.sizeBytes);
   return {
@@ -91,6 +106,8 @@ export async function finalizeDocumentUpload(
 ): Promise<DocumentRow> {
   const document = await findDocumentById(db, vehicleId, documentId);
   if (!document) throw new NotFoundError('Document');
+  // Already finalized: a replay whose first reply was lost. Nothing is filed or audited twice.
+  if (document.uploadedAt) return document;
 
   /*
    * Verified against storage, not taken on trust. A client that abandoned the PUT would

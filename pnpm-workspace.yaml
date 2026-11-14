@@ -13,6 +13,7 @@ allowBuilds:
   '@tailwindcss/oxide': true
   unrs-resolver: true
   msgpackr-extract: true
+  '@sentry/cli': true
 
 # One copy of React's types across the workspace.
 #

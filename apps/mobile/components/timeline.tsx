@@ -11,7 +11,7 @@ import type { EventType } from '@vehicle-os/domain';
 import type { MonthGroup } from '@vehicle-os/ui';
 import { eventEmoji } from '@/lib/emoji';
 import Svg, { Circle } from 'react-native-svg';
-import { formatMoney, humanise } from '@/lib/format';
+import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { Glyph } from '@/lib/instrument';
 import { monthSpend, type Dated } from '@/lib/ledger';
 import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
@@ -48,7 +48,7 @@ const RING_MID = RING_TOP + RING / 2;
 /** Rows reach past the page's gutter by this much, so a pressed row's wash has room round it. */
 const BLEED = spacing.sm;
 
-const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short' });
+const MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short' });
 
 /**
  * What the ledger is drawn on, when it is not the page: a month's node and the road's end are cut

@@ -23,6 +23,7 @@ import {
 } from '@/components/add-activity';
 import { ADD_ACTIONS } from '@/components/add-mode';
 import { GrowCombo } from '@/components/grow-combo';
+import { confirmDiscard } from '@/lib/discard';
 import { fileParams, pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { Eyebrow } from '@/lib/instrument';
 import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
@@ -167,6 +168,8 @@ export function AddSheet({
   );
   const [busy, setBusy] = useState<'camera' | 'library' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The form inside holds something typed: every way of putting the sheet away asks first.
+  const [dirty, setDirty] = useState(false);
   const reduce = useReduceMotion();
   const open = (
     mode: ActivityMode,
@@ -190,7 +193,20 @@ export function AddSheet({
     ]).start();
   }, [drop, dim, reduce]);
 
-  const dismiss = () => {
+  // `drop` never changes, so the responder made on the first render can call this one.
+  const settle = () =>
+    Animated.spring(drop, { toValue: 0, useNativeDriver: true, speed: 18, bounciness: 6 }).start();
+  /** Leaving the form for `then` — the menu, or no sheet at all — once a form with input agrees. */
+  const leave = (then: () => void) => {
+    if (!dirty) {
+      then();
+      return;
+    }
+    // Back in place under the question, wherever a drag left it.
+    settle();
+    confirmDiscard(then);
+  };
+  const slideAway = () => {
     if (reduce) {
       onClose();
       return;
@@ -205,6 +221,7 @@ export function AddSheet({
       Animated.timing(dim, { toValue: 0, duration: 220, useNativeDriver: true }),
     ]).start(() => onClose());
   };
+  const dismiss = () => leave(slideAway);
 
   // The responder is made once; the close it calls is whatever this render's is.
   const dismissRef = useRef(dismiss);
@@ -220,12 +237,7 @@ export function AddSheet({
           haptic.light();
           dismissRef.current();
         } else {
-          Animated.spring(drop, {
-            toValue: 0,
-            useNativeDriver: true,
-            speed: 18,
-            bounciness: 6,
-          }).start();
+          settle();
         }
       },
     }),
@@ -340,9 +352,10 @@ export function AddSheet({
                     initialLine={starts?.line ?? ''}
                     initialPhoto={form.photo}
                     inSheet
+                    onDirty={setDirty}
                     lead={
                       <PressableScale
-                        onPress={() => setForm(null)}
+                        onPress={() => leave(() => setForm(null))}
                         accessibilityRole="button"
                         accessibilityLabel="Back"
                         hitSlop={8}

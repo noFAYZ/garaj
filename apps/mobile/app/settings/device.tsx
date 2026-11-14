@@ -71,7 +71,11 @@ export default function DeviceScreen() {
    */
   const fixPermission = () => {
     if (permission === 'denied') void Linking.openSettings();
-    else if (permission === 'undetermined') void registerForPush().finally(read);
+    else if (permission === 'undetermined') {
+      void registerForPush({ ask: true })
+        .catch(() => undefined)
+        .finally(read);
+    }
   };
 
   const clear = pending === 0;

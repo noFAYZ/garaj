@@ -6,6 +6,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } fr
 import { planWall } from '@vehicle-os/api-client';
 import { queryKeys } from '@vehicle-os/api-client/react';
 import { api } from '@/lib/api';
+import { useDiscardGuard } from '@/lib/discard';
 import { Chip, Eyebrow, Headline } from '@/lib/instrument';
 import { haptic, Rise } from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -35,6 +36,7 @@ export default function NewGarageScreen() {
   const profile = useProfile();
   const [name, setName] = useState('');
   const trimmed = name.trim();
+  const release = useDiscardGuard(trimmed !== '');
   const currency = profile.data?.defaultCurrency;
 
   const create = useMutation({
@@ -45,6 +47,7 @@ export default function NewGarageScreen() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.garages() });
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.plan() });
+      release();
       router.back();
     },
   });

@@ -26,6 +26,7 @@ import { amountOnly, digitsOnly } from '@vehicle-os/ui';
 import { vehicleQuery } from '@vehicle-os/api-client/react';
 import { api } from '@/lib/api';
 import { DateField } from '@/lib/date-picker';
+import { useDiscardGuard } from '@/lib/discard';
 import { humanise, toMinorUnits } from '@/lib/format';
 import { Eyebrow, FigureInput, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
@@ -67,6 +68,7 @@ export default function EditVehicleScreen() {
 
   const changed =
     current && initial ? Object.keys(current).filter((k) => current[k] !== initial[k]) : [];
+  const release = useDiscardGuard(changed.length > 0);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -81,6 +83,7 @@ export default function EditVehicleScreen() {
     onSuccess: () => {
       haptic.success();
       void queryClient.invalidateQueries({ queryKey: ['vehicles'] });
+      release();
       router.back();
     },
   });

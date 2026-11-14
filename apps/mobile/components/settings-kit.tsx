@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { queryKeys } from '@vehicle-os/api-client/react';
 import type { Garage, UpdateUserProfile, UserProfile } from '@vehicle-os/contracts';
-import { signOut, useSession } from '@/lib/auth';
+import { deleteAccount, signOut } from '@/lib/auth';
 import { haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import { clearQueue, enqueue, flush } from '@/lib/offline';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -315,21 +315,28 @@ function Lean({ on }: { on: boolean }) {
 export function useSignOut() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { refresh } = useSession();
   const [leaving, setLeaving] = useState(false);
-  const leave = async () => {
+  /*
+   * The local half runs whatever happened to the network half: `signOut` never throws, and a
+   * refused deletion throws before anything here is touched — the account is still there.
+   */
+  const end = async (how: () => Promise<void>) => {
     setLeaving(true);
     try {
-      await signOut();
-      await clearQueue();
-      queryClient.clear();
-      await refresh();
+      await how();
+      await clearQueue().catch(() => undefined);
       router.replace('/sign-in');
+      queryClient.clear();
     } finally {
       setLeaving(false);
     }
   };
-  return { leave, leaving };
+  return {
+    leave: () => end(signOut),
+    /** Deletes the account for good; rejects with the server's reason when it cannot. */
+    remove: () => end(deleteAccount),
+    leaving,
+  };
 }
 
 /**

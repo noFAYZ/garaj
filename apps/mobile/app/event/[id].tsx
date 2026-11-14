@@ -2,15 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Fragment, useRef, type ReactNode } from 'react';
-import {
-  Alert,
-  Animated,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Alert, Animated, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, Line, RadialGradient, Rect, Stop } from 'react-native-svg';
 import type {
@@ -34,7 +26,7 @@ import { groupSurface } from '@/components/settings-kit';
 import { fillQuantity, KindBadge, KindDisc, kindHue, splitCents } from '@/components/timeline';
 import { api } from '@/lib/api';
 import { fileParams, pickPhoto } from '@/lib/file-picker';
-import { formatDistance, formatMoney, humanise } from '@/lib/format';
+import { DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
 import { economy, sincePrevious, spendWindow, unitPrice } from '@/lib/ledger';
 import { haptic, Odometer, Pop, PressableScale, Rise, useScrollY } from '@/lib/motion';
 import { cardSurface, figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -56,18 +48,18 @@ const HALO = 196;
 /** How tall the spend bars stand at their dearest. */
 const BARS = 64;
 
-const FULL_DATE = new Intl.DateTimeFormat('en-US', {
+const FULL_DATE = new Intl.DateTimeFormat(DATE_LOCALE, {
   weekday: 'short',
   month: 'short',
   day: 'numeric',
   year: 'numeric',
 });
-const SHORT_DATE = new Intl.DateTimeFormat('en-US', {
+const SHORT_DATE = new Intl.DateTimeFormat(DATE_LOCALE, {
   month: 'short',
   day: 'numeric',
   year: 'numeric',
 });
-const BAR_DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const BAR_DATE = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', day: 'numeric' });
 
 /** One of a kind, as a sentence says it: "since the last fill-up". */
 const NOUN: Partial<Record<EventType, string>> = {
@@ -458,10 +450,25 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   const price = unitPrice(event.cost, quantity);
   const unit = event.odometerUnit === 'MI' ? 'mi' : 'km';
   const value = (text: string, mono = true) => (
-    <Text numberOfLines={2} style={[mono ? figure : null, styles.factValue, { color: theme.foreground }]}>
+    <Text
+      numberOfLines={2}
+      style={[mono ? figure : null, styles.factValue, { color: theme.foreground }]}
+    >
       {text}
     </Text>
   );
+  // Side by side, not nested, like the hero: the cents quieter than the amount.
+  const money = (amount: Parameters<typeof splitCents>[0]) => {
+    const [whole, cents] = splitCents(amount);
+    return (
+      <View style={styles.amount}>
+        <Text style={[figure, styles.factValue, { color: theme.foreground }]}>{whole}</Text>
+        {cents ? (
+          <Text style={[figure, styles.factCents, { color: theme.mutedForeground }]}>{cents}</Text>
+        ) : null}
+      </View>
+    );
+  };
 
   const facts: Fact[] = [];
   if (event.odometer !== null) {
@@ -471,7 +478,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
       said: formatDistance(event.odometer, event.odometerUnit),
       value: (
         <View style={styles.reading}>
-          <Odometer value={event.odometer} size={13} />
+          <Odometer value={event.odometer} size={15} />
           <Text style={[typeScale.caption, styles.readingUnit, { color: theme.mutedForeground }]}>
             {unit}
           </Text>
@@ -487,7 +494,12 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
     });
   }
   if (event.provider) {
-    facts.push({ key: 'where', label: 'Where', said: event.provider, value: value(event.provider, false) });
+    facts.push({
+      key: 'where',
+      label: 'Where',
+      said: event.provider,
+      value: value(event.provider, false),
+    });
   }
   if (quantity) {
     facts.push({
@@ -502,7 +514,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
       key: 'price',
       label: `Per ${price.per}`,
       said: `${formatMoney(price.price)} per ${price.per}`,
-      value: value(formatMoney(price.price)),
+      value: money(price.price),
     });
   }
   if (event.engineHours !== null) {
@@ -526,12 +538,11 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
       facts.push({ key: 'distance', label: 'Distance', said: distance, value: value(distance) });
     }
     if (event.trip.deduction) {
-      const claim = formatMoney(event.trip.deduction);
       facts.push({
         key: 'deduction',
         label: 'Deduction',
-        said: claim,
-        value: value(claim),
+        said: formatMoney(event.trip.deduction),
+        value: money(event.trip.deduction),
         sub: event.trip.rate
           ? { text: `${formatMoney(event.trip.rate)}/${unit}`, color: theme.mutedForeground }
           : null,
@@ -617,7 +628,11 @@ function Context({
     const [figureText, ...rest] = fill.split(' ');
     stats.push({ value: figureText!, unit: rest.join(' '), said: fill });
   }
-  if (event.cost && since?.distance && (event.eventType === 'FUEL' || event.eventType === 'CHARGE')) {
+  if (
+    event.cost &&
+    since?.distance &&
+    (event.eventType === 'FUEL' || event.eventType === 'CHARGE')
+  ) {
     const running = formatMoney({
       amountMinor: event.cost.amountMinor / since.distance,
       currency: event.cost.currency,
@@ -660,7 +675,9 @@ function Context({
                   <Text style={[figure, styles.statValue, { color: theme.foreground }]}>
                     {stat.value}
                   </Text>
-                  <Text style={[styles.statUnit, { color: theme.mutedForeground }]}>{stat.unit}</Text>
+                  <Text style={[styles.statUnit, { color: theme.mutedForeground }]}>
+                    {stat.unit}
+                  </Text>
                 </View>
               </Fragment>
             ))}
@@ -670,13 +687,14 @@ function Context({
 
       {spend && event.cost ? (
         <View
-          style={[
-            styles.half,
-            since ? [styles.halfBelow, { borderTopColor: theme.border }] : null,
-          ]}
+          style={[styles.half, since ? [styles.halfBelow, { borderTopColor: theme.border }] : null]}
         >
           <View style={styles.halfHead}>
-            <Verdict amount={event.cost.amountMinor} typical={spend.typical} kind={event.eventType} />
+            <Verdict
+              amount={event.cost.amountMinor}
+              typical={spend.typical}
+              kind={event.eventType}
+            />
             <Text style={[figure, styles.halfAside, { color: theme.mutedForeground }]}>
               typical {formatMoney({ amountMinor: spend.typical, currency }, true)}
             </Text>
@@ -717,7 +735,10 @@ function Verdict({ amount, typical, kind }: { amount: number; typical: number; k
         size={13}
         color={color}
       />
-      <Text numberOfLines={1} style={[styles.halfTitle, { flexShrink: 1, color: theme.foreground }]}>
+      <Text
+        numberOfLines={1}
+        style={[styles.halfTitle, { flexShrink: 1, color: theme.foreground }]}
+      >
         {near
           ? `About your typical ${noun(kind)}`
           : change >= 100
@@ -768,10 +789,7 @@ function Bars({
               style={styles.barSlot}
             >
               <View
-                style={[
-                  styles.spendBar,
-                  { height, backgroundColor: mine ? tint : `${tint}2E` },
-                ]}
+                style={[styles.spendBar, { height, backgroundColor: mine ? tint : `${tint}2E` }]}
               />
             </PressableScale>
           );
@@ -796,7 +814,14 @@ function Bars({
           strokeDasharray="3 3"
         />
         {/* The bars' ground. */}
-        <Line x1="0" x2="100%" y1={BARS - 0.5} y2={BARS - 0.5} stroke={theme.border} strokeWidth={1} />
+        <Line
+          x1="0"
+          x2="100%"
+          y1={BARS - 0.5}
+          y2={BARS - 0.5}
+          stroke={theme.border}
+          strokeWidth={1}
+        />
       </Svg>
     </View>
   );
@@ -940,7 +965,11 @@ function Foot({
   onDelete: () => void;
 }) {
   const theme = useTheme();
-  const by = /^ai$/i.test(event.source) ? 'by the assistant' : event.source === 'IMPORT' ? 'imported' : null;
+  const by = /^ai$/i.test(event.source)
+    ? 'by the assistant'
+    : event.source === 'IMPORT'
+      ? 'imported'
+      : null;
   return (
     <Rise index={7} style={styles.foot}>
       <Text style={[typeScale.caption, styles.logged, { color: theme.mutedForeground }]}>
@@ -1028,10 +1057,11 @@ const styles = StyleSheet.create({
   cell: { paddingHorizontal: 14, paddingVertical: 12, gap: 5 },
   cellRight: { borderLeftWidth: StyleSheet.hairlineWidth },
   cellBelow: { borderTopWidth: StyleSheet.hairlineWidth },
-  label: { fontSize: 10, lineHeight: 13, fontWeight: '600', letterSpacing: 1 },
-  factValue: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
+  label: { fontSize: 7, lineHeight: 10, fontWeight: '700', letterSpacing: 0, opacity: 0.7 },
+  factValue: { fontSize: 20, lineHeight: 23, fontWeight: '600', letterSpacing: -0.3 },
+  factCents: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
   reading: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  readingUnit: { fontSize: 11 },
+  readingUnit: { fontSize: 9, opacity: 0.75 },
   sub: { fontSize: 11, lineHeight: 14, fontWeight: '600' },
   half: { paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
   halfBelow: { borderTopWidth: StyleSheet.hairlineWidth },
@@ -1039,10 +1069,10 @@ const styles = StyleSheet.create({
   halfTitle: { flex: 1, fontSize: 13, lineHeight: 17, fontWeight: '600' },
   halfAside: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
   stats: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
-  statRule: { width: StyleSheet.hairlineWidth, height: 16 },
+  statRule: { width: StyleSheet.hairlineWidth, height: 18 },
   statLine: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
-  statValue: { fontSize: 17, lineHeight: 22, fontWeight: '600', letterSpacing: -0.3 },
-  statUnit: { flexShrink: 1, fontSize: 11, lineHeight: 14, fontWeight: '500' },
+  statValue: { fontSize: 20, lineHeight: 26, fontWeight: '600', letterSpacing: -0.4 },
+  statUnit: { flexShrink: 1, fontSize: 9, lineHeight: 11, fontWeight: '500', opacity: 0.75 },
   verdict: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4 },
   bars: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   barSlot: { flex: 1, height: BARS, alignItems: 'center', justifyContent: 'flex-end' },

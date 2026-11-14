@@ -281,6 +281,40 @@ describe('maintenance', () => {
       expect((response.body as { record: { planId: null } }).record.planId).toBeNull();
     });
 
+    it('lands a replayed offline log on the record it already made', async () => {
+      const id = '0b7f6a52-3c1e-4d8a-9f2b-6e5d4c3b2a19';
+      const log = () =>
+        as(context, alice).post(`/api/v1/vehicles/${vehicleId}/maintenance/records`, {
+          id,
+          title: 'Wiper blades',
+          performedAt: iso('2026-04-12T00:00:00Z'),
+          partsCostAmountMinor: 2_400,
+          costCurrency: 'USD',
+        });
+
+      const first = await log();
+      const replay = await log();
+
+      expect(first.status).toBe(201);
+      expect(replay.status).toBe(201);
+      expect((replay.body as { record: { id: string } }).record.id).toBe(id);
+      const { db } = context.database;
+      const [record] = await db
+        .select()
+        .from(schema.maintenanceRecords)
+        .where(eq(schema.maintenanceRecords.id, id));
+      const events = await db
+        .select()
+        .from(schema.vehicleEvents)
+        .where(eq(schema.vehicleEvents.id, record!.eventId!));
+      const expenses = await db
+        .select()
+        .from(schema.expenses)
+        .where(eq(schema.expenses.eventId, record!.eventId!));
+      expect(events).toHaveLength(1);
+      expect(expenses).toHaveLength(1);
+    });
+
     it('requires a title for unscheduled work', async () => {
       const response = await as(context, alice).post(
         `/api/v1/vehicles/${vehicleId}/maintenance/records`,

@@ -37,6 +37,12 @@ export const Dashboard = Type.Object({
     ),
   }),
 
+  /**
+   * Each vehicle's lifetime running spend, keyed by vehicle id, in the currency its own cost
+   * summary reports in. One response for the whole fleet rather than a request per vehicle.
+   */
+  vehicleSpend: Type.Record(Type.String(), MoneyOutput),
+
   attention: Type.Object({
     maintenance: Type.Array(DueItem),
     documents: Type.Array(ExpiringDocument),

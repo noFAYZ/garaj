@@ -42,6 +42,7 @@ import { newId } from '@vehicle-os/utils';
 import { Fact, Line } from '@/components/add-kit';
 import { BrandLogo } from '@/components/brand-logo';
 import { api } from '@/lib/api';
+import { useDiscardGuard } from '@/lib/discard';
 import { enqueue, enqueueUpload, flush } from '@/lib/offline';
 import {
   fromParams,
@@ -109,10 +110,8 @@ export default function AddVehicleScreen() {
   const queryClient = useQueryClient();
   // A photo taken from the add sheet becomes the new vehicle's cover; a garage's + names its garage.
   const params = useLocalSearchParams<FileParams & { garageId?: string }>();
-  const [photos, setPhotos] = useState<PickedFile[]>(() => {
-    const first = fromParams(params);
-    return first ? [first] : [];
-  });
+  const [arrived] = useState(() => fromParams(params));
+  const [photos, setPhotos] = useState<PickedFile[]>(() => (arrived ? [arrived] : []));
   const [sheet, setSheet] = useState<'photos' | 'type' | 'garage' | null>(null);
   const [photoBusy, setPhotoBusy] = useState<'camera' | 'library' | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -138,6 +137,13 @@ export default function AddVehicleScreen() {
   const profile = useProfile();
   const [chosenUnit, setChosenUnit] = useState<DistanceUnit | null>(null);
   const unit: DistanceUnit = chosenUnit ?? profile.data?.distanceUnit ?? 'KM';
+  // Anything typed, read in, or a photo beyond the one it arrived with.
+  const release = useDiscardGuard(
+    line.trim() !== '' ||
+      Object.values(answers).some((value) => value.trim() !== '') ||
+      Object.values(extras).some(Boolean) ||
+      photos.length > (arrived ? 1 : 0),
+  );
   const vehicleType: VehicleType = chosenType ?? typeForMake(answers.make) ?? 'CAR';
 
   const list = garages.data ?? [];
@@ -320,6 +326,7 @@ export default function AddVehicleScreen() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.vehicles() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
       // Straight into it: the next thing anyone does is record something against it.
+      release();
       router.replace({ pathname: '/vehicle/[id]', params: { id: vehicle.id } });
     },
   });

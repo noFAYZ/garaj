@@ -38,6 +38,7 @@ import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
 import { figure, radius, spacing, useTheme } from '@/lib/theme';
 import { CompactHeader, Face, Skeleton } from '@/lib/ui';
+import { DATE_LOCALE } from '@/lib/format';
 
 const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
@@ -46,7 +47,7 @@ const plural = (count: number, one: string) => `${count} ${count === 1 ? one : `
 /** The zone's own clock, as the phone keeps it; a zone it does not know gives no time. */
 function clockIn(zone: string, now: Date): string | null {
   try {
-    return new Intl.DateTimeFormat('en-GB', {
+    return new Intl.DateTimeFormat(DATE_LOCALE, {
       hour: '2-digit',
       minute: '2-digit',
       timeZone: zone,

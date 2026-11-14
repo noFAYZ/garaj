@@ -20,7 +20,7 @@ import type { NextUp } from '@/components/activity-feed';
 import { BayStage, GROUND } from '@/components/bay-stage';
 import { BrandLogo } from '@/components/brand-logo';
 import { photoKey, RemoteImage } from '@/components/remote-image';
-import { formatMoney, humanise } from '@/lib/format';
+import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { Glyph, useToneColors } from '@/lib/instrument';
 import {
   ease,
@@ -38,7 +38,7 @@ import { Skeleton } from '@/lib/ui';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 // UTC, as the spend is bucketed.
-const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' });
+const MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', timeZone: 'UTC' });
 
 /** The stage's foot, rounded, where it meets the page. */
 const FOOT = radius.xxxl + 4;

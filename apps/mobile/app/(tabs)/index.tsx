@@ -45,7 +45,7 @@ import { useSpent, vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
 import { jobEmoji } from '@/lib/emoji';
 import { ledgerDate } from '@/lib/ledger';
-import { formatDistance, formatMoney, humanise } from '@/lib/format';
+import { DATE_LOCALE, formatDistance, formatMoney, humanise, TWELVE_HOUR } from '@/lib/format';
 import { Glyph, SectionHeading, SectionLink } from '@/lib/instrument';
 import {
   ease,
@@ -54,6 +54,7 @@ import {
   PressableScale,
   Pulse,
   Rise,
+  useOnScreen,
   useReduceMotion,
   useScrollY,
 } from '@/lib/motion';
@@ -63,8 +64,12 @@ import { useProfile } from '@/lib/vehicle-units';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 const PAGE = spacing.lg;
-const DAY = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
-const TIME = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+const DAY = new Intl.DateTimeFormat(DATE_LOCALE, {
+  weekday: 'short',
+  day: '2-digit',
+  month: 'short',
+});
+const TIME = new Intl.DateTimeFormat(DATE_LOCALE, { hour: 'numeric', minute: '2-digit' });
 
 /** Pull to rev: iOS overscrolls past the top, so the pull can drive a tachometer. */
 const REV = Platform.OS === 'ios';
@@ -438,6 +443,8 @@ function RoadAhead({
 }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
+  // The glow and the traffic only while the garage is what is on screen.
+  const onScreen = useOnScreen();
   const { width } = useWindowDimensions();
   const [lit] = useState(() => new Animated.Value(driven || reduce ? 1 : 0));
   const [breath] = useState(() => new Animated.Value(1));
@@ -499,7 +506,7 @@ function RoadAhead({
   }, [lit, reduce]);
 
   useEffect(() => {
-    if (reduce) return;
+    if (reduce || !onScreen) return;
     const to = (toValue: number) =>
       Animated.timing(breath, {
         toValue,
@@ -510,7 +517,7 @@ function RoadAhead({
     const loop = Animated.loop(Animated.sequence([to(0.7), to(1)]));
     loop.start();
     return () => loop.stop();
-  }, [breath, reduce]);
+  }, [breath, reduce, onScreen]);
 
   /** A stroke's gradient along a lane: out of the horizon, full where the road is near, gone into the page. */
   const fading = (id: string, to: Point, color: string, strongest: number) => (
@@ -875,6 +882,7 @@ function RoadAhead({
               <Car
                 key={index}
                 {...car}
+                running={onScreen}
                 vp={vp}
                 to={foot(LANES[car.lane].k)}
                 light={LANES[car.lane].light}
@@ -901,7 +909,10 @@ function Car({
   away,
   duration,
   gap,
+  running,
 }: {
+  /** Off screen the car waits where it is, and drives on when the garage is back. */
+  running: boolean;
   vp: Point;
   to: Point;
   /** Whose lights: names the gradient, which a colour's `#` cannot. */
@@ -921,6 +932,7 @@ function Car({
   const dy = to.y - vp.y;
 
   useEffect(() => {
+    if (!running) return;
     const drive = Animated.loop(
       Animated.sequence([
         Animated.delay(gap),
@@ -934,7 +946,7 @@ function Car({
     );
     drive.start();
     return () => drive.stop();
-  }, [t, gap, duration, away]);
+  }, [t, gap, duration, away, running]);
 
   return (
     <Animated.View
@@ -1156,6 +1168,8 @@ function Ahead({
   const theme = useTheme();
   const router = useRouter();
   const reduce = useReduceMotion();
+  // The turn waits while the garage is out of sight: nobody is reading it.
+  const onScreen = useOnScreen();
   const count = items.length > 0 ? items.length : (briefing?.length ?? 0);
   const [shown, setShown] = useState(at);
   // The face: -1 leaving to the left, 0 in place, 1 waiting on the right to come in.
@@ -1182,6 +1196,7 @@ function Ahead({
     });
     return () => leave.stop();
     // Only a new place starts a turn; `shown` catches up to it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at]);
 
   // The next face comes in once it is the one drawn, so the old one never flashes on its way.
@@ -1193,10 +1208,10 @@ function Ahead({
 
   // Each stays a while, then the next takes its place; a jump from a chip starts its stay afresh.
   useEffect(() => {
-    if (count < 2) return;
+    if (count < 2 || !onScreen) return;
     const stay = setTimeout(() => onStep((value) => value + 1), DWELL);
     return () => clearTimeout(stay);
-  }, [at, count, onStep]);
+  }, [at, count, onStep, onScreen]);
 
   const place = count > 0 ? shown % count : 0;
   const item = items[place];
@@ -1298,9 +1313,13 @@ const NUMBERS = /(\d+(?:[.,]\d+)*)/;
 function Clock({ now }: { now: Date }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
+  const onScreen = useOnScreen();
   const [blink] = useState(() => new Animated.Value(1));
   useEffect(() => {
-    if (reduce) return;
+    if (reduce || !onScreen) {
+      blink.setValue(1);
+      return;
+    }
     const to = (toValue: number) =>
       Animated.timing(blink, {
         toValue,
@@ -1313,11 +1332,12 @@ function Clock({ now }: { now: Date }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [blink, reduce]);
+  }, [blink, reduce, onScreen]);
   const style = [figure, styles.day, { color: theme.foreground }];
   return (
     <View accessible accessibilityLabel={TIME.format(now)} style={styles.clock}>
-      <Text style={style}>{pad(now.getHours())}</Text>
+      {/* The region's clock: 3:07 in New York, 15:07 in London — as the label says it too. */}
+      <Text style={style}>{TWELVE_HOUR ? now.getHours() % 12 || 12 : pad(now.getHours())}</Text>
       <Animated.Text style={[style, { opacity: blink }]}>:</Animated.Text>
       <Text style={style}>{pad(now.getMinutes())}</Text>
     </View>

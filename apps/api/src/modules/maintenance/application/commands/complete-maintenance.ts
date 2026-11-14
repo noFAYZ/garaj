@@ -8,6 +8,7 @@
  * the ownership total.
  */
 
+import { eq } from 'drizzle-orm';
 import type { Database } from '@vehicle-os/database';
 import {
   assertCurrency,
@@ -16,6 +17,7 @@ import {
   type DistanceUnit,
 } from '@vehicle-os/domain';
 import { NotFoundError, ValidationError } from '../../../../infrastructure/errors';
+import { idConflict } from '../../../../infrastructure/idempotency';
 import { enqueue } from '../../../../infrastructure/outbox';
 import { insertEvent } from '../../../events/infrastructure/repositories/event-repository';
 import {
@@ -34,6 +36,8 @@ import {
 } from '../../infrastructure/repositories/maintenance-repository';
 
 export interface CompleteInput {
+  /** Chosen by the client, so a replayed offline write returns the record it already made. */
+  readonly id?: string;
   readonly title?: string;
   readonly performedAt: string;
   readonly workPerformed?: string;
@@ -105,6 +109,24 @@ export async function completeMaintenance(
 
   return db.transaction(async (tx) => {
     /*
+     * A replay of a queued service whose reply was lost: the record, its event and its expense
+     * are all already there, so the first one is returned and nothing is written twice. Checked
+     * before the event, which is inserted first; two replays racing past this both fail on the
+     * record's primary key and roll back, and the next attempt lands here.
+     */
+    if (input.id) {
+      const [existing] = await tx
+        .select()
+        .from(schema.maintenanceRecords)
+        .where(eq(schema.maintenanceRecords.id, input.id))
+        .limit(1);
+      if (existing) {
+        if (existing.vehicleId !== vehicleId) throw idConflict('maintenance record');
+        return { record: existing, plan };
+      }
+    }
+
+    /*
      * The timeline event first: the record points at it, so it has to exist to be
      * referenced. Both are in this transaction, so neither can survive without the other.
      */
@@ -125,6 +147,7 @@ export async function completeMaintenance(
     });
 
     const record = await insertRecord(tx, {
+      ...(input.id ? { id: input.id } : {}),
       vehicleId,
       planId: plan?.id ?? null,
       eventId: event.id,

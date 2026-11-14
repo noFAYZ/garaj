@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
+import { useSyncExternalStore } from 'react';
 import { createApiClient } from '@vehicle-os/api-client';
 
 const TOKEN_KEY = 'vehicleos.session-token';
@@ -33,25 +34,95 @@ function resolveBaseUrl(): string {
   return host ? `http://${host}:3001` : 'http://localhost:3001';
 }
 
-/**
- * Mobile has no cookie jar it can rely on across app restarts, so the session travels as a
- * bearer token held in the platform keystore — Keychain on iOS, EncryptedSharedPreferences
- * on Android. `AsyncStorage` would put it in plain text on disk.
- */
 export const API_URL = resolveBaseUrl();
+
+/*
+ * The session: one store for the whole app.
+ *
+ * Mobile has no cookie jar it can rely on across app restarts, so the session travels as a
+ * bearer token held in the platform keystore — Keychain on iOS, EncryptedSharedPreferences on
+ * Android; `AsyncStorage` would put it in plain text on disk. The keystore is read once, at
+ * launch; after that the token lives here, so a request does not decrypt it again, and every
+ * screen that asks whether someone is signed in hears the same answer the moment it changes.
+ * (Each screen holding its own copy is how signing in once sent the app straight back to the
+ * sign-in screen: the gate's copy still said nobody was there.)
+ */
+export interface Session {
+  readonly token: string | null;
+  /** True until the keystore has been read on launch. */
+  readonly loading: boolean;
+  /** Why the last session ended, when it was the server's doing rather than the person's. */
+  readonly ended: 'expired' | null;
+}
+
+let session: Session = { token: null, loading: true, ended: null };
+const listeners = new Set<() => void>();
+
+function publish(next: Session) {
+  session = next;
+  listeners.forEach((listener) => listener());
+}
+
+let loaded: Promise<void> | null = null;
+/** Reads the keystore once; every later call is the same promise. */
+export function loadSession(): Promise<void> {
+  loaded ??= SecureStore.getItemAsync(TOKEN_KEY)
+    .then((token) => publish({ token, loading: false, ended: null }))
+    // An unreadable keystore (a restored backup on another phone) is a signed-out phone.
+    .catch(() => publish({ token: null, loading: false, ended: null }));
+  return loaded;
+}
+
+export function useSession(): Session {
+  void loadSession();
+  return useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => session,
+  );
+}
+
+/** The token now, for code outside React. */
+export const sessionToken = () => session.token;
+
+export async function setSessionToken(token: string | null): Promise<void> {
+  if (token) await SecureStore.setItemAsync(TOKEN_KEY, token);
+  else await SecureStore.deleteItemAsync(TOKEN_KEY);
+  publish({ token, loading: false, ended: null });
+}
+
+/**
+ * The server no longer knows this token — it expired, or was revoked from another device. The
+ * gate sends the person to sign in, told why; nothing queued is lost, it goes out once they are
+ * back.
+ */
+function expire(token: string) {
+  // Only the session that was refused: a late 401 from before a fresh sign-in is not news.
+  if (session.token !== token) return;
+  void SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => undefined);
+  publish({ token: null, loading: false, ended: 'expired' });
+}
 
 /** Exported for requests the typed client cannot make, such as a download written to disk. */
 export async function authHeader(): Promise<Record<string, string>> {
-  const token = await SecureStore.getItemAsync(TOKEN_KEY);
-  return token ? { authorization: `Bearer ${token}` } : {};
+  await loadSession();
+  return session.token ? { authorization: `Bearer ${session.token}` } : {};
 }
 
-export const api = createApiClient({ baseUrl: API_URL, getAuthHeader: authHeader });
+/** `fetch`, listening for the one answer that means the session is over. */
+const sessionFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.status === 401) {
+    const sent = (init?.headers as Record<string, string> | undefined)?.authorization;
+    if (sent?.startsWith('Bearer ')) expire(sent.slice('Bearer '.length));
+  }
+  return response;
+};
 
-export async function storeSessionToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
-}
-
-export async function clearSessionToken(): Promise<void> {
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
-}
+export const api = createApiClient({
+  baseUrl: API_URL,
+  getAuthHeader: authHeader,
+  fetch: sessionFetch,
+});

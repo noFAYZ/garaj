@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
   StyleSheet,
@@ -11,7 +11,7 @@ import {
   type TextInputProps,
   type TextStyle,
 } from 'react-native';
-import { SvgXml } from 'react-native-svg';
+import { parse, SvgAst, type JsxAST } from 'react-native-svg';
 import { EMOJI_ART } from './emoji-art';
 import { ICON_ART, type IconName } from './icon-art';
 import { haptic, PressableScale, Pulse, spring, useReduceMotion } from './motion';
@@ -575,24 +575,48 @@ const VARIATION = /\uFE0F/g;
 
 export type { IconName };
 
+/*
+ * Each drawing parsed once per session, not once per mount. `SvgXml` parses its string in JS
+ * every time it mounts, and the Fluent emoji are dense — gradients, dozens of paths — so a feed
+ * of forty entries parsed forty pumps on the way in. The parsed tree is immutable elements,
+ * which React is happy to draw in as many places as want them.
+ * ponytail: never evicted; the sets are fixed and small (the emoji and icon tables).
+ */
+const parsed = new Map<string, JsxAST | null>();
+function drawingOf(key: string, art: { viewBox: string; body: string }): JsxAST | null {
+  let ast = parsed.get(key);
+  if (ast === undefined) {
+    ast = parse(
+      `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${art.viewBox}'>${art.body}</svg>`,
+    );
+    parsed.set(key, ast);
+  }
+  return ast;
+}
+
 /**
  * An icon from the web's own set — Solar bold-duotone, generated from the same data the web inlines
  * — in the colour it is drawn in: the full-strength layer in that colour, the second at half.
  * Decorative: the control it sits in carries the words.
  */
-export function Icon({ name, size = 20, color }: { name: IconName; size?: number; color: string }) {
-  const art = ICON_ART[name];
+export const Icon = memo(function Icon({
+  name,
+  size = 20,
+  color,
+}: {
+  name: IconName;
+  size?: number;
+  color: string;
+}) {
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      <SvgXml
-        xml={`<svg xmlns='http://www.w3.org/2000/svg' viewBox='${art.viewBox}'>${art.body}</svg>`}
-        width={size}
-        height={size}
-        color={color}
+      <SvgAst
+        ast={drawingOf(`icon:${name}`, ICON_ART[name])}
+        override={{ width: size, height: size, color }}
       />
     </View>
   );
-}
+});
 
 /**
  * An emoji, in the web's own artwork: the same Fluent Emoji drawing the web inlines for every entry
@@ -600,16 +624,19 @@ export function Icon({ name, size = 20, color }: { name: IconName; size?: number
  * notification — falls back to the phone's emoji font. Excluded from font scaling either way, so
  * it keeps to its tile.
  */
-export function Glyph({ children, size = 22 }: { children: string; size?: number }) {
-  const art = EMOJI_ART[children] ?? EMOJI_ART[children.replace(VARIATION, '')];
+export const Glyph = memo(function Glyph({
+  children,
+  size = 22,
+}: {
+  children: string;
+  size?: number;
+}) {
+  const bare = children.replace(VARIATION, '');
+  const art = EMOJI_ART[children] ?? EMOJI_ART[bare];
   if (art) {
     return (
       <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        <SvgXml
-          xml={`<svg xmlns='http://www.w3.org/2000/svg' viewBox='${art.viewBox}'>${art.body}</svg>`}
-          width={size}
-          height={size}
-        />
+        <SvgAst ast={drawingOf(`emoji:${bare}`, art)} override={{ width: size, height: size }} />
       </View>
     );
   }
@@ -618,7 +645,7 @@ export function Glyph({ children, size = 22 }: { children: string; size?: number
       {children}
     </Text>
   );
-}
+});
 
 /** A status in words with its colour on a dot — the web's `status-ping` when it is overdue. */
 export function StatusDot({ tone, label }: { tone: Tone; label: string }) {

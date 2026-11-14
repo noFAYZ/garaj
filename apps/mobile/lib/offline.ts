@@ -17,10 +17,11 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
-import { ApiError, planWall, type PlanWall } from '@vehicle-os/api-client';
+import { ApiError, planWall, RequestTimeoutError, type PlanWall } from '@vehicle-os/api-client';
+import { newId } from '@vehicle-os/utils';
 import { api } from './api';
 import { uploadDocumentFile, uploadPhotoFile } from './file-picker';
-import { forgetLocally, keepLocally } from './local-files';
+import { forgetLocally, keepLocally, keptFileExists, keptPath } from './local-files';
 
 const QUEUE_KEY = 'vehicleos.pending-writes';
 
@@ -45,14 +46,17 @@ export type PendingWrite = (
   | { kind: 'profile-update'; body: Record<string, unknown> }
   | { kind: 'garage-update'; garageId: string; body: Record<string, unknown> }
   /**
-   * A document or photo, with its bytes copied somewhere durable (`local-files`). `path` is that
-   * copy, and it is deleted once the upload finishes or the entry is discarded.
+   * A document or photo, with its bytes copied somewhere durable (`local-files`). `path` names
+   * that copy (older entries hold its absolute path), and it is deleted once the upload finishes
+   * or the entry is discarded. `uploadId` is the document's or photo's id, chosen here, so a
+   * replay after a lost reply lands on the same one.
    */
   | {
       kind: 'upload';
       target: 'document' | 'photo';
       vehicleId: string;
       path: string;
+      uploadId?: string;
       name: string;
       mimeType: string;
       size: number;
@@ -63,6 +67,8 @@ export type PendingWrite = (
   queuedAt: number;
   /** Set once the server has refused it: the reason, in the server's words. */
   error?: string;
+  /** Failed sends that were not the network's fault, toward `MAX_ATTEMPTS`. */
+  attempts?: number;
 };
 
 /**
@@ -70,7 +76,7 @@ export type PendingWrite = (
  * `Omit` over the union would collapse to the keys the members share.
  */
 export type NewWrite<T = PendingWrite> = T extends unknown
-  ? Omit<T, 'id' | 'queuedAt' | 'error'>
+  ? Omit<T, 'id' | 'queuedAt' | 'error' | 'attempts'>
   : never;
 
 /*
@@ -88,7 +94,7 @@ let recent: SentWrite[] = [];
 let snapshot: readonly (PendingWrite | SentWrite)[] = [];
 let loaded: Promise<void> | null = null;
 const listeners = new Set<() => void>();
-const syncListeners = new Set<() => void>();
+const syncListeners = new Set<(vehicles: ReadonlySet<string> | null) => void>();
 const RECENT_MS = 60_000;
 
 export type SentWrite = PendingWrite & { sentAt: number };
@@ -125,10 +131,30 @@ export function usePendingWrites(): readonly (PendingWrite | SentWrite)[] {
   );
 }
 
-/** Called after any write reaches the server, so screens can refetch what it changed. */
-export function onSynced(listener: () => void): () => void {
+/**
+ * Called after a run that sent or settled anything, so screens can refetch what it changed: the
+ * vehicles its writes were about, or `null` when one of them reaches past any single vehicle.
+ */
+export function onSynced(listener: (vehicles: ReadonlySet<string> | null) => void): () => void {
   syncListeners.add(listener);
   return () => syncListeners.delete(listener);
+}
+
+/**
+ * The one vehicle a write changes, or `null` for one whose reach is wider: a task's status (the
+ * entry does not say whose), the profile's and a garage's units and currency (every figure).
+ */
+export function vehicleOf(entry: PendingWrite): string | null {
+  switch (entry.kind) {
+    case 'task-status':
+    case 'profile-update':
+    case 'garage-update':
+      return null;
+    case 'vehicle-create':
+      return typeof entry.body.id === 'string' ? entry.body.id : null;
+    default:
+      return entry.vehicleId;
+  }
 }
 
 export async function enqueue(entry: NewWrite): Promise<void> {
@@ -151,13 +177,16 @@ export async function enqueue(entry: NewWrite): Promise<void> {
  * can recover the latter.
  */
 export async function enqueueUpload(
-  entry: Omit<Extract<NewWrite, { kind: 'upload' }>, 'path'> & { uri: string },
+  entry: Omit<Extract<NewWrite, { kind: 'upload' }>, 'path' | 'uploadId'> & { uri: string },
 ): Promise<void> {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const path = await keepLocally(entry.uri, id);
   await load();
   const { uri: _uri, ...rest } = entry;
-  await save([...entries, { ...rest, path, id, queuedAt: Date.now() } as PendingWrite]);
+  await save([
+    ...entries,
+    { ...rest, path, uploadId: newId(), id, queuedAt: Date.now() } as PendingWrite,
+  ]);
 }
 
 /** Writes still to be sent — the failed ones are waiting on a person, not on signal. */
@@ -230,19 +259,46 @@ async function send(entry: PendingWrite): Promise<void> {
  * goes once the server has the file; a failed attempt keeps it for the next one.
  */
 async function sendUpload(entry: Extract<PendingWrite, { kind: 'upload' }>): Promise<void> {
+  if (!(await keptFileExists(entry.path))) throw new LostFileError();
   const file = {
-    uri: entry.path,
+    uri: keptPath(entry.path),
     name: entry.name,
     mimeType: entry.mimeType,
     size: entry.size,
   };
   if (entry.target === 'document') {
-    await uploadDocumentFile(entry.vehicleId, file, entry.body as never);
+    await uploadDocumentFile(entry.vehicleId, file, entry.body as never, entry.uploadId);
   } else {
-    await uploadPhotoFile(entry.vehicleId, file, entry.body as never);
+    await uploadPhotoFile(entry.vehicleId, file, entry.body as never, entry.uploadId);
   }
   await forgetLocally(entry.path);
 }
+
+/** A queued upload whose bytes are gone. No retry brings them back; the person is told. */
+class LostFileError extends Error {
+  constructor() {
+    super('The file is no longer on this phone. Attach it again.');
+    this.name = 'LostFileError';
+  }
+}
+
+/**
+ * Failures that are the connection's, and so pass with time: no route, a timeout, the server
+ * down or the session expired. They wait for the next run however often they happen.
+ */
+function waitsForNetwork(error: unknown): boolean {
+  if (error instanceof ApiError) return error.status >= 500 || error.status === 401;
+  if (error instanceof RequestTimeoutError) return true;
+  // React Native's `fetch` fails with "Network request failed"; an upload cut off mid-way says so too.
+  return error instanceof Error && /network/i.test(error.message);
+}
+
+/*
+ * Anything else — storage refusing the bytes, an exception nobody foresaw — gets a few runs and
+ * is then set aside like a refusal. Before this, one such entry at the head of the queue was
+ * retried for ever, and every entry behind it waited with it.
+ */
+const MAX_ATTEMPTS = 3;
 
 function reasonFor(error: ApiError): string {
   /*
@@ -304,10 +360,17 @@ async function run(): Promise<FlushResult> {
   await load();
   let sent = 0;
   let failed = 0;
+  // What the settled writes were about, for `onSynced`; `null` once one reaches past a vehicle.
+  let touched: Set<string> | null = new Set();
+  const settled = (entry: PendingWrite) => {
+    const vehicle = vehicleOf(entry);
+    touched = vehicle && touched ? touched.add(vehicle) : null;
+  };
 
   for (const entry of entries.filter((item) => !item.error)) {
     try {
       await send(entry);
+      settled(entry);
       sent += 1;
       recent = [...recent, { ...entry, sentAt: Date.now() }];
       await save(entries.filter((item) => item.id !== entry.id));
@@ -316,27 +379,30 @@ async function run(): Promise<FlushResult> {
        * 401 is the session, not the entry: signing in again makes it valid, so it waits like a
        * network failure rather than being marked as refused.
        */
-      if (
-        error instanceof ApiError &&
-        error.status >= 400 &&
-        error.status < 500 &&
-        error.status !== 401
-      ) {
-        failed += 1;
-        const wall = planWall(error);
-        if (wall) wallListeners.forEach((listener) => listener(wall));
-        await save(
-          entries.map((item) =>
-            item.id === entry.id ? { ...item, error: reasonFor(error) } : item,
-          ),
-        );
-        continue;
+      if (waitsForNetwork(error)) break;
+
+      const refused = error instanceof ApiError;
+      const attempts = (entry.attempts ?? 0) + 1;
+      if (!refused && !(error instanceof LostFileError) && attempts < MAX_ATTEMPTS) {
+        // Counted, and the run stops here: order still matters while it might yet go.
+        await save(entries.map((item) => (item.id === entry.id ? { ...item, attempts } : item)));
+        break;
       }
-      break;
+
+      failed += 1;
+      settled(entry);
+      const wall = refused ? planWall(error) : null;
+      if (wall) wallListeners.forEach((listener) => listener(wall));
+      const reason = refused
+        ? reasonFor(error)
+        : error instanceof Error
+          ? error.message
+          : 'This could not be sent.';
+      await save(entries.map((item) => (item.id === entry.id ? { ...item, error: reason } : item)));
     }
   }
 
-  if (sent > 0 || failed > 0) syncListeners.forEach((listener) => listener());
+  if (sent > 0 || failed > 0) syncListeners.forEach((listener) => listener(touched));
   return { sent, failed, remaining: entries.filter((item) => !item.error).length };
 }
 

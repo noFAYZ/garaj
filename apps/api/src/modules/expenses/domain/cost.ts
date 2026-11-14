@@ -54,7 +54,9 @@ export interface CostTotals {
  * currency with the most spend — not the most rows, or one tank of fuel abroad outvotes a
  * gearbox rebuild at home.
  */
-export function primaryCurrency(input: CostInput, fallback: string): string {
+export function primaryCurrency<
+  T extends Pick<CostInput, 'purchasePriceCurrency' | 'lifetimeSums'>,
+>(input: T, fallback: string): string {
   if (input.purchasePriceCurrency) return input.purchasePriceCurrency;
 
   const totals = new Map<string, number>();

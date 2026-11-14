@@ -37,6 +37,9 @@ export default function TabsLayout() {
         // Each tab sets its title in the page, so there is no bar to float.
         headerShown: false,
         sceneStyle: { backgroundColor: theme.background },
+        // A tab out of sight stops re-rendering — the garage's clock and carousel, a list a
+        // sync just refreshed — and catches up in one render when it is chosen again.
+        freezeOnBlur: true,
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Garage' }} />

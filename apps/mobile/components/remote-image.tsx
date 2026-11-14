@@ -1,4 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Image, type ImageProps } from 'expo-image';
 import { useState, type ReactNode } from 'react';
 
@@ -9,6 +9,26 @@ import { useState, type ReactNode } from 'react';
  */
 const lastRefresh = new Map<string, number>();
 const REFRESH_EVERY_MS = 60_000;
+
+/*
+ * Fresh links, asked for once per burst. Links last five minutes and the cache restored on launch
+ * is up to a day old, so a cold start can find a whole screen of photos expired at once — and each
+ * one asking for its own refetch restarted every vehicle query once per photo. Failures inside
+ * the same quarter-second share one refetch, and it lets requests already on their way finish
+ * (`cancelRefetch: false`) rather than throwing them away to start again.
+ */
+const asking = new Map<string, readonly unknown[]>();
+let askTimer: ReturnType<typeof setTimeout> | null = null;
+function askForFreshLinks(queryClient: QueryClient, queryKey: readonly unknown[]) {
+  asking.set(JSON.stringify(queryKey), queryKey);
+  askTimer ??= setTimeout(() => {
+    askTimer = null;
+    for (const key of asking.values()) {
+      void queryClient.invalidateQueries({ queryKey: key }, { cancelRefetch: false });
+    }
+    asking.clear();
+  }, 250);
+}
 
 /**
  * A private, signed image — a vehicle photo, a document preview — drawn so it caches and heals.
@@ -57,7 +77,7 @@ export function RemoteImage({
         const last = lastRefresh.get(cacheKey) ?? 0;
         if (Date.now() - last > REFRESH_EVERY_MS) {
           lastRefresh.set(cacheKey, Date.now());
-          void queryClient.invalidateQueries({ queryKey: refreshKey });
+          askForFreshLinks(queryClient, refreshKey);
         }
         props.onError?.(event);
       }}

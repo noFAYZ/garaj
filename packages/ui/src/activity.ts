@@ -112,9 +112,19 @@ export const digitsOnly = (value: string, max = 9): string =>
     .replace(/^0+(?=\d)/, '')
     .slice(0, max);
 
-/** Up to two decimals and one point — what a price can be typed as. */
+/**
+ * Up to two decimals and one point — what a price can be typed as.
+ *
+ * A comma is a decimal point too: the decimal pad on a German or French phone types `,`, and
+ * dropping it turned €45,90 into €4,590. With both present (a pasted `1,234.56` or `1.234,56`)
+ * the last kind is the decimal point and the other is grouping.
+ */
 export function amountOnly(value: string): string {
-  const [whole = '', ...rest] = value.replace(/[^\d.]/g, '').split('.');
+  let text = value.replace(/[^\d.,]/g, '');
+  if (text.includes('.') && text.includes(',')) {
+    text = text.split(text.lastIndexOf('.') > text.lastIndexOf(',') ? ',' : '.').join('');
+  }
+  const [whole = '', ...rest] = text.replace(/,/g, '.').split('.');
   const cleaned = whole.replace(/^0+(?=\d)/, '').slice(0, 9);
   return rest.length ? `${cleaned}.${rest.join('').slice(0, 2)}` : cleaned;
 }

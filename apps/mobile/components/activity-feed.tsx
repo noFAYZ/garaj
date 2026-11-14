@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type {
   MaintenancePlan,
@@ -31,7 +31,7 @@ import {
 import { api } from '@/lib/api';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
 import { ledgerDate } from '@/lib/ledger';
-import { formatDistance, formatMoney, humanise } from '@/lib/format';
+import { DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
 import { Chip, Glyph, SectionHeading, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
 import { ease, haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import {
@@ -49,7 +49,11 @@ const pad = (value: number) => String(value).padStart(2, '0');
 /** The logbook sheet's gutter: the page's, kept inside a sheet that runs past it. */
 // Close to the screen's edges: the record has the width, only a pressed row's wash needs room.
 const BOOK = spacing.sm;
-const DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const DATE = new Intl.DateTimeFormat(DATE_LOCALE, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
 
 /** A done entry that lives on this phone until the queue has sent it. */
 type LocalEvent = VehicleEvent & {
@@ -171,16 +175,32 @@ export function ActivityFeed({
     initialPageParam: firstCursor ?? '',
     getNextPageParam: (page) => page.done.pagination.nextCursor ?? undefined,
     enabled: showOlder && firstCursor !== null,
+    // While a shifted first page refetches the older ones, the ones on screen stay on screen.
+    placeholderData: keepPreviousData,
   });
+  /*
+   * How many older pages the person has asked for. A new entry moves the first page's cursor and
+   * so the key above, and the history they had scrolled back through would otherwise collapse to
+   * one page; this asks for the same number again from the new cursor.
+   */
+  const [olderPages, setOlderPages] = useState(1);
+  const loadedPages = older.isPlaceholderData ? 0 : (older.data?.pages.length ?? 0);
+  useEffect(() => {
+    if (!showOlder || older.isFetching || !older.hasNextPage) return;
+    if (loadedPages > 0 && loadedPages < olderPages) void older.fetchNextPage();
+  }, [showOlder, older, loadedPages, olderPages]);
 
-  const planned = activity.data?.planned ?? [];
+  const planned = activity.data?.planned;
   const writes = usePendingWrites();
-  const schedulesForLocal = planned.flatMap((item) =>
-    item.kind === 'SCHEDULE' ? [item.schedule] : [],
-  );
-  const local = localEvents(writes, vehicle.id, schedulesForLocal, activity.dataUpdatedAt).filter(
-    (event) => !filter || event.eventType === filter,
-  );
+  const updatedAt = activity.dataUpdatedAt;
+  const local = useMemo(() => {
+    const schedules = (planned ?? []).flatMap((item) =>
+      item.kind === 'SCHEDULE' ? [item.schedule] : [],
+    );
+    return localEvents(writes, vehicle.id, schedules, updatedAt).filter(
+      (event) => !filter || event.eventType === filter,
+    );
+  }, [writes, vehicle.id, planned, updatedAt, filter]);
   // What this vehicle still has waiting on the network, failed entries aside.
   const waiting = writes.filter(
     (write) =>
@@ -193,32 +213,51 @@ export function ActivityFeed({
    * Newest first by when each entry happened, the server's order — with this phone's unsent
    * entries slotted in by the same rule rather than stacked on top.
    */
-  const done = [
-    ...local,
-    ...(activity.data?.done.data ?? []),
-    ...(showOlder ? (older.data?.pages.flatMap((page) => page.done.data) ?? []) : []),
-  ].sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  /*
+   * The record, derived once per change of what goes into it — not on every render. A pending
+   * write ticking, a filter chip's press or the sync strip would otherwise re-sort, re-group and
+   * re-measure the whole loaded history each time. The rows themselves are memoised below, so an
+   * entry that did not change is not drawn again either.
+   */
+  const firstPage = activity.data?.done.data;
+  const olderData = showOlder ? older.data : undefined;
+  const { done, groups, deltas } = useMemo(() => {
+    const seen = new Set<string>();
+    const rows = [
+      ...local,
+      ...(firstPage ?? []),
+      ...(olderData?.pages.flatMap((page) => page.done.data) ?? []),
+    ]
+      // A boundary the first page moved across can repeat an entry between two pages.
+      .filter((event) => (seen.has(event.id) ? false : (seen.add(event.id), true)))
+      .map((event) => ({ event, at: Date.parse(event.occurredAt) }))
+      .sort((a, b) => b.at - a.at)
+      .map(({ event }) => event);
+    return { done: rows, groups: groupByMonth(rows), deltas: odometerDeltas(rows) };
+  }, [local, firstPage, olderData]);
   const hasMore = showOlder
     ? firstCursor !== null && (older.isPending || older.hasNextPage)
     : (activity.data?.done.pagination.hasMore ?? false);
 
-  const groups = groupByMonth(done);
-  const deltas = odometerDeltas(done);
   // Rows numbered down the page, for the entrance stagger across months.
   let row = 0;
 
-  const counts = new Map<EventType, number>();
-  for (const event of everything.data?.done.data ?? []) {
-    counts.set(event.eventType, (counts.get(event.eventType) ?? 0) + 1);
-  }
-  if (filter && !counts.has(filter)) counts.set(filter, 0);
-  const kinds = [...counts].sort((a, b) => b[1] - a[1]);
+  const allDone = everything.data?.done.data;
+  const kinds = useMemo(() => {
+    const counts = new Map<EventType, number>();
+    for (const event of allDone ?? []) {
+      counts.set(event.eventType, (counts.get(event.eventType) ?? 0) + 1);
+    }
+    if (filter && !counts.has(filter)) counts.set(filter, 0);
+    return [...counts].sort((a, b) => b[1] - a[1]);
+  }, [allDone, filter]);
   // Counts are only honest when the whole record is loaded.
   const countsComplete = everything.data?.done.pagination.hasMore === false;
 
   const choose = (next: EventType | null) => {
     setFilter(next);
     setShowOlder(false);
+    setOlderPages(1);
   };
 
   const logFirst = () => router.push({ pathname: '/add/done', params: { vehicleId: vehicle.id } });
@@ -330,9 +369,11 @@ export function ActivityFeed({
                           size="sm"
                           icon="chevron-down"
                           loading={older.isFetching}
-                          onPress={() =>
-                            showOlder ? void older.fetchNextPage() : setShowOlder(true)
-                          }
+                          onPress={() => {
+                            if (!showOlder) return setShowOlder(true);
+                            setOlderPages(loadedPages + 1);
+                            void older.fetchNextPage();
+                          }}
                         />
                       </View>
                     ) : (
@@ -740,7 +781,11 @@ function TaskRow({ task, vehicleId }: { task: Task; vehicleId: string }) {
  * ("Fuel", filed under Fuel) gives the kind's place in the line to the rest. The whole row opens
  * it; an entry still on this phone says so and, if the server refused it, offers to let it go.
  */
-function DoneRow({
+/*
+ * Memoised: every prop is a value or an entry object that React Query keeps the same identity for
+ * while it is unchanged, so a refetch, a sync or a new entry redraws only the rows that moved.
+ */
+const DoneRow = memo(function DoneRow({
   event,
   previousAt,
   nextAt,
@@ -840,7 +885,7 @@ function DoneRow({
       ) : null}
     </LedgerRow>
   );
-}
+});
 
 /**
  * What is still on this phone, said plainly, with a way to send it now. It goes by itself when
