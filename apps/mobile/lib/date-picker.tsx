@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { localDay } from '@vehicle-os/ui';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { DATE_LOCALE } from '@/lib/format';
 
 /**
  * Dates, everywhere, from one place.
@@ -20,13 +21,13 @@ import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
-const MONTH_LABEL = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
-const TRIGGER_LABEL = new Intl.DateTimeFormat('en-US', {
+const MONTH_LABEL = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'long', year: 'numeric' });
+const TRIGGER_LABEL = new Intl.DateTimeFormat(DATE_LOCALE, {
   weekday: 'short',
   day: 'numeric',
   month: 'short',
 });
-const SHORT_LABEL = new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short' });
+const SHORT_LABEL = new Intl.DateTimeFormat(DATE_LOCALE, { day: 'numeric', month: 'short' });
 
 /** A `YYYY-MM-DD` day as a local `Date` at noon, which no time zone can push into another day. */
 const asDate = (day: string) => new Date(`${day}T12:00:00`);

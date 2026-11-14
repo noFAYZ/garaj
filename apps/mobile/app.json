@@ -7,12 +7,28 @@
     "scheme": "vehicleos",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "dev.vehicleos.app"
+      "supportsTablet": false,
+      "bundleIdentifier": "dev.vehicleos.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "package": "dev.vehicleos.app"
+      "package": "dev.vehicleos.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -22,7 +38,8 @@
         "expo-image-picker",
         {
           "photosPermission": "Garaj uses your photos to attach receipts, documents and pictures of your vehicles.",
-          "cameraPermission": "Garaj uses the camera to photograph receipts, documents and your vehicles."
+          "cameraPermission": "Garaj uses the camera to photograph receipts, documents and your vehicles.",
+          "microphonePermission": false
         }
       ],
       [
@@ -30,10 +47,28 @@
         {
           "defaultChannel": "reminders"
         }
-      ]
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF",
+          "dark": {
+            "image": "./assets/splash-icon-dark.png",
+            "backgroundColor": "#090705"
+          }
+        }
+      ],
+      "@sentry/react-native/expo"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "icon": "./assets/icon.png",
+    "extra": {
+      "sentryDsn": ""
     }
   }
 }

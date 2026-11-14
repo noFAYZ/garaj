@@ -71,11 +71,14 @@ import {
   useReduceMotion,
 } from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
-import { compactMoney, formatDistance, formatMoney, humanise } from '@/lib/format';
+import { DATE_LOCALE, compactMoney, formatDistance, formatMoney, humanise } from '@/lib/format';
+
+/** The months of spend Stats charts, and the vehicle's hero reads its month from. */
+export const STATS_MONTHS = 24;
 
 const pad = (value: number) => String(value).padStart(2, '0');
-const MONTH_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit' });
-const DAY_MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const MONTH_YEAR = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', year: '2-digit' });
+const DAY_MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', day: 'numeric' });
 
 /** What a price or a consumption is per, as a person says it. */
 const UNIT_LABEL: Record<string, string> = {
@@ -292,8 +295,8 @@ function Insights({
   const theme = useTheme();
   const colors = useChartColors();
   const { cost, vehicle, vehicleId } = report;
-  // Two years, once: the pace compares its two halves.
-  const monthly = useQuery(monthlySpendQuery(api, vehicleId, 24));
+  // Two years, once: the pace compares its two halves. The hero reads its month from the same.
+  const monthly = useQuery(monthlySpendQuery(api, vehicleId, STATS_MONTHS));
   if (!cost) return null;
 
   const currency = cost.currency;

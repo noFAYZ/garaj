@@ -91,6 +91,11 @@ describe('typed figures', () => {
     expect(digitsOnly('042,890 km')).toBe('42890');
     expect(amountOnly('$0089.567')).toBe('89.56');
     expect(amountOnly('12.3.4')).toBe('12.34');
+    // A comma-decimal keypad, and pasted figures from either convention.
+    expect(amountOnly('45,90')).toBe('45.90');
+    expect(amountOnly('45,')).toBe('45.');
+    expect(amountOnly('1,234.56')).toBe('1234.56');
+    expect(amountOnly('1.234,56')).toBe('1234.56');
   });
 });
 

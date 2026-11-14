@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useQueries } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'expo-router';
 import { memo, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Defs, Ellipse, RadialGradient, Stop } from 'react-native-svg';
 import type { Vehicle, VehiclePhoto } from '@vehicle-os/contracts';
 import type { VehicleType } from '@vehicle-os/domain';
-import { costQuery } from '@vehicle-os/api-client/react';
+import { dashboardQuery } from '@vehicle-os/api-client/react';
 import { paintSwatch } from '@vehicle-os/ui';
 import { BrandLogo } from '@/components/brand-logo';
 import { photoKey, RemoteImage } from '@/components/remote-image';
@@ -44,21 +44,18 @@ type StagePhoto = Pick<VehiclePhoto, 'id' | 'thumbnailUrl' | 'isCutout' | 'capti
 export function useSpent(
   vehicles: readonly Vehicle[],
 ): ReadonlyMap<string, Money | null | undefined> {
-  const results = useQueries({ queries: vehicles.map((vehicle) => costQuery(api, vehicle.id)) });
+  /*
+   * From the dashboard, which carries every vehicle's figure in one response — the screen has
+   * it already. One cost request per vehicle was a hundred round trips for a Business fleet on
+   * every launch, each re-rendering the screen as it landed.
+   */
+  // An API from before the figure existed answers without it: a dash, not a spinner for ever.
+  const spend = useQuery({ ...dashboardQuery(api), select: (data) => data.vehicleSpend ?? {} });
   return new Map(
-    vehicles.map((vehicle, index) => {
-      const result = results[index];
-      if (!result || result.isPending) return [vehicle.id, undefined];
-      const cost = result.data;
-      if (!cost) return [vehicle.id, null];
-      return [
-        vehicle.id,
-        {
-          amountMinor: cost.ownershipCost.amountMinor - (cost.purchasePrice?.amountMinor ?? 0),
-          currency: cost.currency,
-        },
-      ];
-    }),
+    vehicles.map((vehicle) => [
+      vehicle.id,
+      spend.data ? (spend.data[vehicle.id] ?? null) : spend.isError ? null : undefined,
+    ]),
   );
 }
 

@@ -6,6 +6,7 @@
  * or racing another test suite for one.
  */
 
+import compress from '@fastify/compress';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Database } from '@vehicle-os/database';
 import type { Redis } from 'ioredis';
@@ -148,6 +149,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(databasePlugin, { db: options.db });
   await app.register(redisPlugin, { client: options.redis });
   await app.register(security);
+  /*
+   * JSON goes out compressed: a feed page or the dashboard is a fifth of its size gzipped, which
+   * is the difference a phone on one bar of signal feels. Brotli where the client offers it (at the
+   * plugin's fast quality, not the slow default), gzip otherwise; anything under 1 KB, and types
+   * that are already compressed (images, PDFs), go as they are.
+   */
+  await app.register(compress);
   await app.register(swagger);
   await app.register(storagePlugin, { storage: options.storage });
   await app.register(aiPlugin, { ai: options.ai });

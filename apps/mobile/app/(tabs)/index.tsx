@@ -1,17 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useRouter, type Href } from 'expo-router';
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import {
   Animated,
   Easing,
-  Image,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  useColorScheme,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -33,38 +31,40 @@ import type { Dashboard, Garage, Vehicle } from '@vehicle-os/contracts';
 import type { DocumentType } from '@vehicle-os/domain';
 import { dashboardQuery, garagesQuery, vehiclesQuery } from '@vehicle-os/api-client/react';
 import { dueGauge, groupByMonth, spanOfDays } from '@vehicle-os/ui';
-import logoTextLight from '@/assets/logo-text-light.png';
-import logoText from '@/assets/logo-text.png';
 import { BrandLogo } from '@/components/brand-logo';
 import { useDockSpace } from '@/components/dock';
 import { NotificationBell } from '@/components/notification-bell';
 import { photoKey, RemoteImage } from '@/components/remote-image';
-import { EmptyBay, Showroom, ShowroomSkeleton, type BayFlag } from '@/components/showroom';
+import { bayCard, EmptyBay, Showroom, ShowroomSkeleton, type BayFlag } from '@/components/showroom';
 import { LedgerMonth, LedgerRow } from '@/components/timeline';
 import { useSpent, vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
 import { jobEmoji } from '@/lib/emoji';
 import { ledgerDate } from '@/lib/ledger';
-import { formatDistance, formatMoney, humanise } from '@/lib/format';
-import { Glyph, SectionHeading, SectionLink } from '@/lib/instrument';
+import { DATE_LOCALE, formatDistance, formatMoney, humanise, TWELVE_HOUR } from '@/lib/format';
+import { Glyph, SectionHeading } from '@/lib/instrument';
 import {
   ease,
   Gauge,
   haptic,
   PressableScale,
-  Pulse,
   Rise,
+  useOnScreen,
   useReduceMotion,
   useScrollY,
 } from '@/lib/motion';
-import { figure, radius, rimmed, spacing, typeScale, useTheme, type Theme } from '@/lib/theme';
+import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 import { Button, CompactHeader, Empty, Face, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 const PAGE = spacing.lg;
-const DAY = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
-const TIME = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+const DAY = new Intl.DateTimeFormat(DATE_LOCALE, {
+  weekday: 'short',
+  day: '2-digit',
+  month: 'short',
+});
+const TIME = new Intl.DateTimeFormat(DATE_LOCALE, { hour: 'numeric', minute: '2-digit' });
 
 /** Pull to rev: iOS overscrolls past the top, so the pull can drive a tachometer. */
 const REV = Platform.OS === 'ios';
@@ -100,7 +100,6 @@ function useNow(every = 30_000) {
  */
 export default function GarageScreen() {
   const theme = useTheme();
-  const scheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const dockSpace = useDockSpace();
@@ -128,8 +127,9 @@ export default function GarageScreen() {
   const vehicleList = vehicles.data?.data ?? [];
   const garageList = garages.data ?? [];
   const spent = useSpent(vehicleList);
-  const items = data ? itemsFrom(data.attention) : [];
-  const flags = flagsByVehicle(items);
+  // Built once per dashboard, so what reads it — the card, the bays' flags — sees one list.
+  const items = useMemo(() => (data ? itemsFrom(data.attention) : []), [data]);
+  const flags = useMemo(() => flagsByVehicle(items), [items]);
 
   const byGarage = new Map<string, Vehicle[]>();
   for (const vehicle of vehicleList) {
@@ -174,13 +174,12 @@ export default function GarageScreen() {
         <RoadAhead y={y} top={insets.top} end={hero?.end} />
         {REV ? <RevMeter y={y} refreshing={refreshing} top={insets.top} /> : null}
 
+        {/*
+         * One row for who and when, and the two ways out — the bell and You. The wordmark is the
+         * icon the app was opened from; the space it took goes to the garage.
+         */}
         <Rise style={styles.topBar}>
-          <Image
-            source={scheme === 'light' ? logoText : logoTextLight}
-            style={styles.logo}
-            resizeMode="contain"
-            accessibilityLabel="Garaj"
-          />
+          <Greeting name={profile.data?.name ?? ''} />
           <View style={styles.topActions}>
             <NotificationBell />
             {/* The web's avatar, the way to You. */}
@@ -191,7 +190,7 @@ export default function GarageScreen() {
               accessibilityLabel={profile.data?.name ? `You, ${profile.data.name}` : 'You'}
               scaleTo={0.86}
             >
-              <Face user={profile.data} size={40} />
+              <Face user={profile.data} size={38} />
             </PressableScale>
           </View>
         </Rise>
@@ -237,8 +236,11 @@ export default function GarageScreen() {
               // the hero is a line or two, and the scenery takes the space instead.
               style={hero ? { minHeight: insets.top + HORIZON_AT + ROAD_MIN - hero.y } : null}
             >
-              <Rise index={1}>
-                <Hero name={profile.data?.name ?? ''} data={data} items={items} />
+              <Rise index={1} style={styles.heroGap}>
+                <Spotlight
+                  items={items}
+                  briefing={items.length === 0 ? data?.briefing : undefined}
+                />
               </Rise>
             </View>
 
@@ -260,9 +262,6 @@ export default function GarageScreen() {
               <SectionHeading
                 title="Garages"
                 count={garages.isPending ? undefined : garageList.length}
-                trailing={
-                  <SectionLink label="Manage" onPress={() => router.push('/settings/data')} />
-                }
               />
               <ScrollView
                 horizontal
@@ -274,7 +273,7 @@ export default function GarageScreen() {
               >
                 {garages.isPending
                   ? [0, 1].map((key) => (
-                      <Skeleton key={key} width={GARAGE} height={190} radius={radius.xxl} />
+                      <Skeleton key={key} width={GARAGE} height={128} radius={radius.xxl} />
                     ))
                   : garageList.map((garage, index) => (
                       <Rise key={garage.id} index={index}>
@@ -312,7 +311,7 @@ export default function GarageScreen() {
 let driven = false;
 
 type Flag = 'late' | 'soon';
-type Kind = 'service' | 'papers' | 'recalls' | 'tasks';
+type Kind = 'service' | 'papers' | 'recalls';
 type Point = { x: number; y: number };
 
 /** The lanes, by where their feet land either side of the vanishing point, in screen widths. */
@@ -329,14 +328,14 @@ const DIVIDER = -0.64;
 const EDGES = [-2.4, 1.1] as const;
 /** The vanishing point, across the screen — where the sun sits on the horizon. */
 const VP_X = 0.76;
-/** Below the safe area: the horizon, level with the name. */
-const HORIZON_AT = 142;
+/** Below the safe area: the horizon, in the gap between the greeting and the card, the sun on it. */
+const HORIZON_AT = 96;
 /** The last stretch of road, over which it sinks into the page. */
 const SINK = 130;
 /** Where the road ends until the hero below it has been measured, below the safe area. */
 const ROAD_END = 300;
 /** The least road there is below the horizon; a hero with less to say grows to show it. */
-const ROAD_MIN = 120;
+const ROAD_MIN = 84;
 const SUN = 30;
 
 /** The hills on the horizon, far then near: across as a share of the screen, height above it. */
@@ -438,6 +437,8 @@ function RoadAhead({
 }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
+  // The glow and the traffic only while the garage is what is on screen.
+  const onScreen = useOnScreen();
   const { width } = useWindowDimensions();
   const [lit] = useState(() => new Animated.Value(driven || reduce ? 1 : 0));
   const [breath] = useState(() => new Animated.Value(1));
@@ -499,7 +500,7 @@ function RoadAhead({
   }, [lit, reduce]);
 
   useEffect(() => {
-    if (reduce) return;
+    if (reduce || !onScreen) return;
     const to = (toValue: number) =>
       Animated.timing(breath, {
         toValue,
@@ -510,7 +511,7 @@ function RoadAhead({
     const loop = Animated.loop(Animated.sequence([to(0.7), to(1)]));
     loop.start();
     return () => loop.stop();
-  }, [breath, reduce]);
+  }, [breath, reduce, onScreen]);
 
   /** A stroke's gradient along a lane: out of the horizon, full where the road is near, gone into the page. */
   const fading = (id: string, to: Point, color: string, strongest: number) => (
@@ -875,6 +876,7 @@ function RoadAhead({
               <Car
                 key={index}
                 {...car}
+                running={onScreen}
                 vp={vp}
                 to={foot(LANES[car.lane].k)}
                 light={LANES[car.lane].light}
@@ -901,7 +903,10 @@ function Car({
   away,
   duration,
   gap,
+  running,
 }: {
+  /** Off screen the car waits where it is, and drives on when the garage is back. */
+  running: boolean;
   vp: Point;
   to: Point;
   /** Whose lights: names the gradient, which a colour's `#` cannot. */
@@ -921,6 +926,7 @@ function Car({
   const dy = to.y - vp.y;
 
   useEffect(() => {
+    if (!running) return;
     const drive = Animated.loop(
       Animated.sequence([
         Animated.delay(gap),
@@ -934,7 +940,7 @@ function Car({
     );
     drive.start();
     return () => drive.stop();
-  }, [t, gap, duration, away]);
+  }, [t, gap, duration, away, running]);
 
   return (
     <Animated.View
@@ -979,198 +985,91 @@ function Car({
   );
 }
 
-/** What the hero counts, in the order it chips them; tasks are counted, never listed. */
-const KINDS = [
-  { key: 'service', label: 'Service' },
-  { key: 'papers', label: 'Papers' },
-  { key: 'recalls', label: 'Recalls' },
-  { key: 'tasks', label: 'Tasks' },
-] as const satisfies readonly { key: Kind; label: string }[];
-
-/** What a kind reads — how many, and how many of those are late — or `null` before the dashboard. */
-function readKind(
-  key: Kind,
-  items: readonly Item[],
-  attention: Dashboard['attention'] | undefined,
-): { count: number; late: number } | null {
-  if (!attention) return null;
-  if (key === 'tasks') {
-    return {
-      count: attention.overdueTasks + attention.tasksDueToday,
-      late: attention.overdueTasks,
-    };
-  }
-  const mine = items.filter((item) => item.kind === key);
-  return { count: mine.length, late: mine.filter((item) => item.tone === 'late').length };
-}
-
-/** How long each thing ahead stays on the card before the next takes its place. */
-const DWELL = 4600;
-
 /**
- * Glass over the road: smoked by night, frosted by day — dark or light enough to read on over the
- * brightest trail, its top edge catching the light.
+ * Who and when, in one line under a quiet stamp: the day and the time over "Good afternoon, Alex" —
+ * the greeting muted, the name in the page's ink. The road's horizon runs just below it.
  */
-const glass = (theme: Theme) =>
-  theme.dark
-    ? {
-        backgroundColor: 'rgba(18,13,11,0.6)',
-        borderColor: 'rgba(255,255,255,0.1)',
-        borderTopColor: 'rgba(255,255,255,0.2)',
-      }
-    : {
-        backgroundColor: 'rgba(255,255,255,0.74)',
-        borderColor: theme.hairline,
-        borderTopColor: 'rgba(255,255,255,0.95)',
-      };
-
-/**
- * The top of the page, standing on the road ahead: the day and the time, the person — their name
- * large — then what is ahead of them: a chip for each kind of thing waiting, its dot the colour of
- * the worst of it and its edge lit while one of its own is on the card, and the card, which turns
- * through them by itself, most urgent first. A chip turns it to its kind.
- */
-function Hero({
-  name,
-  data,
-  items,
-}: {
-  name: string;
-  /** `undefined` while the dashboard loads. */
-  data: Dashboard | undefined;
-  items: readonly Item[];
-}) {
+function Greeting({ name }: { name: string }) {
   const theme = useTheme();
-  const router = useRouter();
   const now = useNow();
-  // Where the card is: it only counts up, and is read modulo what there is to read.
-  const [at, setAt] = useState(0);
   const firstName = name.trim().split(/\s+/)[0] ?? '';
   const salutation = salutationFor(now.getHours());
-  const briefing = items.length === 0 ? data?.briefing : undefined;
-  const current = items.length > 0 ? items[at % items.length] : undefined;
-
   return (
-    <View>
-      <View style={styles.heroTop}>
+    <View
+      style={styles.greeting}
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={firstName ? `${salutation}, ${firstName}` : salutation}
+    >
+      <View style={styles.when}>
         <Text style={[figure, styles.day, { color: theme.mutedForeground }]}>
           {DAY.format(now).replace(',', '').toUpperCase()}
         </Text>
+        <View style={[styles.whenDot, { backgroundColor: theme.borderStrong }]} />
         <Clock now={now} />
       </View>
-
-      <View
-        accessible
-        accessibilityRole="header"
-        accessibilityLabel={firstName ? `${salutation}, ${firstName}` : salutation}
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+        style={[styles.hello, { color: theme.foreground }]}
       >
         {firstName ? (
           <>
-            <Text style={[styles.salutation, { color: theme.mutedForeground }]}>{salutation},</Text>
-            <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              style={[styles.name, { color: theme.foreground }]}
-            >
-              {firstName}
-            </Text>
+            {/* Its own weight: a nested Text is patched to its own font file (`lib/fonts`). */}
+            <Text style={[styles.hello, { color: theme.mutedForeground }]}>{salutation}, </Text>
+            {firstName}
           </>
         ) : (
-          <Text
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            style={[styles.name, { color: theme.foreground }]}
-          >
-            {salutation}
-          </Text>
+          salutation
         )}
-      </View>
-
-      {/* A chip for each kind with something waiting — a kind with nothing says nothing. */}
-      <View style={styles.chips}>
-        {KINDS.map(({ key, label }) => {
-          const reading = readKind(key, items, data?.attention);
-          if (!reading || reading.count === 0) return null;
-          const first = items.findIndex((item) => item.kind === key);
-          const tone = reading.late ? theme.destructive : theme.warning;
-          return (
-            <PressableScale
-              key={key}
-              onPress={() => {
-                haptic.selection();
-                if (key === 'tasks') router.push('/tasks');
-                else if (first >= 0) setAt(first);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`${label}: ${reading.count}${reading.late ? `, ${reading.late} late` : ' coming up'}`}
-              accessibilityHint={key === 'tasks' ? 'Opens Tasks' : 'Shows the first of them'}
-              accessibilityState={{ selected: current?.kind === key }}
-              hitSlop={4}
-              scaleTo={0.94}
-              style={[
-                styles.chip,
-                glass(theme),
-                current?.kind === key
-                  ? { borderColor: `${tone}80`, borderTopColor: `${tone}80` }
-                  : null,
-              ]}
-            >
-              {reading.late ? (
-                <Pulse color={theme.destructive} size={6} />
-              ) : (
-                <View style={[styles.chipDot, { backgroundColor: theme.warning }]} />
-              )}
-              <Text style={[styles.chipLabel, { color: theme.foreground }]}>{label}</Text>
-              <Text style={[figure, styles.chipCount, { color: theme.mutedForeground }]}>
-                {reading.count}
-              </Text>
-            </PressableScale>
-          );
-        })}
-      </View>
-
-      <Ahead items={items} briefing={briefing} at={at} onStep={setAt} />
+      </Text>
     </View>
   );
 }
 
 /**
- * What is ahead, one at a time on a glass card that turns by itself every few seconds: the face
- * slides away and the next slides in, its glyph popping up. Each thing goes to its vehicle; with
- * nothing waiting it reads out the garage's briefing. A screen reader can turn it with its Next
- * action. Under reduce motion it still turns — the card is the only way to see the rest — but the
- * new face is simply there.
+ * Up next: the most pressing thing, on one solid card in a single row — its glyph on a quiet tile
+ * with a dot of its tone on the corner, what it is, when it is due said in that tone and whose,
+ * and the one thing to do about it (log the service, renew the paper, check the recall). A service
+ * wears how far through its interval it is as the card's own bottom edge, filling amber as it
+ * nears and red once past.
+ *
+ * Above it, a label and the count with the way to the next; under it, the next cards' edges. It
+ * turns only when asked — a card with a button on it must not change under the thumb — and the
+ * next rises into place. The card itself opens the vehicle. With nothing waiting, it says so and
+ * reads the garage's briefing, with the way to plan ahead.
  */
-function Ahead({
+function Spotlight({
   items,
   briefing,
-  at,
-  onStep,
 }: {
   items: readonly Item[];
   /** The dashboard's sentences when nothing is waiting; `undefined` while it loads. */
   briefing: readonly string[] | undefined;
-  at: number;
-  onStep: Dispatch<SetStateAction<number>>;
 }) {
   const theme = useTheme();
   const router = useRouter();
   const reduce = useReduceMotion();
-  const count = items.length > 0 ? items.length : (briefing?.length ?? 0);
-  const [shown, setShown] = useState(at);
-  // The face: -1 leaving to the left, 0 in place, 1 waiting on the right to come in.
+  const narrow = useWindowDimensions().width < 360;
+  // Where the deck is: it only counts up, and is read modulo what there is to read.
+  const [at, setAt] = useState(0);
+  const [shown, setShown] = useState(0);
+  // The face: -1 leaving upward, 0 in place, 1 waiting below to rise in.
   const [swap] = useState(() => new Animated.Value(0));
   const arriving = useRef(false);
+  const lines = items.length === 0 && briefing ? briefing : [];
+  const count = items.length > 0 ? items.length : lines.length;
 
   useEffect(() => {
     if (at === shown) return;
-    if (reduce || count === 0 || at % count === shown % count) {
+    if (reduce || count === 0) {
       setShown(at);
       return;
     }
     const leave = Animated.timing(swap, {
       toValue: -1,
-      duration: 170,
+      duration: 150,
       easing: ease.in,
       useNativeDriver: true,
     });
@@ -1182,125 +1081,284 @@ function Ahead({
     });
     return () => leave.stop();
     // Only a new place starts a turn; `shown` catches up to it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at]);
 
   // The next face comes in once it is the one drawn, so the old one never flashes on its way.
   useEffect(() => {
     if (!arriving.current) return;
     arriving.current = false;
-    Animated.spring(swap, { toValue: 0, useNativeDriver: true, speed: 14, bounciness: 5 }).start();
+    Animated.spring(swap, { toValue: 0, useNativeDriver: true, speed: 15, bounciness: 5 }).start();
   }, [shown, swap]);
-
-  // Each stays a while, then the next takes its place; a jump from a chip starts its stay afresh.
-  useEffect(() => {
-    if (count < 2) return;
-    const stay = setTimeout(() => onStep((value) => value + 1), DWELL);
-    return () => clearTimeout(stay);
-  }, [at, count, onStep]);
 
   const place = count > 0 ? shown % count : 0;
   const item = items[place];
-  const next = {
-    accessibilityActions: count > 1 ? [{ name: 'next', label: 'Next' }] : undefined,
-    onAccessibilityAction: () => onStep((value) => value + 1),
-  };
-  const line = item ? undefined : briefing?.[place];
+
+  /*
+   * A refetch can reorder the list under the card — a service logged, a paper renewed. The card
+   * stays on the thing it was showing wherever that has moved, and only when it is gone does the
+   * next one take its place.
+   */
+  const showing = useRef<string | null>(null);
+  useEffect(() => {
+    const key = showing.current;
+    const index = key ? items.findIndex((candidate) => candidate.key === key) : -1;
+    if (index >= 0 && items.length > 0 && index !== shown % items.length) {
+      setAt(index);
+      setShown(index);
+    }
+    // Only a new list moves the card; a turn moves it by itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+  useEffect(() => {
+    showing.current = item?.key ?? null;
+  }, [item]);
+  const clear = !item && briefing !== undefined;
+  // The cards under the one in front: as many as there are, up to two.
+  const depth = Math.min(Math.max(count - 1, 0), 2);
   const face = {
     opacity: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 1, 0] }),
     transform: [
-      { translateX: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [-22, 0, 22] }) },
+      { translateY: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [-8, 0, 12] }) },
     ],
   };
   const pop = {
     transform: [
-      { scale: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0.85, 1, 0.55] }) },
+      { scale: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0.8, 1, 0.5] }) },
     ],
   };
 
-  return (
-    <View>
-      {item ? (
+  let card: ReactNode;
+  if (item) {
+    const tone = item.tone === 'late' ? theme.destructive : theme.warning;
+    const act = actionFor(item);
+    card = (
+      <View style={[styles.spot, bayCard(theme)]}>
         <PressableScale
           onPress={() => router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })}
           accessibilityRole="button"
           accessibilityLabel={`${item.title}, ${item.vehicle}, ${item.due}`}
           accessibilityHint={`Opens ${item.vehicle}`}
-          {...next}
-          scaleTo={0.98}
-          style={[styles.glass, glass(theme)]}
+          scaleTo={0.985}
+          style={styles.spotMain}
         >
-          <Animated.View
-            style={[
-              styles.glassTile,
-              pop,
-              {
-                backgroundColor: item.tone === 'late' ? theme.destructiveSoft : theme.warningSoft,
-                borderColor: `${item.tone === 'late' ? theme.destructive : theme.warning}40`,
-              },
-            ]}
-          >
-            <Glyph size={22}>{item.emoji}</Glyph>
+          {/* The glyph alone, as the logbook wears it: the art says the kind, the pill the tone. */}
+          <Animated.View style={[styles.spotGlyph, pop]}>
+            <Glyph size={30}>{item.emoji}</Glyph>
           </Animated.View>
-          <Animated.View style={[styles.glassText, face]}>
-            <Text numberOfLines={1} style={[styles.glassTitle, { color: theme.foreground }]}>
+          <Animated.View style={[styles.spotText, face]}>
+            <Text numberOfLines={1} style={[styles.spotTitle, { color: theme.foreground }]}>
               {item.title}
             </Text>
-            {/* When leads: a narrow card cuts the vehicle's name, never how late it is. */}
-            <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-              <Text
-                style={{
-                  fontWeight: '600',
-                  color: item.tone === 'late' ? theme.destructive : theme.warning,
-                }}
-              >
-                {item.due}
-              </Text>{' '}
-              · {item.vehicle}
+            {/*
+             * When, as a status in its colour, then whose: a narrow card cuts the vehicle's name,
+             * never how late it is.
+             */}
+            <View style={styles.spotMeta}>
+              <View style={[styles.spotStatus, { backgroundColor: `${tone}1F` }]}>
+                <Text numberOfLines={1} style={[styles.spotStatusText, { color: tone }]}>
+                  {item.due}
+                </Text>
+              </View>
+              {/* A small phone has room for the status only; the card still opens the vehicle. */}
+              {narrow ? null : (
+                <Text
+                  numberOfLines={1}
+                  style={[styles.spotLine, styles.spotWho, { color: theme.mutedForeground }]}
+                >
+                  {item.vehicle}
+                </Text>
+              )}
+            </View>
+          </Animated.View>
+        </PressableScale>
+        <PressableScale
+          onPress={() => {
+            haptic.selection();
+            router.push(act.href);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`${act.label}: ${item.title}`}
+          hitSlop={8}
+          scaleTo={0.92}
+          style={[
+            styles.spotAct,
+            narrow ? styles.spotActRound : null,
+            { backgroundColor: theme.primary },
+          ]}
+        >
+          <Ionicons name={act.icon} size={narrow ? 16 : 13} color={theme.primaryForeground} />
+          {/* A small phone keeps the key and gives its word to the status beside it. */}
+          {narrow ? null : (
+            <Text style={[styles.spotActText, { color: theme.primaryForeground }]}>
+              {act.label}
+            </Text>
+          )}
+        </PressableScale>
+      </View>
+    );
+  } else if (clear) {
+    const line = lines[place] ?? 'Every service, paper and recall is in hand.';
+    card = (
+      <View style={[styles.spot, bayCard(theme)]}>
+        <View style={styles.spotMain} accessible accessibilityLabel={`All clear. ${line}`}>
+          <View style={styles.spotGlyph}>
+            <Ionicons name="checkmark-circle" size={30} color={theme.success} />
+          </View>
+          <Animated.View style={[styles.spotText, face]}>
+            {/* The label above already says all clear; the card says what that means. */}
+            <Text style={[styles.spotTitle, { color: theme.foreground }]}>Nothing needs you</Text>
+            {/* Two lines kept, so a short sentence and a long one leave the page where it was. */}
+            <Text
+              numberOfLines={2}
+              style={[styles.spotLine, styles.spotBrief, { color: theme.mutedForeground }]}
+            >
+              {line}
             </Text>
           </Animated.View>
-          <Ionicons name="chevron-forward" size={16} color={theme.mutedForeground} />
-        </PressableScale>
-      ) : line !== undefined ? (
-        <View accessible accessibilityLabel={line} {...next} style={[styles.glass, glass(theme)]}>
-          <View style={[styles.tickerDot, { backgroundColor: theme.primary }]} />
-          <Animated.Text
-            numberOfLines={2}
-            style={[typeScale.label, styles.tickerText, face, { color: theme.foreground }]}
-          >
-            {line.split(NUMBERS).map((part, i) =>
-              i % 2 === 1 ? (
-                <Text key={i} style={[figure, { fontWeight: '600' }]}>
-                  {part}
-                </Text>
-              ) : (
-                part
-              ),
-            )}
-          </Animated.Text>
         </View>
-      ) : (
-        <View style={[styles.glass, glass(theme)]}>
-          <Skeleton width={42} height={42} radius={13} />
-          <View style={[styles.glassText, { gap: 7 }]}>
-            <Skeleton width="64%" height={13} />
-            <Skeleton width="46%" height={10} />
+        <PressableScale
+          onPress={() => {
+            haptic.selection();
+            router.push('/add/planned');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Plan a reminder"
+          hitSlop={8}
+          scaleTo={0.92}
+          style={[styles.spotAct, { backgroundColor: theme.muted }]}
+        >
+          <Ionicons name="add" size={14} color={theme.foreground} />
+          <Text style={[styles.spotActText, { color: theme.foreground }]}>Plan</Text>
+        </PressableScale>
+      </View>
+    );
+  } else {
+    card = (
+      <View style={[styles.spot, bayCard(theme)]}>
+        <View style={styles.spotMain}>
+          <Skeleton width={30} height={30} radius={15} />
+          <View style={[styles.spotText, { gap: 8 }]}>
+            <Skeleton width="62%" height={13} />
+            <Skeleton width="44%" height={10} />
           </View>
         </View>
-      )}
+        <Skeleton width={68} height={34} radius={999} />
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      {/* What this is, and how much more there is — the way to the next beside the count. */}
+      <View style={styles.spotBar}>
+        <View style={styles.spotLabel}>
+          <View
+            style={[
+              styles.spotLabelDot,
+              { backgroundColor: clear ? theme.success : item ? theme.primary : theme.border },
+            ]}
+          />
+          <Text style={[styles.spotLabelText, { color: theme.mutedForeground }]}>
+            {clear ? 'ALL CLEAR' : 'UP NEXT'}
+          </Text>
+        </View>
+        {count > 1 ? (
+          <PressableScale
+            onPress={() => {
+              haptic.selection();
+              setAt((value) => value + 1);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Next, ${place + 1} of ${count}`}
+            hitSlop={10}
+            scaleTo={0.92}
+            style={[styles.spotPager, { backgroundColor: theme.muted }]}
+          >
+            <Text style={[figure, styles.spotCount, { color: theme.foreground }]}>
+              {place + 1}
+              <Text style={[figure, styles.spotCount, { color: theme.mutedForeground }]}>
+                /{count}
+              </Text>
+            </Text>
+            <Ionicons name="chevron-forward" size={13} color={theme.foreground} />
+          </PressableScale>
+        ) : null}
+      </View>
+
+      <View style={{ marginBottom: depth * DECK_STEP }}>
+        {/* The deck under the card in front: each a step lower and narrower. */}
+        {Array.from({ length: depth }, (_, i) => depth - i).map((level) => (
+          <View
+            key={level}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[
+              styles.deckEdge,
+              {
+                backgroundColor: level === 1 ? theme.card : theme.muted,
+                borderColor: theme.hairline,
+                left: 16 + level * 12,
+                right: 16 + level * 12,
+                bottom: -level * DECK_STEP,
+              },
+            ]}
+          />
+        ))}
+        {card}
+      </View>
     </View>
   );
 }
 
-/** Whole numbers in a sentence, with their thousands and decimals — never a full stop after. */
-const NUMBERS = /(\d+(?:[.,]\d+)*)/;
+/** How far each card under the one in front shows below it. */
+const DECK_STEP = 6;
+
+/** The one thing to do about an item, where it is done. */
+function actionFor(item: Item): {
+  label: string;
+  icon: ComponentProps<typeof Ionicons>['name'];
+  href: Href;
+} {
+  if (item.kind === 'papers') {
+    return {
+      label: 'Renew',
+      icon: 'refresh',
+      href: {
+        pathname: '/add/document',
+        params: {
+          vehicleId: item.vehicleId,
+          ...(item.documentType ? { documentType: item.documentType } : {}),
+        },
+      },
+    };
+  }
+  if (item.kind === 'recalls') {
+    return { label: 'Check', icon: 'shield-checkmark', href: '/notifications' };
+  }
+  // The service's own name on the line, so the form offers this schedule first.
+  return {
+    label: 'Log',
+    icon: 'checkmark',
+    href: {
+      pathname: '/add/done',
+      params: { vehicleId: item.vehicleId, kind: 'MAINTENANCE', line: item.title },
+    },
+  };
+}
 
 /** The time, its colon blinking the seconds away — on the native driver, so nothing re-renders. */
 function Clock({ now }: { now: Date }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
+  const onScreen = useOnScreen();
   const [blink] = useState(() => new Animated.Value(1));
   useEffect(() => {
-    if (reduce) return;
+    if (reduce || !onScreen) {
+      blink.setValue(1);
+      return;
+    }
     const to = (toValue: number) =>
       Animated.timing(blink, {
         toValue,
@@ -1313,11 +1371,12 @@ function Clock({ now }: { now: Date }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [blink, reduce]);
+  }, [blink, reduce, onScreen]);
   const style = [figure, styles.day, { color: theme.foreground }];
   return (
     <View accessible accessibilityLabel={TIME.format(now)} style={styles.clock}>
-      <Text style={style}>{pad(now.getHours())}</Text>
+      {/* The region's clock: 3:07 in New York, 15:07 in London — as the label says it too. */}
+      <Text style={style}>{TWELVE_HOUR ? now.getHours() % 12 || 12 : pad(now.getHours())}</Text>
       <Animated.Text style={[style, { opacity: blink }]}>:</Animated.Text>
       <Text style={style}>{pad(now.getMinutes())}</Text>
     </View>
@@ -1327,8 +1386,7 @@ function Clock({ now }: { now: Date }) {
 interface Item {
   key: string;
   tone: Flag;
-  /** The chip it counts under. */
-  kind: Exclude<Kind, 'tasks'>;
+  kind: Kind;
   title: string;
   vehicle: string;
   /** When, in words: "Overdue by 3 months", "Expires in 4 days". */
@@ -1336,6 +1394,8 @@ interface Item {
   vehicleId: string;
   /** The job's glyph, in the web's own artwork. */
   emoji: string;
+  /** A paper's kind, so renewing it opens on the same one. */
+  documentType?: DocumentType;
 }
 
 /** A schedule's due in words, as the web's `readDue` says it. */
@@ -1403,6 +1463,7 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
             : `Expires in ${spanOfDays(days)}`,
       vehicleId: paper.vehicleId,
       emoji: PAPER[paper.document.documentType] ?? '📝',
+      documentType: paper.document.documentType,
     });
   }
   for (const recall of attention.recalls) {
@@ -1538,7 +1599,7 @@ function attentionByGarage(
   return out;
 }
 
-const GARAGE = 268;
+const GARAGE = 236;
 const BAYS = 4;
 const rank = (flag: Flag | undefined) => (flag === 'late' ? 0 : flag === 'soon' ? 1 : 2);
 
@@ -1586,7 +1647,8 @@ function GarageCard({
         .filter(Boolean)
         .join(', ')}
       scaleTo={0.985}
-      style={[styles.garage, { backgroundColor: theme.card }, rimmed(theme)]}
+      // The bays' own solid surface: white by day, lifted by a hairline and a soft shadow.
+      style={[styles.garage, bayCard(theme)]}
     >
       {/* The floor. */}
       <View
@@ -1650,41 +1712,16 @@ function GarageCard({
         })}
       </View>
 
+      {/* The name and how many it holds; whose it is only when it is not yours. */}
       <View style={styles.garageFoot}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text
-            numberOfLines={1}
-            style={[typeScale.headline, { fontSize: 16, color: theme.foreground }]}
-          >
-            {garage.name}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={[typeScale.caption, { marginTop: 2, color: theme.mutedForeground }]}
-          >
-            <Text style={[figure, { fontWeight: '600', color: theme.foreground }]}>
-              {pad(count)}
-            </Text>{' '}
-            {count === 1 ? 'vehicle' : 'vehicles'} · {garage.description ?? garage.defaultCurrency}
-            {/* Only when it is not yours: every garage you made says Owner, which is noise. */}
-            {shared ? ` · ${humanise(garage.role)}` : ''}
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.arrow,
-            {
-              backgroundColor: pressed ? theme.primary : theme.muted,
-              transform: [{ rotate: pressed ? '-45deg' : '0deg' }],
-            },
-          ]}
-        >
-          <Ionicons
-            name="arrow-forward"
-            size={16}
-            color={pressed ? theme.primaryForeground : theme.mutedForeground}
-          />
-        </View>
+        <Text numberOfLines={1} style={[styles.garageName, { color: theme.foreground }]}>
+          {garage.name}
+        </Text>
+        <Text numberOfLines={1} style={[styles.garageMeta, { color: theme.mutedForeground }]}>
+          <Text style={[figure, styles.garageMeta, { color: theme.foreground }]}>{count}</Text>{' '}
+          {count === 1 ? 'vehicle' : 'vehicles'}
+          {shared ? ` · ${humanise(garage.role)}` : ''}
+        </Text>
       </View>
     </PressableScale>
   );
@@ -1713,9 +1750,9 @@ function Parked({ vehicle }: { vehicle: Vehicle }) {
   return (
     <View style={[styles.parkedBadge, { backgroundColor: theme.cardRaised }]}>
       {vehicle.make ? (
-        <BrandLogo make={vehicle.make} size={40} />
+        <BrandLogo make={vehicle.make} size={30} />
       ) : (
-        <Ionicons name={vehicleIcon(vehicle.vehicleType)} size={20} color={theme.mutedForeground} />
+        <Ionicons name={vehicleIcon(vehicle.vehicleType)} size={16} color={theme.mutedForeground} />
       )}
     </View>
   );
@@ -1763,12 +1800,16 @@ function NewGarageTile({ onPress }: { onPress: () => void }) {
       >
         <Ionicons
           name="add"
-          size={22}
+          size={18}
           color={pressed ? theme.primaryForeground : theme.mutedForeground}
         />
       </Animated.View>
       <Text
-        style={[typeScale.label, { color: pressed ? theme.foreground : theme.mutedForeground }]}
+        style={[
+          typeScale.caption,
+          styles.newGarageLabel,
+          { color: pressed ? theme.foreground : theme.mutedForeground },
+        ]}
       >
         New garage
       </Text>
@@ -1841,58 +1882,98 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginBottom: -spacing.sm,
   },
-  // The wordmark is 1500 x 421.
-  logo: { height: 24, width: Math.round((24 * 1500) / 421) },
   topActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  greeting: { flex: 1, minWidth: 0, gap: 3 },
+  when: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  whenDot: { width: 3, height: 3, borderRadius: 2 },
+  hello: { fontSize: 22, lineHeight: 27, fontWeight: '700', letterSpacing: -0.6 },
 
   road: { position: 'absolute', top: 0, left: 0, right: 0 },
   sky: { position: 'absolute', top: 0, left: 0, right: 0, overflow: 'hidden' },
   sun: { position: 'absolute', width: SUN * 4, height: SUN * 4 },
   car: { position: 'absolute', width: CAR_W, height: CAR_H },
-  heroTop: {
+  day: { fontSize: 10.5, lineHeight: 14, fontWeight: '600', letterSpacing: 1 },
+  clock: { flexDirection: 'row' },
+  readouts: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.lg,
+    alignSelf: 'flex-start',
+    paddingBottom: 7,
+    marginBottom: 9,
+  },
+  readout: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  readoutCount: { fontSize: 18, lineHeight: 22, fontWeight: '700', letterSpacing: -0.4 },
+  readoutLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  readoutLine: { position: 'absolute', bottom: 0, height: 2, borderRadius: 1 },
+  heroGap: { paddingTop: 12 },
+  spotBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    minHeight: 26,
+    marginBottom: 8,
   },
-  day: { fontSize: 11, lineHeight: 16, fontWeight: '600', letterSpacing: 1 },
-  clock: { flexDirection: 'row' },
-  salutation: { fontSize: 16, lineHeight: 21, fontWeight: '500', letterSpacing: -0.2 },
-  name: { fontSize: 44, lineHeight: 48, fontWeight: '700', letterSpacing: -1.8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12, marginBottom: 10 },
-  chip: {
+  spotLabel: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  spotLabelDot: { width: 6, height: 6, borderRadius: 3 },
+  spotLabelText: { fontSize: 10.5, lineHeight: 14, fontWeight: '700', letterSpacing: 1.2 },
+  spotPager: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    height: 28,
-    paddingHorizontal: 11,
+    gap: 3,
+    height: 26,
+    paddingLeft: 10,
+    paddingRight: 7,
     borderRadius: radius.pill,
-    borderWidth: 1,
   },
-  chipDot: { width: 6, height: 6, borderRadius: 3 },
-  chipLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
-  chipCount: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
-  glass: {
+  spotCount: { fontSize: 11.5, lineHeight: 15, fontWeight: '600' },
+  // A capsule: the ends are half its height, the key inside them nearly concentric.
+  spot: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    minHeight: 68,
-    padding: 12,
-    borderRadius: radius.xxl,
-    borderWidth: 1,
+    gap: spacing.sm,
+    paddingVertical: 14,
+    paddingLeft: 18,
+    paddingRight: 18,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
   },
-  glassTile: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    borderWidth: 1,
-    alignItems: 'center',
+  spotMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  spotText: { flex: 1, minWidth: 0, gap: 5 },
+  spotTitle: { fontSize: 15.5, lineHeight: 20, fontWeight: '700', letterSpacing: -0.3 },
+  spotLine: { fontSize: 12.5, lineHeight: 17, fontWeight: '500' },
+  spotMeta: { flexDirection: 'row', alignItems: 'center', gap: 7, minWidth: 0 },
+  // Its whole width first; it is cut only if it alone would not fit.
+  spotStatus: {
+    flexShrink: 1,
+    height: 20,
     justifyContent: 'center',
+    paddingHorizontal: 7,
+    borderRadius: 6,
   },
-  glassText: { flex: 1, minWidth: 0, gap: 2 },
-  glassTitle: { fontSize: 15.5, lineHeight: 20, fontWeight: '600', letterSpacing: -0.2 },
-  tickerDot: { width: 6, height: 6, borderRadius: 3 },
-  tickerText: { flex: 1, fontWeight: '500' },
+  spotStatusText: { fontSize: 11.5, lineHeight: 14, fontWeight: '700', letterSpacing: -0.1 },
+  // Only what the status leaves: a zero basis, so it never takes room from it.
+  spotWho: { flex: 1, minWidth: 0 },
+  spotBrief: { minHeight: 34 },
+  spotAct: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+  },
+  spotActText: { fontSize: 12.5, lineHeight: 16, fontWeight: '700' },
+  spotActRound: { width: 36, height: 36, paddingHorizontal: 0, justifyContent: 'center' },
+  spotGlyph: { width: 34, alignItems: 'center', justifyContent: 'center' },
+  deckEdge: {
+    position: 'absolute',
+    height: DECK_STEP + 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: radius.pill,
+    borderBottomRightRadius: radius.pill,
+  },
 
   rev: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   revUnit: { fontSize: 8, lineHeight: 10, fontWeight: '600' },
@@ -1902,9 +1983,9 @@ const styles = StyleSheet.create({
   garage: {
     width: GARAGE,
     borderRadius: radius.xxl,
-    padding: 10,
-    paddingBottom: spacing.lg,
-    gap: 14,
+    padding: 8,
+    paddingBottom: 12,
+    gap: 10,
   },
   floor: {
     flexDirection: 'row',
@@ -1915,7 +1996,7 @@ const styles = StyleSheet.create({
   },
   bay: {
     flex: 1,
-    aspectRatio: 4 / 5,
+    aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'flex-end',
     paddingHorizontal: 4,
@@ -1937,41 +2018,32 @@ const styles = StyleSheet.create({
   parkedCutout: { width: '100%', height: '100%' },
   parkedPhoto: { width: '100%', height: '100%', borderRadius: 8 },
   parkedBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
   },
-  garageFoot: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    paddingHorizontal: 6,
-  },
-  arrow: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  garageFoot: { gap: 1, paddingHorizontal: 6 },
+  garageName: { fontSize: 15, lineHeight: 20, fontWeight: '700', letterSpacing: -0.25 },
+  garageMeta: { fontSize: 12, lineHeight: 16, fontWeight: '500' },
   newGarage: {
-    width: 150,
-    minHeight: 160,
+    width: 92,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
     borderRadius: radius.xxl,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderStyle: 'dashed',
   },
+  newGarageLabel: { fontWeight: '600', textAlign: 'center' },
   newGarageIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },

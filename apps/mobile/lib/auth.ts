@@ -5,34 +5,57 @@
  * response carries a `set-auth-token` header. There is no Better Auth *client* here on
  * purpose: the two calls this app makes are a sign-in and a sign-out, and pulling a second
  * HTTP stack and its own storage adapter into the bundle to make them is a poor trade.
+ *
+ * The session itself — the token, and who else is listening for it — lives in `./api`.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import * as SecureStore from 'expo-secure-store';
-import { API_URL, clearSessionToken, storeSessionToken } from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api, API_URL, sessionToken, setSessionToken } from './api';
+import { clearQueue } from './offline';
 import { unregisterForPush } from './push';
 
-const TOKEN_KEY = 'vehicleos.session-token';
+export { useSession, type Session } from './api';
+
+/** Whose writes the offline queue holds: the last account signed in on this phone. */
+const ACCOUNT_KEY = 'vehicleos.account';
 
 export interface Credentials {
   readonly email: string;
   readonly password: string;
 }
 
-async function post(path: string, body: unknown): Promise<Response> {
-  return fetch(`${API_URL}/api/auth${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    /*
-     * React Native has one process-wide cookie jar and attaches it to every request. This
-     * app is bearer-only — the token lives in the keystore — so those cookies are not just
-     * unused, they are actively harmful: Better Auth runs its CSRF origin check whenever a
-     * request carries a cookie, and a native `fetch` sends no `Origin`, so sign-in comes
-     * back 403 "Missing or null Origin". Omitting them skips the check the honest way.
-     */
-    credentials: 'omit',
-    body: JSON.stringify(body),
-  });
+/** Auth calls get the same patience as the API client, so a dead network is an answer too. */
+async function post(path: string, body: unknown, headers: Record<string, string> = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    return await fetch(`${API_URL}/api/auth${path}`, {
+      method: 'POST',
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...headers,
+      },
+      /*
+       * React Native has one process-wide cookie jar and attaches it to every request. This
+       * app is bearer-only — the token lives in the keystore — so those cookies are not just
+       * unused, they are actively harmful: Better Auth runs its CSRF origin check whenever a
+       * request carries a cookie, and a native `fetch` sends no `Origin`, so sign-in comes
+       * back 403 "Missing or null Origin". Omitting them skips the check the honest way.
+       */
+      credentials: 'omit',
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('The server took too long to answer. Check your connection.');
+    }
+    throw new Error('Could not reach Garaj. Check your connection and try again.', {
+      cause: error,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function errorFrom(payload: unknown, fallback: string): string {
@@ -40,82 +63,67 @@ function errorFrom(payload: unknown, fallback: string): string {
   return typeof message === 'string' && message ? message : fallback;
 }
 
-export async function signIn({ email, password }: Credentials): Promise<void> {
-  const response = await post('/sign-in/email', { email, password });
-  if (!response.ok) {
-    throw new Error(
-      errorFrom(await response.json().catch(() => null), 'That email and password did not match.'),
-    );
-  }
+/**
+ * Keeps the session a response handed over. The token comes back in a header, not the body,
+ * and goes straight into the keystore.
+ *
+ * A different account than the last one on this phone starts with an empty queue. Writes left
+ * by a session that expired wait for their owner to sign back in; sent under someone else's
+ * session they would be refused and lost, or worse, recorded as that person's.
+ */
+async function adopt(response: Response, fallback: string): Promise<void> {
+  const payload = (await response.json().catch(() => null)) as {
+    user?: { id?: string };
+  } | null;
+  if (!response.ok) throw new Error(errorFrom(payload, fallback));
 
-  /*
-   * The token comes back in a header, not the body. A phone has no cookie jar that survives
-   * a restart, so it goes straight into the platform keystore — Keychain on iOS,
-   * EncryptedSharedPreferences on Android.
-   */
   const token = response.headers.get('set-auth-token');
   if (!token) throw new Error('The server did not return a session token.');
-  await storeSessionToken(token);
+
+  const account = payload?.user?.id ?? null;
+  const previous = await AsyncStorage.getItem(ACCOUNT_KEY).catch(() => null);
+  if (account && previous && previous !== account) await clearQueue();
+  if (account) await AsyncStorage.setItem(ACCOUNT_KEY, account).catch(() => undefined);
+
+  await setSessionToken(token);
+}
+
+export async function signIn({ email, password }: Credentials): Promise<void> {
+  await adopt(
+    await post('/sign-in/email', { email, password }),
+    'That email and password did not match.',
+  );
 }
 
 export async function signUp(input: Credentials & { name: string }): Promise<void> {
-  const response = await post('/sign-up/email', input);
-  if (!response.ok) {
-    throw new Error(
-      errorFrom(await response.json().catch(() => null), 'Could not create that account.'),
-    );
-  }
-  const token = response.headers.get('set-auth-token');
-  if (token) await storeSessionToken(token);
-}
-
-export async function signOut(): Promise<void> {
-  // While the session still authenticates the request that removes it.
-  await unregisterForPush();
-  const token = await SecureStore.getItemAsync(TOKEN_KEY);
-  /*
-   * The local token is cleared whatever the server says. If the request fails the session
-   * stays alive server-side until it expires, but leaving the credential on the device
-   * because the network was down is the worse of the two outcomes.
-   */
-  try {
-    if (token) {
-      await fetch(`${API_URL}/api/auth/sign-out`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
-        credentials: 'omit',
-      });
-    }
-  } finally {
-    await clearSessionToken();
-  }
-}
-
-export interface SessionState {
-  readonly token: string | null;
-  readonly loading: boolean;
-  readonly refresh: () => Promise<void>;
+  await adopt(await post('/sign-up/email', input), 'Could not create that account.');
 }
 
 /**
- * Whether this device holds a token.
+ * Ends the session on this phone, whatever the network says.
  *
- * Deliberately not "is the session valid" — that would be a network call on every launch,
- * and the app would sit on a splash screen in a tunnel. An expired token surfaces as the
- * first 401, which the root layout turns into a sign-in screen.
+ * The server is told when it can be — this phone's push token first, while the session still
+ * authenticates the request that removes it — but neither call can stop the local token going.
+ * A session left alive server-side expires on its own; a credential left on a phone because the
+ * network was down is the worse of the two outcomes.
  */
-export function useSession(): SessionState {
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+export async function signOut(): Promise<void> {
+  const token = sessionToken();
+  await unregisterForPush().catch(() => undefined);
+  if (token) {
+    await post('/sign-out', undefined, { authorization: `Bearer ${token}` }).catch(() => undefined);
+  }
+  await setSessionToken(null);
+  await AsyncStorage.removeItem(ACCOUNT_KEY).catch(() => undefined);
+}
 
-  const refresh = useCallback(async () => {
-    setToken(await SecureStore.getItemAsync(TOKEN_KEY));
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  return { token, loading, refresh };
+/**
+ * Deletes the account on the server — its live subscription cancelled, the garages it owns and
+ * everything in them — then forgets it here. The server's answer comes first: nothing local is
+ * dropped for an account that still exists.
+ */
+export async function deleteAccount(): Promise<void> {
+  await api.users.deleteMe();
+  await setSessionToken(null);
+  await AsyncStorage.removeItem(ACCOUNT_KEY).catch(() => undefined);
 }

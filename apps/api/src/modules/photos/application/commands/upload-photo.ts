@@ -18,6 +18,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { ActorContext } from '@vehicle-os/domain';
 import { newId } from '@vehicle-os/utils';
 import { ConflictError, NotFoundError, ValidationError } from '../../../../infrastructure/errors';
+import { idConflict } from '../../../../infrastructure/idempotency';
 import { enqueue } from '../../../../infrastructure/outbox';
 import type { StoragePort } from '../../../../infrastructure/storage/storage-port';
 import { vehiclePhotoKey } from '../../../../infrastructure/storage/storage-port';
@@ -35,24 +36,48 @@ export async function requestUpload(
   actor: ActorContext,
   vehicleId: string,
   garageId: string,
-  input: { filename: string; mimeType: string; sizeBytes: number },
+  input: { id?: string; filename: string; mimeType: string; sizeBytes: number },
 ): Promise<UploadTicket> {
   // Generated here rather than left to the column default: the storage key has to be built
   // from the id, and the key is written on the same insert.
-  const photoId = newId();
-  const storageKey = vehiclePhotoKey(garageId, vehicleId, photoId);
+  const photoId = input.id ?? newId();
+  let storageKey = vehiclePhotoKey(garageId, vehicleId, photoId);
 
-  await db.insert(schema.vehiclePhotos).values({
-    id: photoId,
-    vehicleId,
-    storageKey,
-    mimeType: input.mimeType,
-    sizeBytes: input.sizeBytes,
-    uploadedBy: actor.userId,
-    // Null until the image-processing worker has produced its variants; a client renders
-    // the original until then rather than requesting a thumbnail that does not exist.
-    processedAt: null,
-  });
+  const [inserted] = await db
+    .insert(schema.vehiclePhotos)
+    .values({
+      id: photoId,
+      vehicleId,
+      storageKey,
+      mimeType: input.mimeType,
+      sizeBytes: input.sizeBytes,
+      uploadedBy: actor.userId,
+      // Null until the image-processing worker has produced its variants; a client renders
+      // the original until then rather than requesting a thumbnail that does not exist.
+      processedAt: null,
+    })
+    .onConflictDoNothing({ target: schema.vehiclePhotos.id })
+    .returning({ id: schema.vehiclePhotos.id });
+
+  /*
+   * A replayed offline upload: the row is already there, so its own key gets a fresh link and
+   * finalize (which is idempotent: the same fields, a deduplicated job) lands on the same photo.
+   */
+  if (!inserted) {
+    const [existing] = await db
+      .select({ storageKey: schema.vehiclePhotos.storageKey })
+      .from(schema.vehiclePhotos)
+      .where(
+        and(
+          eq(schema.vehiclePhotos.id, photoId),
+          eq(schema.vehiclePhotos.vehicleId, vehicleId),
+          isNull(schema.vehiclePhotos.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!existing) throw idConflict('photo');
+    storageKey = existing.storageKey;
+  }
 
   const upload = await storage.createUploadUrl(storageKey, input.mimeType, input.sizeBytes);
   return {

@@ -1,9 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
+import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Linking,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { WebView } from 'react-native-webview';
 import { api } from '@/lib/api';
 import { PressableScale } from '@/lib/motion';
@@ -12,7 +21,8 @@ import { Button } from '@/lib/ui';
 
 type Loaded =
   | { kind: 'image'; url: string }
-  | { kind: 'pdf'; base64: string }
+  /** On this phone, in the cache: drawn from disk, deleted when the screen goes. */
+  | { kind: 'pdf'; file: string }
   | { kind: 'text'; text: string }
   | { kind: 'other'; url: string };
 
@@ -32,66 +42,135 @@ async function load(vehicleId: string, id: string): Promise<Loaded & { filename:
     return { kind: 'other', url, filename };
   }
 
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`The file did not load (${response.status}).`);
-  if (mimeType === 'text/plain') return { kind: 'text', text: await response.text(), filename };
+  if (mimeType === 'text/plain') {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`The file did not load (${response.status}).`);
+    return { kind: 'text', text: await response.text(), filename };
+  }
 
-  const blob = await response.blob();
-  const base64 = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
-    reader.onerror = () => reject(new Error('The file could not be read.'));
-    reader.readAsDataURL(blob);
-  });
-  return { kind: 'pdf', base64, filename };
+  /*
+   * Downloaded natively, straight to a file: the bytes never pass through JS on the way in, and
+   * nothing the size of a scanned service book sits in memory or in the query cache.
+   */
+  const target = `${FileSystem.cacheDirectory}document-${id}.pdf`;
+  const downloaded = await FileSystem.downloadAsync(url, target);
+  if (downloaded.status < 200 || downloaded.status >= 300) {
+    await FileSystem.deleteAsync(target, { idempotent: true });
+    throw new Error(`The file did not load (${downloaded.status}).`);
+  }
+  return { kind: 'pdf', file: downloaded.uri, filename };
 }
 
 /**
- * A PDF drawn page by page with pdf.js, inside a web view that never navigates anywhere.
+ * A PDF on Android, drawn with pdf.js inside a web view that never navigates anywhere. (iOS's web
+ * view draws a PDF itself, natively — zoom, text selection and all — so it is handed the file.)
  *
- * iOS's web view can show a PDF on its own and Android's cannot; drawing it this way looks and
- * behaves the same on both. Pages render at the screen's pixel density so text stays sharp, and
- * the viewport allows a pinch.
- * ponytail: the whole file goes in as base64, fine for the 25 MB upload cap; stream it if that rises.
+ * Only the pages near the screen are drawn: each page is a sized placeholder, drawn as it comes
+ * within a screen and a half of view and let go once it is well past. Drawing every page up
+ * front at full density was ~7 MB of canvas a page — a fifty-page manual was a crashed web view.
+ * Density is capped at 2×, which is sharp at reading size, and the viewport allows a pinch.
+ * ponytail: the file still goes in as base64, fine for the 25 MB upload cap; stream it if that rises.
  */
 function pdfPage(base64: string, background: string, foreground: string): string {
   return `<!doctype html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <style>
-  html,body{margin:0;background:${background};color:${foreground};font:14px -apple-system,Roboto,sans-serif}
+  html,body{margin:0;background:${background};color:${foreground};font:14px Roboto,sans-serif}
   #pages{display:flex;flex-direction:column;gap:12px;padding:12px}
-  canvas{width:100%;height:auto;border-radius:6px;background:#fff}
+  .page{width:100%;border-radius:6px;overflow:hidden;background:#fff}
+  .page canvas{display:block;width:100%;height:100%}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head><body><div id="pages"></div>
 <script>
 (async function () {
+  const post = (message) => window.ReactNativeWebView.postMessage(message);
   try {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const raw = atob('${base64}');
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
     const pages = document.getElementById('pages');
-    const density = window.devicePixelRatio || 2;
+    const density = Math.min(window.devicePixelRatio || 1, 2);
     const width = pages.clientWidth - 24;
-    for (let n = 1; n <= pdf.numPages; n++) {
-      const page = await pdf.getPage(n);
+    const first = (await pdf.getPage(1)).getViewport({ scale: 1 });
+
+    async function draw(slot) {
+      if (slot.firstChild || slot.dataset.busy) return;
+      slot.dataset.busy = '1';
+      const page = await pdf.getPage(Number(slot.dataset.n));
       const base = page.getViewport({ scale: 1 });
+      slot.style.aspectRatio = base.width + ' / ' + base.height;
       const viewport = page.getViewport({ scale: (width / base.width) * density });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      pages.appendChild(canvas);
       await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      if (n === 1) window.ReactNativeWebView.postMessage('ready');
+      page.cleanup();
+      delete slot.dataset.busy;
+      // Scrolled past while it was drawing: let the canvas go rather than keep it.
+      if (slot.dataset.near) slot.appendChild(canvas);
+      else canvas.width = canvas.height = 0;
+      if (slot.dataset.n === '1') post('ready');
+    }
+    function drop(slot) {
+      const canvas = slot.firstChild;
+      if (!canvas) return;
+      canvas.width = canvas.height = 0;
+      slot.removeChild(canvas);
+    }
+
+    const near = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => {
+        const slot = entry.target;
+        if (entry.isIntersecting) {
+          slot.dataset.near = '1';
+          draw(slot).catch((error) => post('error:' + (error && error.message)));
+        } else {
+          delete slot.dataset.near;
+          drop(slot);
+        }
+      }),
+      { rootMargin: '150% 0px' },
+    );
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const slot = document.createElement('div');
+      slot.className = 'page';
+      slot.dataset.n = String(n);
+      slot.style.aspectRatio = first.width + ' / ' + first.height;
+      pages.appendChild(slot);
+      near.observe(slot);
     }
   } catch (error) {
-    window.ReactNativeWebView.postMessage('error:' + (error && error.message));
+    post('error:' + (error && error.message));
   }
 })();
 </script></body></html>`;
+}
+
+/** Android's half: the downloaded file read into the page that draws it. */
+function useAndroidPdf(file: string | null): { html: string | null; error: string | null } {
+  const theme = useTheme();
+  const [base64, setBase64] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file || Platform.OS !== 'android') return;
+    let live = true;
+    setBase64(null);
+    setError(null);
+    FileSystem.readAsStringAsync(file, { encoding: FileSystem.EncodingType.Base64 })
+      .then((read) => live && setBase64(read))
+      .catch(() => live && setError('The file could not be read.'));
+    return () => {
+      live = false;
+    };
+  }, [file]);
+  return {
+    html: base64 ? pdfPage(base64, theme.background, theme.foreground) : null,
+    error,
+  };
 }
 
 export default function DocumentScreen() {
@@ -115,6 +194,13 @@ export default function DocumentScreen() {
 
   const data = file.data;
   const shareUrl = data && (data.kind === 'image' || data.kind === 'other') ? data.url : null;
+  const pdfFile = data?.kind === 'pdf' ? data.file : null;
+  const android = useAndroidPdf(pdfFile);
+  // The downloaded copy is the screen's alone: gone with it, and with each fresh download.
+  useEffect(() => {
+    if (!pdfFile) return;
+    return () => void FileSystem.deleteAsync(pdfFile, { idempotent: true }).catch(() => undefined);
+  }, [pdfFile]);
 
   const retry = () => {
     setRenderError(null);
@@ -190,23 +276,37 @@ export default function DocumentScreen() {
         </ScrollView>
       ) : data.kind === 'pdf' ? (
         <View style={{ flex: 1 }}>
-          <WebView
-            originWhitelist={['*']}
-            source={{
-              html: pdfPage(data.base64, theme.background, theme.foreground),
-              baseUrl: 'https://cdnjs.cloudflare.com/',
-            }}
-            style={{ flex: 1, backgroundColor: theme.background }}
-            onMessage={(event) => {
-              const message = event.nativeEvent.data;
-              setRendering(false);
-              if (message.startsWith('error:')) {
-                setRenderError(`This PDF could not be shown. ${message.slice(6)}`);
-              }
-            }}
-            // A viewer, not a browser: a tapped link inside it goes nowhere.
-            onShouldStartLoadWithRequest={(request) => request.navigationType !== 'click'}
-          />
+          {Platform.OS === 'ios' ? (
+            // The file itself, drawn by WebKit's own PDF view: native zoom, search and selection.
+            <WebView
+              originWhitelist={['*']}
+              source={{ uri: data.file }}
+              allowingReadAccessToURL={FileSystem.cacheDirectory ?? undefined}
+              style={{ flex: 1, backgroundColor: theme.background }}
+              onLoadEnd={() => setRendering(false)}
+              onError={() => setRenderError('This PDF could not be shown.')}
+              onShouldStartLoadWithRequest={(request) => request.navigationType !== 'click'}
+            />
+          ) : android.html ? (
+            <WebView
+              originWhitelist={['*']}
+              source={{ html: android.html, baseUrl: 'https://cdnjs.cloudflare.com/' }}
+              style={{ flex: 1, backgroundColor: theme.background }}
+              onMessage={(event) => {
+                const message = event.nativeEvent.data;
+                setRendering(false);
+                if (message.startsWith('error:')) {
+                  setRenderError(`This PDF could not be shown. ${message.slice(6)}`);
+                }
+              }}
+              // A viewer, not a browser: a tapped link inside it goes nowhere.
+              onShouldStartLoadWithRequest={(request) => request.navigationType !== 'click'}
+            />
+          ) : android.error ? (
+            <Text style={[typeScale.caption, styles.centered, { color: theme.destructive }]}>
+              {android.error}
+            </Text>
+          ) : null}
           {rendering ? (
             <View
               pointerEvents="none"

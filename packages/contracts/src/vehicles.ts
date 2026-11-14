@@ -184,6 +184,8 @@ export type VehicleTypeDescriptor = Static<typeof VehicleTypeDescriptor>;
 
 export const RequestPhotoUpload = Type.Object(
   {
+    /** Chosen by the client, so a replayed offline upload lands on the photo it already made. */
+    id: ClientId,
     filename: Type.String({ minLength: 1, maxLength: 255 }),
     mimeType: Type.String({ pattern: '^image/(jpeg|png|webp|heic|heif|avif)$' }),
     sizeBytes: Type.Integer({ minimum: 1, maximum: 25 * 1024 * 1024 }),

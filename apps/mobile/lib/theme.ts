@@ -1,5 +1,6 @@
 import { composite, DARK_TOKENS, LIGHT_TOKENS, oklchToHex, toNativeTokens } from '@vehicle-os/ui';
-import { StyleSheet, useColorScheme, type TextStyle } from 'react-native';
+import { StyleSheet, type TextStyle } from 'react-native';
+import { useScheme } from './appearance';
 
 /**
  * The phone's half of "Precision / Editorial", the web's design system.
@@ -42,7 +43,8 @@ const LIGHT: Theme = {
   // Lighter than the web's muted (0.925), to sit softly on the white page (user asked).
   muted: oklchToHex('oklch(0.96 0.006 78)'),
   card: resting(LIGHT_TOKENS),
-  cardRaised: SHARED_LIGHT.card,
+  // Raised surfaces are the page's own solid white (user asked); a hairline and a shadow lift them.
+  cardRaised: '#ffffff',
   hairline: 'rgba(40,30,20,0.08)',
   rim: 'rgba(255,255,255,0.9)',
   scrim: 'rgba(28,22,16,0.38)',
@@ -52,7 +54,8 @@ const LIGHT: Theme = {
 };
 
 export function useTheme(): Theme {
-  return useColorScheme() === 'light' ? LIGHT : DARK;
+  // The person's choice from Settings, else the phone's.
+  return useScheme() === 'light' ? LIGHT : DARK;
 }
 
 /** A 4pt grid — the web's Tailwind spacing, in points. */

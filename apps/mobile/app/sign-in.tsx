@@ -1,7 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -11,12 +10,12 @@ import {
   Text,
   TextInput,
   View,
-  useColorScheme,
   type TextInputProps,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import logoTextLight from '@/assets/logo-text-light.png';
 import logoText from '@/assets/logo-text.png';
+import { useScheme } from '@/lib/appearance';
 import { signIn, signUp, useSession } from '@/lib/auth';
 import { Eyebrow, Segmented } from '@/lib/instrument';
 import { haptic, Rise, useReduceMotion } from '@/lib/motion';
@@ -30,11 +29,11 @@ import { Button, Ground } from '@/lib/ui';
  */
 export default function SignInScreen() {
   const theme = useTheme();
-  const scheme = useColorScheme();
+  const scheme = useScheme();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
   const queryClient = useQueryClient();
-  const { refresh } = useSession();
+  // Sent here by the server ending the session, rather than by signing out: say so.
+  const { ended } = useSession();
 
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [name, setName] = useState('');
@@ -42,24 +41,28 @@ export default function SignInScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Return on each field moves to the next, as a native form does; the last one submits.
+  const emailField = useRef<TextInput>(null);
+  const passwordField = useRef<TextInput>(null);
 
   const signingUp = mode === 'sign-up';
   const shortPassword = signingUp && password.length > 0 && password.length < 12;
 
   const submit = async () => {
+    // The keyboard's Go and the button are two ways to press once.
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
+      /*
+       * The cache is persisted to disk and survives a sign-out, so it is cleared on the way in —
+       * before the session lands, because the moment it does the gate opens the garage, and the
+       * next person on this device would see the previous one's until it refetched.
+       */
+      queryClient.clear();
       if (signingUp) await signUp({ name: name.trim(), email: email.trim(), password });
       else await signIn({ email: email.trim(), password });
       haptic.success();
-      /*
-       * The cache is persisted to disk and survives a sign-out, so it is cleared on the way in —
-       * otherwise the next person on this device sees the previous one's garage until it refetches.
-       */
-      queryClient.clear();
-      await refresh();
-      router.replace('/');
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -126,26 +129,39 @@ export default function SignInScreen() {
                 value={name}
                 onChangeText={setName}
                 autoCapitalize="words"
+                autoComplete="name"
                 textContentType="name"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => emailField.current?.focus()}
                 placeholder="Alex Morgan"
               />
             ) : null}
             <Input
               label="Email"
+              inputRef={emailField}
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="email-address"
+              // `autoComplete` is what Android's autofill (and Google Password Manager) reads;
+              // `textContentType` is iOS's keychain.
+              autoComplete="email"
               textContentType="emailAddress"
+              returnKeyType="next"
+              submitBehavior="submit"
+              onSubmitEditing={() => passwordField.current?.focus()}
               placeholder="you@example.com"
             />
             <Input
               label="Password"
+              inputRef={passwordField}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
-              // `newPassword` on sign-up, so the keychain offers to generate one.
+              // A new one on sign-up, so the password manager offers to generate and save it.
+              autoComplete={signingUp ? 'new-password' : 'current-password'}
               textContentType={signingUp ? 'newPassword' : 'password'}
               placeholder={signingUp ? 'At least 12 characters' : '••••••••••••'}
               note={
@@ -159,6 +175,18 @@ export default function SignInScreen() {
               returnKeyType="go"
             />
           </View>
+
+          {ended === 'expired' && !error ? (
+            <View style={[styles.error, { backgroundColor: theme.card }]}>
+              <Text
+                accessibilityRole="alert"
+                style={[typeScale.caption, { color: theme.foreground }]}
+              >
+                Your session ended. Sign in again — anything saved on this phone is still waiting to
+                be sent.
+              </Text>
+            </View>
+          ) : null}
 
           {error ? (
             <View style={[styles.error, { backgroundColor: theme.destructiveSoft }]}>
@@ -185,7 +213,12 @@ export default function SignInScreen() {
 }
 
 /** A field as a panel row: the label as an eyebrow over what is typed. */
-function Input({ label, note, ...props }: TextInputProps & { label: string; note?: string }) {
+function Input({
+  label,
+  note,
+  inputRef,
+  ...props
+}: TextInputProps & { label: string; note?: string; inputRef?: Ref<TextInput> }) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   return (
@@ -196,6 +229,7 @@ function Input({ label, note, ...props }: TextInputProps & { label: string; note
       />
       <Eyebrow>{label}</Eyebrow>
       <TextInput
+        ref={inputRef}
         placeholderTextColor={theme.borderStrong}
         accessibilityLabel={label}
         accessibilityHint={note}

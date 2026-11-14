@@ -20,6 +20,7 @@ import { localDay } from '@vehicle-os/ui';
 import { Fact, Rail } from '@/components/add-kit';
 import { api } from '@/lib/api';
 import { DateField } from '@/lib/date-picker';
+import { useDiscardGuard } from '@/lib/discard';
 import {
   fromParams,
   pickFile,
@@ -27,7 +28,7 @@ import {
   type FileParams,
   type PickedFile,
 } from '@/lib/file-picker';
-import { humanise } from '@/lib/format';
+import { DATE_LOCALE, humanise } from '@/lib/format';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
 import { enqueueUpload, flush } from '@/lib/offline';
 import { addMonths, countdown, validity } from '@/lib/papers';
@@ -67,7 +68,11 @@ const kindName = (type: DocumentType) =>
 const term = (months: number) =>
   months % 12 === 0 ? `${months / 12} year${months === 12 ? '' : 's'}` : `${months} months`;
 
-const DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const DAY = new Intl.DateTimeFormat(DATE_LOCALE, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
 const dayOf = (iso: string) => DAY.format(new Date(`${iso}T00:00:00`));
 
 function fileSize(bytes: number | null | undefined): string | null {
@@ -106,8 +111,10 @@ export default function AddDocumentScreen() {
   const [issued, setIssued] = useState('');
   const [until, setUntil] = useState('');
   // A photo taken from the add sheet arrives already chosen.
-  const [file, setFile] = useState<PickedFile | null>(() => fromParams(params));
+  const [arrived] = useState(() => fromParams(params));
+  const [file, setFile] = useState<PickedFile | null>(arrived);
   const [pickError, setPickError] = useState<string | null>(null);
+  const release = useDiscardGuard(Boolean(title.trim() || issued || until) || file !== arrived);
 
   const list = vehicles.data?.data ?? [];
   const chosen = vehicleId ?? list[0]?.id ?? null;
@@ -164,6 +171,7 @@ export default function AddDocumentScreen() {
       void queryClient.invalidateQueries({ queryKey: ['vehicles'] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      release();
       router.back();
     },
   });
@@ -426,7 +434,9 @@ function DateCell({
           scaleTo={0.97}
           style={styles.dateCell}
         >
-          <Text style={[styles.label, { color: theme.mutedForeground }]}>{label.toUpperCase()}</Text>
+          <Text style={[styles.label, { color: theme.mutedForeground }]}>
+            {label.toUpperCase()}
+          </Text>
           <Text
             numberOfLines={1}
             style={[
@@ -547,7 +557,13 @@ const styles = StyleSheet.create({
   divider: { width: StyleSheet.hairlineWidth },
   dateCell: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, gap: 4 },
   dateValue: { fontSize: 14.5, lineHeight: 19, fontWeight: '600' },
-  terms: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 14, paddingBottom: 12 },
+  terms: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+  },
   readBackColumn: { gap: 8, paddingHorizontal: 14, paddingVertical: 12 },
   readBack: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   readBackPad: { paddingHorizontal: 14, paddingVertical: 12 },

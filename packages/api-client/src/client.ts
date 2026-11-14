@@ -144,6 +144,22 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A request the server did not answer in time. Not an `ApiError`: nothing was refused, so a
+ * caller that retries on a network failure (the phone's offline queue) retries this too.
+ */
+export class RequestTimeoutError extends Error {
+  constructor() {
+    super('The server took too long to answer. Check your connection and try again.');
+    this.name = 'RequestTimeoutError';
+  }
+}
+
+/** Long enough for a slow mobile network, short enough that a dead one is noticed. */
+const DEFAULT_TIMEOUT_MS = 30_000;
+/** Reading a photo or answering a question goes through a model, which takes its time. */
+const AI_TIMEOUT_MS = 90_000;
+
 export interface ClientOptions {
   readonly baseUrl: string;
   /**
@@ -152,17 +168,43 @@ export interface ClientOptions {
    */
   readonly getAuthHeader?: () => Promise<Record<string, string>> | Record<string, string>;
   readonly fetch?: typeof fetch;
+  /**
+   * How long a request may take, body included. Neither `fetch` gives up on its own: React
+   * Native's Android stack has no read timeout at all, so one stalled request in a car park
+   * would hold everything queued behind it until the app restarted.
+   */
+  readonly timeoutMs?: number;
 }
 
 export function createApiClient(options: ClientOptions) {
   const doFetch = options.fetch ?? globalThis.fetch;
   const base = options.baseUrl.replace(/\/$/, '');
 
+  /** `fetch`, given up on after `timeoutMs` — the body's arrival included, via `read`. */
+  async function timed<T>(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    read: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await read(await doFetch(url, { ...init, signal: controller.signal }));
+    } catch (error) {
+      if (controller.signal.aborted) throw new RequestTimeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function request<T>(
     method: string,
     path: string,
     body?: unknown,
     query?: Record<string, string | number | undefined | string[]>,
+    timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   ): Promise<T> {
     const url = new URL(`${base}/api/v1${path}`);
     for (const [key, value] of Object.entries(query ?? {})) {
@@ -172,22 +214,28 @@ export function createApiClient(options: ClientOptions) {
       else url.searchParams.set(key, String(value));
     }
 
-    const response = await doFetch(url.toString(), {
-      method,
-      headers: {
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-        ...(await options.getAuthHeader?.()),
+    const headers = {
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(await options.getAuthHeader?.()),
+    };
+    return timed(
+      url.toString(),
+      {
+        method,
+        headers,
+        // Session cookies are cross-origin from the web app (:3000 to :3001), so they only
+        // travel with credentials included — and the API's CORS config names that origin.
+        credentials: 'include',
+        body: body === undefined ? undefined : JSON.stringify(body),
       },
-      // Session cookies are cross-origin from the web app (:3000 to :3001), so they only
-      // travel with credentials included — and the API's CORS config names that origin.
-      credentials: 'include',
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-
-    if (!response.ok) throw await ApiError.fromResponse(response);
-    // 204 has no body; parsing it would throw on a perfectly successful delete.
-    if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+      timeoutMs,
+      async (response) => {
+        if (!response.ok) throw await ApiError.fromResponse(response);
+        // 204 has no body; parsing it would throw on a perfectly successful delete.
+        if (response.status === 204) return undefined as T;
+        return (await response.json()) as T;
+      },
+    );
   }
 
   /**
@@ -207,15 +255,19 @@ export function createApiClient(options: ClientOptions) {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
 
-    const response = await doFetch(url.toString(), {
-      headers: { ...(await options.getAuthHeader?.()) },
-      credentials: 'include',
-    });
-    if (!response.ok) throw await ApiError.fromResponse(response);
-
-    const disposition = response.headers.get('content-disposition') ?? '';
-    const named = /filename="([^"]+)"/.exec(disposition);
-    return { blob: await response.blob(), filename: named?.[1] ?? 'export' };
+    const headers = { ...(await options.getAuthHeader?.()) };
+    // An export is a whole garage's history: more time than a record, but still an end.
+    return timed(
+      url.toString(),
+      { headers, credentials: 'include' },
+      (options.timeoutMs ?? DEFAULT_TIMEOUT_MS) * 4,
+      async (response) => {
+        if (!response.ok) throw await ApiError.fromResponse(response);
+        const disposition = response.headers.get('content-disposition') ?? '';
+        const named = /filename="([^"]+)"/.exec(disposition);
+        return { blob: await response.blob(), filename: named?.[1] ?? 'export' };
+      },
+    );
   }
 
   return {
@@ -225,6 +277,8 @@ export function createApiClient(options: ClientOptions) {
     users: {
       me: () => request<UserProfile>('GET', '/users/me'),
       updateMe: (body: UpdateUserProfile) => request<UserProfile>('PATCH', '/users/me', body),
+      /** Cancels a live subscription, deletes the garages this account owns, then the account. */
+      deleteMe: () => request<void>('DELETE', '/users/me'),
       capabilities: () =>
         request<{ garages: Record<string, string[]> }>('GET', '/users/me/capabilities'),
       /** Plan, entitlements, ceilings and usage — what the upgrade walls and settings read. */
@@ -412,8 +466,14 @@ export function createApiClient(options: ClientOptions) {
           cursor: query?.cursor,
           expiringOnly: query?.expiringOnly === undefined ? undefined : String(query.expiringOnly),
         }),
-      requestUpload: (vehicleId: string, file: { name: string; type: string; size: number }) =>
+      requestUpload: (
+        vehicleId: string,
+        file: { name: string; type: string; size: number },
+        /** A client-chosen id: asking again with it returns the same document. */
+        id?: string,
+      ) =>
         request<DocumentUploadTicket>('POST', `/vehicles/${vehicleId}/documents/upload-url`, {
+          ...(id ? { id } : {}),
           filename: file.name,
           mimeType: file.type,
           sizeBytes: file.size,
@@ -513,16 +573,18 @@ export function createApiClient(options: ClientOptions) {
      * is a normal authenticated call — there is no separate AI credential on the client.
      */
     ai: {
-      ask: (body: AskQuestion) => request<AiAnswer>('POST', '/ai/ask', body),
+      ask: (body: AskQuestion) =>
+        request<AiAnswer>('POST', '/ai/ask', body, undefined, AI_TIMEOUT_MS),
       models: () => request<AiModels>('GET', '/ai/models'),
       /** Reads a description of a vehicle into the add form's fields. Writes nothing. */
       draftVehicle: (body: DraftVehicle) =>
-        request<VehicleDraft>('POST', '/ai/vehicle-draft', body),
+        request<VehicleDraft>('POST', '/ai/vehicle-draft', body, undefined, AI_TIMEOUT_MS),
       /** Searches for the factory specs of a vehicle already identified. Writes nothing. */
       lookUpVehicle: (body: LookUpVehicle) =>
-        request<VehicleLookup>('POST', '/ai/vehicle-lookup', body),
+        request<VehicleLookup>('POST', '/ai/vehicle-lookup', body, undefined, AI_TIMEOUT_MS),
       /** Reads a receipt or a dashboard photo into a quick entry's fields. Writes nothing. */
-      draftEntry: (body: DraftEntry) => request<EntryDraft>('POST', '/ai/entry-draft', body),
+      draftEntry: (body: DraftEntry) =>
+        request<EntryDraft>('POST', '/ai/entry-draft', body, undefined, AI_TIMEOUT_MS),
     },
 
     /** Personal API keys for scripts and AI clients. Creating and revoking need a session. */
@@ -569,8 +631,14 @@ export function createApiClient(options: ClientOptions) {
 
     photos: {
       list: (vehicleId: string) => request<VehiclePhoto[]>('GET', `/vehicles/${vehicleId}/photos`),
-      requestUpload: (vehicleId: string, file: { name: string; type: string; size: number }) =>
+      requestUpload: (
+        vehicleId: string,
+        file: { name: string; type: string; size: number },
+        /** A client-chosen id: asking again with it returns the same photo. */
+        id?: string,
+      ) =>
         request<PhotoUploadTicket>('POST', `/vehicles/${vehicleId}/photos/upload-url`, {
+          ...(id ? { id } : {}),
           filename: file.name,
           mimeType: file.type,
           sizeBytes: file.size,

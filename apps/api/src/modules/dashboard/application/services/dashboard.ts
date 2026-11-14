@@ -24,6 +24,7 @@ import { serializeDocument } from '../../../documents/http/serializers/document-
 import { computeHealth } from '../../../health/domain/health';
 import { freshStandings, latestByCategory } from '../../../condition/domain/condition';
 import { formatMoney } from '../../domain/briefing';
+import { primaryCurrency, type CategorySum } from '../../../expenses/domain/cost';
 
 const STATUS_ORDER = { OVERDUE: 0, DUE_SOON: 1, OK: 2, UNSCHEDULED: 3 } as const;
 
@@ -77,6 +78,7 @@ export async function buildDashboard(
         recalls: [],
         total: 0,
       },
+      vehicleSpend: {},
       recentActivity: [],
       briefing: ['Create a garage to start keeping a vehicle’s history.'],
     };
@@ -98,6 +100,7 @@ export async function buildDashboard(
     conditionRows,
     valuationRows,
     recallRows,
+    garageRows,
   ] = await Promise.all([
     db
       .select()
@@ -122,6 +125,7 @@ export async function buildDashboard(
       ),
     db
       .select({
+        vehicleId: schema.expenses.vehicleId,
         amountMinor: schema.expenses.amountMinor,
         currency: schema.expenses.currency,
         category: schema.expenses.category,
@@ -192,6 +196,10 @@ export async function buildDashboard(
           )
           .orderBy(desc(schema.notifications.createdAt))
       : Promise.resolve([]),
+    db
+      .select({ id: schema.garages.id, defaultCurrency: schema.garages.defaultCurrency })
+      .from(schema.garages)
+      .where(inArray(schema.garages.id, ids)),
   ]);
 
   const nameOf = (vehicle: {
@@ -354,6 +362,34 @@ export async function buildDashboard(
   const running = expenses.filter((expense) => expense.category !== 'PURCHASE');
   const ownershipCost = sumSameCurrency([...purchasePrices, ...running]);
 
+  /*
+   * What each vehicle has cost to run, lifetime, for the cards on the phone's home screen —
+   * from the rows already loaded here, so a garage of a hundred vehicles is one request, not a
+   * hundred. The currency is the one its cost summary picks (`primaryCurrency`); spend in any
+   * other currency is left out, as that summary's strict figure leaves it out.
+   */
+  const currencyOf = new Map(garageRows.map((garage) => [garage.id, garage.defaultCurrency]));
+  const sumsOf = new Map<string, CategorySum[]>();
+  for (const expense of expenses) {
+    const sums = sumsOf.get(expense.vehicleId) ?? [];
+    sums.push({ ...expense, count: 1 });
+    sumsOf.set(expense.vehicleId, sums);
+  }
+  const vehicleSpend: Record<string, { amountMinor: number; currency: string }> = {};
+  for (const vehicle of vehicles) {
+    const sums = sumsOf.get(vehicle.id) ?? [];
+    const currency = primaryCurrency(
+      { lifetimeSums: sums, purchasePriceCurrency: vehicle.purchasePriceCurrency },
+      currencyOf.get(vehicle.garageId) ?? 'USD',
+    );
+    vehicleSpend[vehicle.id] = {
+      amountMinor: sums
+        .filter((sum) => sum.currency === currency && sum.category !== 'PURCHASE')
+        .reduce((total, sum) => total + sum.amountMinor, 0),
+      currency,
+    };
+  }
+
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const spentThisMonth = sumSameCurrency(
     running.filter((expense) => expense.occurredAt >= monthStart),
@@ -402,6 +438,7 @@ export async function buildDashboard(
       averageHealth,
       worstVehicle,
     },
+    vehicleSpend,
     attention: {
       maintenance: maintenance.slice(0, 6),
       documents: documents.slice(0, 6),

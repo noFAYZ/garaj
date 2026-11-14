@@ -1,3 +1,4 @@
+import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from './harness';
 
@@ -25,6 +26,23 @@ describe('GET /api/v1/health', () => {
   it('echoes the request id, so a user-reported error maps to a log line', async () => {
     const response = await context.app.inject({ method: 'GET', url: '/api/v1/health' });
     expect(response.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('compresses a large response for a client that accepts it, and leaves a small one alone', async () => {
+    const large = await context.app.inject({
+      method: 'GET',
+      url: '/docs/json',
+      headers: { 'accept-encoding': 'gzip' },
+    });
+    expect(large.headers['content-encoding']).toBe('gzip');
+    expect(JSON.parse(gunzipSync(large.rawPayload).toString())).toHaveProperty('openapi');
+
+    const small = await context.app.inject({
+      method: 'GET',
+      url: '/api/v1/health',
+      headers: { 'accept-encoding': 'gzip' },
+    });
+    expect(small.headers['content-encoding']).toBeUndefined();
   });
 
   it('answers an unknown route in the standard error envelope', async () => {

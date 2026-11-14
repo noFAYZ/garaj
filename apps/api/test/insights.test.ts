@@ -236,6 +236,24 @@ describe('search, health and the dashboard', () => {
       expect(body.briefing.length).toBeGreaterThan(0);
     });
 
+    it("gives each vehicle's running spend, matching its own cost summary", async () => {
+      const client = as(context, alice);
+      const dashboard = (await client.get('/api/v1/dashboard')).body as {
+        vehicleSpend: Record<string, { amountMinor: number; currency: string }>;
+      };
+      const cost = (await client.get(`/api/v1/vehicles/${vehicleId}/cost`)).body as {
+        currency: string;
+        ownershipCost: { amountMinor: number };
+        purchasePrice: { amountMinor: number } | null;
+      };
+
+      expect(dashboard.vehicleSpend[vehicleId]).toEqual({
+        amountMinor: cost.ownershipCost.amountMinor - (cost.purchasePrice?.amountMinor ?? 0),
+        currency: cost.currency,
+      });
+      expect(dashboard.vehicleSpend[vehicleId]!.amountMinor).toBeGreaterThan(0);
+    });
+
     it('writes the briefing as sentences a person can read', async () => {
       const briefing = (await as(context, alice).get('/api/v1/dashboard')).body as {
         briefing: string[];

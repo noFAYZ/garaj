@@ -6,6 +6,36 @@ export function humanise(value: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
+/**
+ * The locale every date is written in: English, as the app is, ordered the way this phone's
+ * region writes dates — `2 Oct` and a 24-hour clock in London or Berlin, `Oct 2` and 12-hour in
+ * New York. The phone's own language is not used: a German weekday beside "Yesterday" would be
+ * two languages in one line.
+ */
+export const DATE_LOCALE: string = (() => {
+  try {
+    const device = new Intl.DateTimeFormat().resolvedOptions().locale;
+    const region = device.split('-').find((part, index) => index > 0 && /^[A-Z]{2}$/.test(part));
+    if (!region) return 'en-US';
+    const candidate = `en-${region}`;
+    return new Intl.DateTimeFormat(candidate).resolvedOptions().locale.startsWith('en')
+      ? candidate
+      : 'en-US';
+  } catch {
+    return 'en-US';
+  }
+})();
+
+/** Whether this region reads the time on a 12-hour clock. */
+export const TWELVE_HOUR: boolean = (() => {
+  try {
+    const options = new Intl.DateTimeFormat(DATE_LOCALE, { hour: 'numeric' }).resolvedOptions();
+    return options.hourCycle ? options.hourCycle.startsWith('h1') : options.hour12 === true;
+  } catch {
+    return false;
+  }
+})();
+
 /*
  * `Intl` formatters are expensive to build and these run once per row in every list, so each
  * is built once. `toLocaleString` builds a fresh one internally on every call.

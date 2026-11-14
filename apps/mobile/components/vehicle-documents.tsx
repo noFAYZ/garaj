@@ -10,7 +10,7 @@ import { documentsQuery } from '@vehicle-os/api-client/react';
 import { spanOfDays } from '@vehicle-os/ui';
 import { RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
-import { humanise } from '@/lib/format';
+import { DATE_LOCALE, humanise } from '@/lib/format';
 import { SectionHeading } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
 import { countdown, current, urgency, validity, type PaperState } from '@/lib/papers';
@@ -53,8 +53,12 @@ const KEY_DOCUMENTS: { type: DocumentType; label: string }[] = [
 ];
 const KEY_TYPES = new Set(KEY_DOCUMENTS.map((key) => key.type));
 
-const DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-const MONTH_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' });
+const DAY = new Intl.DateTimeFormat(DATE_LOCALE, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
+const MONTH_YEAR = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', year: 'numeric' });
 const dayOf = (iso: string) => DAY.format(new Date(`${iso}T00:00:00`));
 
 /** "expires in 3 days", "expires today", "expired yesterday". */
@@ -94,7 +98,10 @@ const extension = (document: VehicleDocument) =>
  * The papers that want attention, counted as the page shows them — run out, or running out — and
  * not an older paper of a key kind that a newer one has replaced. The dock's count on Docs.
  */
-export function pressingPapers(list: readonly VehicleDocument[]): { expired: number; soon: number } {
+export function pressingPapers(list: readonly VehicleDocument[]): {
+  expired: number;
+  soon: number;
+} {
   const standing = new Set(
     KEY_DOCUMENTS.map(({ type }) => current(list.filter((item) => item.documentType === type))?.id),
   );
@@ -301,7 +308,11 @@ function Summary({ keys }: { keys: KeyPaper[] }) {
                 cy={centre}
                 r={r}
                 fill="none"
-                stroke={key.state ? stateColor(theme, key.state === 'open' ? 'valid' : key.state) : theme.border}
+                stroke={
+                  key.state
+                    ? stateColor(theme, key.state === 'open' ? 'valid' : key.state)
+                    : theme.border
+                }
                 strokeWidth={STROKE}
                 strokeLinecap="round"
                 strokeDasharray={`${dash} ${circumference - dash}`}
@@ -343,7 +354,9 @@ function Pass({ vehicleId, paper }: { vehicleId: string; paper: KeyPaper }) {
   const count = paper.days === null ? null : countdown(paper.days);
   const past = paper.days !== null && paper.days < 0;
   const named =
-    document.title.trim().toLowerCase() !== paper.label.toLowerCase() ? document.title.trim() : null;
+    document.title.trim().toLowerCase() !== paper.label.toLowerCase()
+      ? document.title.trim()
+      : null;
   const line = stateLine(state, document.expiresOn);
 
   return (
@@ -369,7 +382,11 @@ function Pass({ vehicleId, paper }: { vehicleId: string; paper: KeyPaper }) {
       style={[styles.pass, cardSurface(theme)]}
     >
       <View style={styles.passTop}>
-        <Ionicons name={DOC_ICON[paper.type] ?? 'document-outline'} size={22} color={theme.foreground} />
+        <Ionicons
+          name={DOC_ICON[paper.type] ?? 'document-outline'}
+          size={22}
+          color={theme.foreground}
+        />
         <View style={styles.passText}>
           <View style={styles.nameLine}>
             <Text numberOfLines={1} style={[styles.passName, { color: theme.foreground }]}>
@@ -435,7 +452,15 @@ function Pass({ vehicleId, paper }: { vehicleId: string; paper: KeyPaper }) {
 }
 
 /** A key paper not on file: a dashed slot, one press from the add screen already set to it. */
-function Slot({ vehicleId, type, label }: { vehicleId: string; type: DocumentType; label: string }) {
+function Slot({
+  vehicleId,
+  type,
+  label,
+}: {
+  vehicleId: string;
+  type: DocumentType;
+  label: string;
+}) {
   const theme = useTheme();
   const router = useRouter();
   return (
@@ -450,7 +475,11 @@ function Slot({ vehicleId, type, label }: { vehicleId: string; type: DocumentTyp
       scaleTo={0.98}
       style={[styles.slot, { borderColor: theme.borderStrong }]}
     >
-      <Ionicons name={DOC_ICON[type] ?? 'document-outline'} size={22} color={theme.mutedForeground} />
+      <Ionicons
+        name={DOC_ICON[type] ?? 'document-outline'}
+        size={22}
+        color={theme.mutedForeground}
+      />
       <Text numberOfLines={1} style={[styles.passName, { flex: 1, color: theme.mutedForeground }]}>
         {label}
       </Text>
@@ -483,7 +512,11 @@ function PaperRow({
   const when = MONTH_YEAR.format(
     new Date(document.issuedOn ? `${document.issuedOn}T00:00:00` : document.createdAt),
   );
-  const facts = [humanise(document.documentType), replaced ? 'Replaced' : when, fileSize(document.sizeBytes)];
+  const facts = [
+    humanise(document.documentType),
+    replaced ? 'Replaced' : when,
+    fileSize(document.sizeBytes),
+  ];
 
   return (
     <PressableScale
@@ -495,7 +528,11 @@ function PaperRow({
         });
       }}
       accessibilityRole="button"
-      accessibilityLabel={[document.title, ...facts, pressing ? stateLine(status.state, document.expiresOn) : null]
+      accessibilityLabel={[
+        document.title,
+        ...facts,
+        pressing ? stateLine(status.state, document.expiresOn) : null,
+      ]
         .filter(Boolean)
         .join(', ')}
       accessibilityHint="Opens the file"
@@ -527,7 +564,9 @@ function PaperRow({
       </View>
       {pressing ? (
         <Text style={[styles.rowState, { color: stateColor(theme, status.state) }]}>
-          {status.state === 'expired' ? 'Expired' : `${countdown(status.days!).value} ${countdown(status.days!).unit} left`}
+          {status.state === 'expired'
+            ? 'Expired'
+            : `${countdown(status.days!).value} ${countdown(status.days!).unit} left`}
         </Text>
       ) : (
         <Ionicons name="chevron-forward" size={16} color={theme.mutedForeground} />

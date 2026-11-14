@@ -19,6 +19,8 @@ const store = new Map<string, string>();
 const kept = new Set<string>();
 
 vi.mock('./local-files', () => ({
+  keptPath: (name: string) => name,
+  keptFileExists: (name: string) => Promise.resolve(kept.has(name)),
   keepLocally: (_uri: string, id: string) => {
     const path = `/kept/${id}`;
     kept.add(path);
@@ -84,7 +86,7 @@ vi.mock('./api', () => ({
   },
 }));
 
-const { clearQueue, discard, enqueue, enqueueUpload, flush, keptFiles, pendingCount } =
+const { clearQueue, discard, enqueue, enqueueUpload, flush, keptFiles, onSynced, pendingCount } =
   await import('./offline');
 
 /** The queue ids of everything holding a file, so a test can discard one by id. */
@@ -350,6 +352,69 @@ describe('flush', () => {
   });
 
   /** An app that cannot start until someone clears its storage is worse than a lost entry. */
+  /*
+   * An entry that fails for a reason that is not the network — storage refusing the bytes, a bug
+   * — used to sit at the head of the queue for ever, holding back everything recorded after it.
+   */
+  it('sets aside an entry that keeps failing for no network reason, then sends the rest', async () => {
+    createEvent.mockRejectedValueOnce(new Error('Upload failed with status 403'));
+    createEvent.mockRejectedValueOnce(new Error('Upload failed with status 403'));
+    createEvent.mockRejectedValueOnce(new Error('Upload failed with status 403'));
+    createEvent.mockResolvedValue({});
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Stuck' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Behind it' } });
+
+    // Two runs keep it, in order: it might yet go.
+    expect(await flush()).toEqual({ sent: 0, failed: 0, remaining: 2 });
+    expect(await flush()).toEqual({ sent: 0, failed: 0, remaining: 2 });
+    // The third sets it aside, with the reason, and the next entry goes.
+    expect(await flush()).toEqual({ sent: 1, failed: 1, remaining: 0 });
+  });
+
+  it('marks an upload whose bytes are gone as failed at once, without blocking the rest', async () => {
+    kept.clear();
+    await enqueueUpload({
+      kind: 'upload',
+      target: 'photo',
+      vehicleId: 'v1',
+      uri: 'file:///cache/gone.jpg',
+      name: 'gone.jpg',
+      mimeType: 'image/jpeg',
+      size: 10,
+      body: {},
+    });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'After' } });
+    // The OS, or an old app's path, lost the copy.
+    kept.clear();
+    createEvent.mockResolvedValue({});
+
+    expect(await flush()).toEqual({ sent: 1, failed: 1, remaining: 0 });
+  });
+
+  /*
+   * What a run tells the screens to refetch: the vehicles its writes were about, so a fill-up on
+   * one does not refetch every other vehicle's open screens — and everything once a write reaches
+   * past one vehicle (a task's status does not say whose it is).
+   */
+  it('names the vehicles a run touched, or none when one write reaches wider', async () => {
+    createEvent.mockResolvedValue({});
+    updateTask.mockResolvedValue({});
+    const heard: (ReadonlySet<string> | null)[] = [];
+    const stop = onSynced((vehicles) => heard.push(vehicles));
+
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
+    await enqueue({ kind: 'event', vehicleId: 'v2', body: { title: 'Two' } });
+    await flush();
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Three' } });
+    await enqueue({ kind: 'task-status', taskId: 't1', status: 'COMPLETED' });
+    await flush();
+    // Nothing sent, nothing heard.
+    await flush();
+    stop();
+
+    expect(heard).toEqual([new Set(['v1', 'v2']), null]);
+  });
+
   it('survives a corrupt queue rather than throwing', async () => {
     await clearQueue();
     store.set('vehicleos.pending-writes', '{not json');

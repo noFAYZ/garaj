@@ -60,6 +60,7 @@ export function BayStage({
   drive,
   drift,
   scene,
+  plain = false,
   style,
   children,
 }: {
@@ -83,6 +84,11 @@ export function BayStage({
   drive?: Animated.AnimatedInterpolation<number>;
   drift?: Animated.AnimatedInterpolation<number>;
   scene?: Animated.WithAnimatedValue<StyleProp<ViewStyle>>;
+  /**
+   * The vehicle on the page's own ground — no wall, floor, lines or light: only it and its shadow.
+   * For a vehicle's own page, where the vehicle is the subject and the room would be décor.
+   */
+  plain?: boolean;
   style?: StyleProp<ViewStyle>;
   children?: ReactNode;
 }) {
@@ -123,7 +129,7 @@ export function BayStage({
       style={[
         styles.stage,
         // The wall's own top colour, so a scene moved down inside its frame shows no seam.
-        { height, backgroundColor: theme.dark ? theme.background : theme.muted },
+        { height, backgroundColor: plain || theme.dark ? theme.background : theme.muted },
         style,
       ]}
     >
@@ -152,8 +158,8 @@ export function BayStage({
           </Animated.View>
         ) : (
           <View style={[styles.room, { top: inset, height: room }]}>
-            <Room id={id} width={width} height={room} lit={lit} />
-            {uri ? (
+            {plain ? null : <Room id={id} width={width} height={room} lit={lit} />}
+            {uri && !plain ? (
               // The reflection: the cutout, upside down under its wheels, in a glossy floor.
               <Animated.View
                 style={[
@@ -174,7 +180,7 @@ export function BayStage({
                 </View>
               </Animated.View>
             ) : null}
-            <Floor id={id} width={width} height={room} number={number} />
+            {plain ? null : <Floor id={id} width={width} height={room} number={number} />}
             {uri ? (
               <Animated.View
                 style={[

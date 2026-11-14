@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { DOCUMENT_TYPES } from '@vehicle-os/domain';
-import { IsoDate, IsoDateTime, Nullable, PaginationQuery, Uuid } from './common';
+import { ClientId, IsoDate, IsoDateTime, Nullable, PaginationQuery, Uuid } from './common';
 
 export const DocumentTypeSchema = Type.Union(DOCUMENT_TYPES.map((type) => Type.Literal(type)));
 
@@ -49,6 +49,8 @@ export type VehicleDocument = Static<typeof VehicleDocument>;
  */
 export const RequestDocumentUpload = Type.Object(
   {
+    /** Chosen by the client, so a replayed offline upload lands on the document it already made. */
+    id: ClientId,
     filename: Type.String({ minLength: 1, maxLength: 255 }),
     mimeType: Type.Union([
       Type.Literal('application/pdf'),

@@ -6,6 +6,7 @@ import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { queryKeys, vehiclesQuery } from '@vehicle-os/api-client/react';
 import { BrandLogo } from '@/components/brand-logo';
 import { api } from '@/lib/api';
+import { useDiscardGuard } from '@/lib/discard';
 import { enqueueUpload, flush } from '@/lib/offline';
 import { fromParams, type FileParams } from '@/lib/file-picker';
 import { Eyebrow, Segmented } from '@/lib/instrument';
@@ -28,6 +29,8 @@ export default function AddPhotoScreen() {
   const [vehicleId, setVehicleId] = useState<string | null>(params.vehicleId ?? null);
   const [caption, setCaption] = useState('');
   const [cover, setCover] = useState<'yes' | 'no'>('no');
+  // The photo was chosen to get here, and backing out is putting it down; a caption is typing.
+  const release = useDiscardGuard(caption.trim() !== '');
 
   const list = vehicles.data?.data ?? [];
   // One vehicle is the common case, and a choice with one answer is not asked.
@@ -58,6 +61,7 @@ export default function AddPhotoScreen() {
       haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.vehicles() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
+      release();
       router.replace({ pathname: '/vehicle/[id]', params: { id: chosen! } });
     },
   });

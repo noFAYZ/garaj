@@ -5,7 +5,6 @@ import {
   Image,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
   type StyleProp,
   type ViewStyle,
@@ -21,6 +20,7 @@ import {
 } from '@vehicle-os/domain';
 import logoTextLight from '@/assets/logo-text-light.png';
 import logoText from '@/assets/logo-text.png';
+import { useScheme } from '@/lib/appearance';
 import type { Tone } from '@/lib/instrument';
 import { useReduceMotion } from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -137,7 +137,7 @@ export function PlanPass({
   style?: StyleProp<ViewStyle>;
 }) {
   const theme = useTheme();
-  const scheme = useColorScheme();
+  const scheme = useScheme();
   const paid = plan.plan !== 'FREE';
   const ink = paid ? theme.primaryForeground : theme.foreground;
   // The wordmark that reads on this surface: an ink pass is light in the dark theme, and dark in the light one.

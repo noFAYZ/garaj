@@ -3,6 +3,8 @@
  * entry's day is said, and what a month spent.
  */
 
+import { DATE_LOCALE } from './format';
+
 type Money = { amountMinor: number; currency: string };
 export type Dated = {
   readonly occurredAt: string;
@@ -10,8 +12,8 @@ export type Dated = {
   readonly eventType?: string;
 };
 
-const SHORT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
-const WEEKDAY = new Intl.DateTimeFormat('en-US', { weekday: 'long' });
+const SHORT = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', day: 'numeric' });
+const WEEKDAY = new Intl.DateTimeFormat(DATE_LOCALE, { weekday: 'long' });
 const DAY_MS = 86_400_000;
 
 /**
@@ -60,7 +62,9 @@ export function sincePrevious<T extends Reading>(entry: T, sameKind: readonly T[
     if (when <= at && (!previous || when > Date.parse(previous.occurredAt))) previous = item;
   }
   if (!previous) return null;
-  const days = Math.round((startOfDay(entry.occurredAt) - startOfDay(previous.occurredAt)) / DAY_MS);
+  const days = Math.round(
+    (startOfDay(entry.occurredAt) - startOfDay(previous.occurredAt)) / DAY_MS,
+  );
   const distance =
     entry.odometer !== null &&
     previous.odometer !== null &&
@@ -95,7 +99,8 @@ export function economy(
   const fill = quantityParts(quantity);
   if (!fill || !distance) return null;
   const per = unit === 'MI' ? 'mi' : 'km';
-  if (fill.unit === 'gal') return `${(distance / fill.amount).toFixed(1)} ${per === 'mi' ? 'mpg' : 'km/gal'}`;
+  if (fill.unit === 'gal')
+    return `${(distance / fill.amount).toFixed(1)} ${per === 'mi' ? 'mpg' : 'km/gal'}`;
   return `${((fill.amount / distance) * 100).toFixed(1)} ${fill.unit}/100 ${per}`;
 }
 

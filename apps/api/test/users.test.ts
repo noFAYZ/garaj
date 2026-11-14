@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createTestContext, signUp, type SignedUpUser, type TestContext } from './harness';
+import { eq } from 'drizzle-orm';
+import { schema } from '@vehicle-os/database';
+import {
+  as,
+  createTestContext,
+  seedGarageWithVehicle,
+  signUp,
+  type SignedUpUser,
+  type TestContext,
+} from './harness';
 
 describe('users module', () => {
   let context: TestContext;
@@ -136,5 +145,30 @@ describe('users module', () => {
 
     expect(response.json().id).toBe(bob.userId);
     expect(response.json().id).not.toBe(alice.userId);
+  });
+
+  it('deletes the account with the garages it owns, and nothing it does not', async () => {
+    const owner = await signUp(context, 'Leaving');
+    const other = await signUp(context, 'Staying');
+    const mine = await seedGarageWithVehicle(context, owner, 'Mine');
+    const theirs = await seedGarageWithVehicle(context, other, 'Theirs');
+
+    const response = await as(context, owner).delete('/api/v1/users/me');
+
+    expect(response.status).toBe(204);
+    const { db } = context.database;
+    expect(await db.select().from(schema.users).where(eq(schema.users.id, owner.userId))).toEqual(
+      [],
+    );
+    expect(
+      await db.select().from(schema.vehicles).where(eq(schema.vehicles.id, mine.vehicleId)),
+    ).toEqual([]);
+    expect(
+      await db.select().from(schema.vehicles).where(eq(schema.vehicles.id, theirs.vehicleId)),
+    ).toHaveLength(1);
+    // The sessions went with the account.
+    expect(
+      await db.select().from(schema.sessions).where(eq(schema.sessions.userId, owner.userId)),
+    ).toEqual([]);
   });
 });

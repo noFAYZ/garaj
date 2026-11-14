@@ -30,6 +30,7 @@ import {
   useSignOut,
 } from '@/components/settings-kit';
 import { api } from '@/lib/api';
+import { setAppearance, useAppearance } from '@/lib/appearance';
 import { Segmented } from '@/lib/instrument';
 import { CURRENCIES, deviceTimeZone } from '@/lib/locale-options';
 import { haptic, PressableScale, Rise, useScrollY } from '@/lib/motion';
@@ -38,6 +39,7 @@ import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
 import { figure, radius, spacing, useTheme } from '@/lib/theme';
 import { CompactHeader, Face, Skeleton } from '@/lib/ui';
+import { DATE_LOCALE } from '@/lib/format';
 
 const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
@@ -46,7 +48,7 @@ const plural = (count: number, one: string) => `${count} ${count === 1 ? one : `
 /** The zone's own clock, as the phone keeps it; a zone it does not know gives no time. */
 function clockIn(zone: string, now: Date): string | null {
   try {
-    return new Intl.DateTimeFormat('en-GB', {
+    return new Intl.DateTimeFormat(DATE_LOCALE, {
       hour: '2-digit',
       minute: '2-digit',
       timeZone: zone,
@@ -86,6 +88,7 @@ export default function SettingsScreen() {
   const { data: planState, plan } = usePlan();
   const update = useProfileUpdate({ quiet: true });
   const { leave, leaving } = useSignOut();
+  const appearance = useAppearance();
   const [pending, setPending] = useState<number | null>(null);
   const [pulling, setPulling] = useState(false);
 
@@ -190,6 +193,21 @@ export default function SettingsScreen() {
         </Group>
 
         <Group title="Preferences" index={3}>
+          {/* Kept on this phone, not the account: a dark screen at night is about where you are. */}
+          <Row icon="contrast-outline" label="Appearance">
+            <View style={styles.volume}>
+              <Segmented
+                small
+                value={appearance}
+                options={[
+                  { value: 'system', label: 'Auto', said: 'Match the phone' },
+                  { value: 'light', label: 'Light', said: 'Light' },
+                  { value: 'dark', label: 'Dark', said: 'Dark' },
+                ]}
+                onChange={setAppearance}
+              />
+            </View>
+          </Row>
           <Row icon="speedometer-outline" label="Distance">
             {me ? (
               <View style={styles.distance}>

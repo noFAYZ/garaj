@@ -23,10 +23,11 @@ import {
   vehicleQuery,
   vehiclesQuery,
 } from '@vehicle-os/api-client/react';
+import type { MonthlySpend } from '@vehicle-os/contracts';
 import { capabilitiesFor } from '@vehicle-os/domain';
 import { ActivityFeed, nextUp, VehiclePlanned } from '@/components/activity-feed';
 import { VehicleDocuments } from '@/components/vehicle-documents';
-import { VehicleStatistics } from '@/components/vehicle-statistics';
+import { STATS_MONTHS, VehicleStatistics } from '@/components/vehicle-statistics';
 import type { QuickAction } from '@/components/add-activity';
 import { useDockSpace } from '@/components/dock';
 import { VehicleDock, type VehicleTab } from '@/components/vehicle-dock';
@@ -94,8 +95,8 @@ export default function VehicleScreen() {
   const vehicle = useQuery(vehicleQuery(api, id));
   // Its own query, so a slow photo list never holds up the name.
   const photos = useQuery(photosQuery(api, id));
-  // The hero's spend: this month, from the same months the web's cockpit reads.
-  const monthly = useQuery(monthlySpendQuery(api, id));
+  // The hero's spend: this month, read from the same 24 months Stats charts — one request, not two.
+  const monthly = useQuery({ ...monthlySpendQuery(api, id, STATS_MONTHS), select: lastYear });
   // The hero's gauge and its next job: the same reads Stats, Logs and the dock make.
   const health = useQuery(healthQuery(api, id));
   const activity = useQuery(activityQuery(api, id));
@@ -268,20 +269,18 @@ export default function VehicleScreen() {
         {data ? (
           <View style={staged ? undefined : styles.kept}>
             <VehicleHero
-            vehicle={data}
-            photos={photos.data}
-            monthly={monthly.isPending ? undefined : (monthly.data ?? null)}
-            health={health.isPending ? undefined : (health.data?.overall ?? null)}
-            next={activity.data ? nextUp(activity.data.planned, data.odometerUnit) : undefined}
-            bay={bay}
-            y={y}
-            refreshing={refreshing}
-            onAddPhoto={addPhoto}
-            onEdit={edit}
-            // The reading opens the form that changes it; the spend and the gauge, Stats.
-            onLogOdometer={() => setQuickRequest('odometer')}
-            onOpenStats={() => go('statistics')}
-            onOpenPlanned={() => go('planned')}
+              vehicle={data}
+              photos={photos.data}
+              monthly={monthly.isPending ? undefined : (monthly.data ?? null)}
+              health={health.isPending ? undefined : (health.data?.overall ?? null)}
+              next={activity.data ? nextUp(activity.data.planned, data.odometerUnit) : undefined}
+              bay={bay}
+              onAddPhoto={addPhoto}
+              onEdit={edit}
+              // The reading opens the form that changes it; the spend and the gauge, Stats.
+              onLogOdometer={() => setQuickRequest('odometer')}
+              onOpenStats={() => go('statistics')}
+              onOpenPlanned={() => go('planned')}
             />
           </View>
         ) : staged ? (
@@ -370,6 +369,12 @@ export default function VehicleScreen() {
 }
 
 /** How long the dock takes to move to a new place, before a section is built behind it. */
+/** The hero's spark spans a year; a module-level function, so `select` keeps its result. */
+const lastYear = (spend: MonthlySpend): MonthlySpend => ({
+  ...spend,
+  points: spend.points.slice(-12),
+});
+
 const DOCK_SETTLE = 280;
 /** The sections built ahead, lightest first, and the pause before each. */
 const PREBUILD: readonly VehicleTab[] = ['planned', 'documents', 'statistics'];

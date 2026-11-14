@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system';
 import type { FinalizeDocumentUpload, FinalizePhotoUpload } from '@vehicle-os/contracts';
 import { api } from './api';
 
@@ -26,6 +27,28 @@ export class PickerUnavailableError extends Error {
     this.name = 'PickerUnavailableError';
   }
 }
+
+/**
+ * The picker is there but failed: out of memory, the photo library refused, an iCloud original
+ * that would not download. Said as what it is — "needs a development build" was wrong on every
+ * release build, where the picker is always there.
+ */
+export class PickerFailedError extends Error {
+  constructor(what: 'files' | 'photos' | 'camera', cause?: unknown) {
+    super(
+      what === 'camera'
+        ? 'The camera could not be opened. Try again.'
+        : `Your ${what} could not be opened. Try again.`,
+      { cause },
+    );
+    this.name = 'PickerFailedError';
+  }
+}
+
+/** The module's native half is missing from this build — the only case that is not a failure. */
+const missingNative = (error: unknown) =>
+  error instanceof Error &&
+  /native module|EventEmitter|not (?:available|linked)/i.test(error.message);
 
 /** What the API's schema accepts; the picker is limited to the same list. */
 export const ACCEPTED_TYPES = [
@@ -68,9 +91,10 @@ export async function pickFile(): Promise<PickedFile | null> {
       type: ACCEPTED_TYPES,
       copyToCacheDirectory: true,
     });
-  } catch {
+  } catch (error) {
     // The module loaded but its native half is not there — the same situation, found later.
-    throw new PickerUnavailableError();
+    if (missingNative(error)) throw new PickerUnavailableError();
+    throw new PickerFailedError('files', error);
   }
 
   const asset = result.canceled ? null : (result.assets?.[0] ?? null);
@@ -97,7 +121,73 @@ interface ImageOptions {
 }
 interface ImageResult {
   canceled: boolean;
-  assets: { uri: string; fileName?: string | null; mimeType?: string; fileSize?: number }[] | null;
+  assets:
+    | {
+        uri: string;
+        fileName?: string | null;
+        mimeType?: string;
+        fileSize?: number;
+        width?: number;
+        height?: number;
+      }[]
+    | null;
+}
+
+interface ManipulatorModule {
+  manipulateAsync: (
+    uri: string,
+    actions: { resize: { width?: number; height?: number } }[],
+    options: { compress: number; format: string },
+  ) => Promise<{ uri: string }>;
+  SaveFormat: { JPEG: string };
+}
+
+/**
+ * The longest edge a photo is sent at. A phone camera's 12–48 MP original is 3–10 MB of detail
+ * nobody zooms to on a receipt or a car card; 2048 px is sharp on any screen, readable for the
+ * receipt reader, and a fifth of the bytes to send on a cellular link.
+ */
+const LONGEST_EDGE = 2048;
+
+/**
+ * A picked photo as it will be sent: no larger than `LONGEST_EDGE`, and JPEG — an iPhone's HEIC
+ * is not something every browser or Android version can show. A phone whose build lacks the
+ * manipulator, or a resize that fails, sends the original rather than nothing.
+ */
+async function prepare(
+  asset: NonNullable<ImageResult['assets']>[number],
+  quality: number,
+  index: number,
+): Promise<PickedFile> {
+  const mimeType = asset.mimeType ?? 'image/jpeg';
+  const base = asset.fileName?.replace(/\.[^.]+$/, '') ?? `photo-${Date.now()}-${index}`;
+  const original: PickedFile = {
+    // Indexed, so several picked in the same millisecond do not share a name.
+    name: asset.fileName ?? `${base}.${mimeType.split('/')[1] ?? 'jpg'}`,
+    uri: asset.uri,
+    mimeType,
+    size: asset.fileSize ?? 0,
+  };
+  const width = asset.width ?? 0;
+  const height = asset.height ?? 0;
+  const tooBig = Math.max(width, height) > LONGEST_EDGE;
+  if (!tooBig && !/hei[cf]/.test(mimeType)) return original;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const manipulator = require('expo-image-manipulator') as ManipulatorModule;
+    const resize = tooBig
+      ? [{ resize: width >= height ? { width: LONGEST_EDGE } : { height: LONGEST_EDGE } }]
+      : [];
+    const { uri } = await manipulator.manipulateAsync(asset.uri, resize, {
+      compress: quality,
+      format: manipulator.SaveFormat.JPEG,
+    });
+    const info = await FileSystem.getInfoAsync(uri);
+    return { name: `${base}.jpg`, uri, mimeType: 'image/jpeg', size: info.exists ? info.size : 0 };
+  } catch {
+    return original;
+  }
 }
 
 export class CameraDeniedError extends Error {
@@ -155,31 +245,22 @@ export async function pickPhotos(
     }
   } catch (error) {
     if (error instanceof CameraDeniedError) throw error;
-    throw new PickerUnavailableError();
+    if (missingNative(error)) throw new PickerUnavailableError();
+    throw new PickerFailedError(source === 'camera' ? 'camera' : 'photos', error);
   }
 
   if (result.canceled || !result.assets) return [];
-  return result.assets.map((asset, index) => {
-    const mimeType = asset.mimeType ?? 'image/jpeg';
-    return {
-      // Indexed, so several picked in the same millisecond do not share a name.
-      name: asset.fileName ?? `photo-${Date.now()}-${index}.${mimeType.split('/')[1] ?? 'jpg'}`,
-      uri: asset.uri,
-      mimeType,
-      size: asset.fileSize ?? 0,
-    };
-  });
+  return Promise.all(result.assets.map((asset, index) => prepare(asset, quality, index)));
 }
 
 /** A file on the phone as base64, without the data-URL prefix: how a photo goes to be read. */
 export async function readBase64(uri: string): Promise<string> {
-  const blob = await (await fetch(uri)).blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
-    reader.onerror = () => reject(new Error('The photo could not be read.'));
-    reader.readAsDataURL(blob);
-  });
+  // Read natively, straight to base64: no Blob and data-URL copies of the photo in JS memory.
+  try {
+    return await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  } catch (error) {
+    throw new Error('The photo could not be read.', { cause: error });
+  }
 }
 
 /**
@@ -210,29 +291,47 @@ export function fromParams(params: FileParams): PickedFile | null {
  * The api-client's helpers take a browser `File`, which React Native does not have. The bytes come
  * off the local URI as a Blob instead, which also gives the real size when a picker did not.
  */
+/**
+ * The bytes, from the file straight to storage on the native side.
+ *
+ * `fetch(uri).blob()` pulled the whole file into JS memory first — a 20 MB scan as a 20 MB
+ * string on the JS heap, then a copy for the request body. `uploadAsync` streams it from disk,
+ * and the size signed into the ticket is the file's own, so storage cannot refuse a mismatch.
+ */
 async function send(file: PickedFile, ticket: (size: number) => Promise<{ uploadUrl: string }>) {
-  const blob = await (await fetch(file.uri)).blob();
-  const { uploadUrl } = await ticket(blob.size || file.size);
-  const sent = await fetch(uploadUrl, {
-    method: 'PUT',
+  const info = await FileSystem.getInfoAsync(file.uri);
+  if (!info.exists) throw new Error('The file is no longer on this phone. Attach it again.');
+  const { uploadUrl } = await ticket(info.size || file.size);
+  /*
+   * A rejection here is the connection going, not storage answering: said as a network failure,
+   * so the queue waits for signal instead of counting it toward giving up on the file.
+   */
+  const sent = await FileSystem.uploadAsync(uploadUrl, file.uri, {
+    httpMethod: 'PUT',
+    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
     headers: { 'content-type': file.mimeType },
-    body: blob,
+  }).catch((error: unknown) => {
+    throw new Error('Network request failed during the upload.', { cause: error });
   });
-  if (!sent.ok) throw new Error(`Upload failed with status ${sent.status}`);
+  if (sent.status < 200 || sent.status >= 300) {
+    throw new Error(`Upload failed with status ${sent.status}`);
+  }
 }
 
 export async function uploadDocumentFile(
   vehicleId: string,
   file: PickedFile,
   metadata: FinalizeDocumentUpload,
+  /** Chosen by the queue, so a replay after a lost reply files one document, not two. */
+  id?: string,
 ) {
   let documentId = '';
   await send(file, async (size) => {
-    const ticket = await api.documents.requestUpload(vehicleId, {
-      name: file.name,
-      type: file.mimeType,
-      size,
-    });
+    const ticket = await api.documents.requestUpload(
+      vehicleId,
+      { name: file.name, type: file.mimeType, size },
+      id,
+    );
     documentId = ticket.documentId;
     return ticket;
   });
@@ -243,14 +342,16 @@ export async function uploadPhotoFile(
   vehicleId: string,
   file: PickedFile,
   options: FinalizePhotoUpload = {},
+  /** Chosen by the queue, so a replay after a lost reply files one photo, not two. */
+  id?: string,
 ) {
   let photoId = '';
   await send(file, async (size) => {
-    const ticket = await api.photos.requestUpload(vehicleId, {
-      name: file.name,
-      type: file.mimeType,
-      size,
-    });
+    const ticket = await api.photos.requestUpload(
+      vehicleId,
+      { name: file.name, type: file.mimeType, size },
+      id,
+    );
     photoId = ticket.photoId;
     return ticket;
   });

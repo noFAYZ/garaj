@@ -47,12 +47,14 @@ import { photoKey, RemoteImage } from '@/components/remote-image';
 import { vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
 import { DateField } from '@/lib/date-picker';
+import { useReportDirty } from '@/lib/discard';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
 import { pickPhoto, readBase64, type PickedFile } from '@/lib/file-picker';
 import { formatDistance, formatMoney, humanise, toMinorUnits } from '@/lib/format';
 import { Eyebrow, FigureInput, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { haptic, PressableScale, Pulse, Rise } from '@/lib/motion';
 import { enqueue, enqueueUpload, flush } from '@/lib/offline';
+import { askForPush } from '@/lib/push';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 import { useUnitsFor } from '@/lib/vehicle-units';
@@ -106,6 +108,9 @@ const PAPER: Partial<Record<EventType, string>> = { MAINTENANCE: 'SERVICE_INVOIC
  */
 let lastVehicle: string | null = null;
 
+/** A field with something in it: `null` is untouched, and spaces are nothing. */
+const typed = (value: string | null) => Boolean(value?.trim());
+
 /**
  * Adding to a vehicle's activity — the web's dialog (`vehicle/add-entry`), on the phone: the same
  * two modes, the same questions in the same order and words, from the same shared rules
@@ -131,6 +136,7 @@ export function AddActivity({
   lead,
   inSheet = false,
   footerInset = 0,
+  onDirty,
   onDone,
   onAddVehicle,
 }: {
@@ -147,6 +153,8 @@ export function AddActivity({
   inSheet?: boolean;
   /** Under the footer: the home indicator, on a screen. */
   footerInset?: number;
+  /** Whether the form holds unsaved input, so its host can ask before closing it. */
+  onDirty?: (dirty: boolean) => void;
   onDone: () => void;
   onAddVehicle: () => void;
 }) {
@@ -224,6 +232,7 @@ export function AddActivity({
             initialPhoto={initialPhoto}
             inSheet={inSheet}
             footerInset={footerInset}
+            onDirty={onDirty}
             onDone={() => done(vehicle.id)}
           />
         ) : (
@@ -236,6 +245,7 @@ export function AddActivity({
           vehicle={garageWork ? null : (vehicle ?? null)}
           inSheet={inSheet}
           footerInset={footerInset}
+          onDirty={onDirty}
           onDone={() => done(garageWork ? null : (vehicle?.id ?? null))}
         />
       )}
@@ -280,6 +290,7 @@ function DoneForm({
   initialPhoto,
   inSheet,
   footerInset,
+  onDirty,
   onDone,
 }: {
   /** What scrolls above the form: the vehicle picker. */
@@ -290,6 +301,7 @@ function DoneForm({
   initialPhoto: PickedFile | null;
   inSheet: boolean;
   footerInset: number;
+  onDirty?: (dirty: boolean) => void;
   onDone: () => void;
 }) {
   const theme = useTheme();
@@ -324,6 +336,14 @@ function DoneForm({
   const [photo, setPhoto] = useState<PickedFile | null>(initialPhoto);
   const [scan, setScan] = useState<Scan | null>(null);
   const [saved, setSaved] = useState(false);
+  // Something typed or a photo added: a kind or a day chip is one tap to choose again.
+  useReportDirty(
+    !saved &&
+      (line.trim() !== initialLine.trim() ||
+        [odometerSet, costSet, quantitySet, placeSet, distanceSet, rate].some(typed) ||
+        photo !== initialPhoto),
+    onDirty,
+  );
   // Each photo's read is numbered, so only the newest one fills anything.
   const asked = useRef(0);
   useEffect(
@@ -450,6 +470,7 @@ function DoneForm({
     if (handed.current) void read(handed.current);
     handed.current = null;
     // Once, on mount: the photo it was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const attach = async (source: 'camera' | 'library') => {
@@ -515,6 +536,8 @@ function DoneForm({
          * has it; completing a schedule also restarts its clock.
          */
         const body = {
+          // Chosen here, so a replay after a lost reply lands on this record rather than a second.
+          id: newId(),
           performedAt: when,
           ...(schedule
             ? title
@@ -930,6 +953,7 @@ function PlannedForm({
   vehicle,
   inSheet,
   footerInset,
+  onDirty,
   onDone,
 }: {
   /** What scrolls above the form: the vehicle picker. */
@@ -938,6 +962,7 @@ function PlannedForm({
   vehicle: Vehicle | null;
   inSheet: boolean;
   footerInset: number;
+  onDirty?: (dirty: boolean) => void;
   onDone: () => void;
 }) {
   const theme = useTheme();
@@ -959,6 +984,7 @@ function PlannedForm({
   const [monthsSet, setMonths] = useState<string | null>(null);
   const [distanceSet, setDistance] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  useReportDirty(!saved && [line, monthsSet, distanceSet].some(typed), onDirty);
 
   // A repeat counts a vehicle's months and odometer: garage-wide work is always a one-off.
   const repeats =
@@ -1023,6 +1049,8 @@ function PlannedForm({
     onSuccess: () => {
       haptic.success();
       setSaved(true);
+      // A reminder is the one thing here that wants to reach the phone later: ask now, once.
+      void askForPush();
       setTimeout(onDone, 900);
     },
   });

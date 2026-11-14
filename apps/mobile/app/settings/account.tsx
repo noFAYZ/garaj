@@ -55,7 +55,20 @@ export default function AccountScreen() {
     }, []),
   );
   const [confirming, setConfirming] = useState(false);
-  const { leave, leaving } = useSignOut();
+  const { leave, remove, leaving } = useSignOut();
+  const [deleting, setDeleting] = useState<'idle' | 'confirming' | 'working'>('idle');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const removeAccount = async () => {
+    setDeleting('working');
+    setDeleteError(null);
+    try {
+      await remove();
+    } catch (error) {
+      haptic.warning();
+      setDeleteError((error as Error).message);
+      setDeleting('confirming');
+    }
+  };
 
   const trimmed = name.trim();
   const valid = trimmed.length >= 1 && trimmed.length <= 120;
@@ -203,6 +216,64 @@ export default function AccountScreen() {
               setConfirming(true);
             }}
           />
+        )}
+      </Rise>
+
+      {/*
+       * Deleting the account (the stores require it to be here, in the app): the same two presses,
+       * and the second says plainly what goes — for everyone, not only this person.
+       */}
+      <Rise index={4} style={[styles.danger, { backgroundColor: theme.destructiveSoft }]}>
+        <View style={styles.dangerTop}>
+          <Ionicons name="trash-outline" size={20} color={theme.destructive} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={[typeScale.label, { color: theme.destructive }]}>Delete account</Text>
+            <Text style={[typeScale.caption, { color: theme.foreground }]}>
+              {deleting === 'idle'
+                ? 'Removes your account for good.'
+                : 'Every garage you own goes too, with its vehicles, records and documents, for everyone in it. A subscription is cancelled. This cannot be undone.'}
+            </Text>
+            {deleteError ? (
+              <Text
+                accessibilityRole="alert"
+                style={[typeScale.caption, { color: theme.destructive }]}
+              >
+                {deleteError}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+        {deleting === 'idle' ? (
+          <Button
+            label="Delete account"
+            variant="danger"
+            disabled={leaving}
+            onPress={() => {
+              haptic.warning();
+              setDeleting('confirming');
+            }}
+          />
+        ) : (
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Button
+                label="Keep it"
+                onPress={() => {
+                  setDeleting('idle');
+                  setDeleteError(null);
+                }}
+                disabled={deleting === 'working'}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button
+                label="Delete for good"
+                variant="danger"
+                loading={deleting === 'working'}
+                onPress={() => void removeAccount()}
+              />
+            </View>
+          </View>
         )}
       </Rise>
 

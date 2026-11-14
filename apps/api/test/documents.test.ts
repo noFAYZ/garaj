@@ -141,6 +141,45 @@ describe('documents', () => {
       expect(response.status).toBe(400);
     });
 
+    it('lands a replayed offline upload on the document it already filed', async () => {
+      const id = '5d1c9e2a-7b3f-4a6e-8c0d-1f2e3a4b5c6d';
+      const send = async () => {
+        const ticket = (
+          await as(context, alice).post(`/api/v1/vehicles/${vehicleId}/documents/upload-url`, {
+            id,
+            filename: 'receipt.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 180_000,
+          })
+        ).body as Ticket;
+        await completeUpload(ticket.storageKey);
+        return as(context, alice).post(
+          `/api/v1/vehicles/${vehicleId}/documents/${ticket.documentId}/finalize`,
+          { documentType: 'INSURANCE', title: 'Replayed receipt' },
+        );
+      };
+
+      const first = await send();
+      const replay = await send();
+
+      expect(first.status).toBe(200);
+      expect(replay.status).toBe(200);
+      const { db } = context.database;
+      expect(
+        await db.select().from(schema.documents).where(eq(schema.documents.id, id)),
+      ).toHaveLength(1);
+      const audits = await db
+        .select()
+        .from(schema.auditLogs)
+        .where(
+          and(
+            eq(schema.auditLogs.resourceId, id),
+            eq(schema.auditLogs.action, 'document.uploaded'),
+          ),
+        );
+      expect(audits).toHaveLength(1);
+    });
+
     it('writes an audit entry when the upload is confirmed', async () => {
       const { id } = await upload({ title: 'Audited certificate' });
 

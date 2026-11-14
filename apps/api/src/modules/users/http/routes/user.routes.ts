@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
+import { Type } from '@sinclair/typebox';
 import {
   CapabilitiesResponse,
   PlanState,
@@ -15,6 +16,7 @@ import {
 } from '../../../garages/infrastructure/repositories/garage-repository';
 import { getCurrentUser } from '../../application/queries/get-current-user';
 import { updateUserPreferences } from '../../application/commands/update-user-preferences';
+import { deleteAccount } from '../../application/commands/delete-account';
 import { serializeUser } from '../serializers/user-serializer';
 
 export const userRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
@@ -97,6 +99,29 @@ export const userRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     async (request) => {
       const actor = await fastify.requireAuth(request);
       return serializeUser(await updateUserPreferences(fastify.db, actor.userId, request.body));
+    },
+  );
+
+  fastify.delete(
+    '/me',
+    {
+      schema: {
+        tags: ['users'],
+        summary: 'Delete my account',
+        description:
+          'Cancels a live subscription, deletes every garage the caller owns with everything in ' +
+          'it, then the account. Garages owned by someone else keep their records.',
+        response: { 204: Type.Null(), ...StandardErrors },
+      },
+    },
+    async (request, reply) => {
+      const actor = await fastify.requireAuth(request);
+      await deleteAccount(fastify.db, actor.userId, {
+        requestId: request.id,
+        ipAddress: request.ip,
+        actorEmail: request.actor?.email ?? null,
+      });
+      return reply.status(204).send(null);
     },
   );
 

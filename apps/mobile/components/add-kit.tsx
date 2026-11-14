@@ -115,6 +115,8 @@ export function Rail({
   // ponytail: a chip chosen before the rail has measured itself is not scrolled to.
   useEffect(() => {
     if (chosen) reveal(spots.current.get(chosen));
+    // On a new choice only: `reveal` reads refs, and is new each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chosen]);
 
   return (

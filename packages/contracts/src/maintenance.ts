@@ -145,6 +145,8 @@ export type MaintenanceRecord = Static<typeof MaintenanceRecord>;
  */
 export const CompleteMaintenance = Type.Object(
   {
+    /** The record's id, chosen by the client so a replayed offline write lands on one record. */
+    id: ClientId,
     performedAt: IsoDateTime,
     workPerformed: Type.Optional(Type.String({ maxLength: 5000 })),
     notes: Type.Optional(Type.String({ maxLength: 5000 })),

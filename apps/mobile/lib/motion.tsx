@@ -1,8 +1,11 @@
 import * as Haptics from 'expo-haptics';
+import { useFocusEffect } from 'expo-router';
 import {
   Fragment,
   forwardRef,
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -10,6 +13,7 @@ import {
 } from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   Animated,
   Easing,
   Pressable,
@@ -95,6 +99,44 @@ export function useReduceMotion(): boolean {
   );
 }
 
+/*
+ * Whether the app is in the foreground. One subscription for the app's life, like reduce motion.
+ * `currentState` can be unknown for a moment at launch; only background and inactive count as away.
+ */
+const appActive = () =>
+  AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
+let active = appActive();
+const appListeners = new Set<() => void>();
+AppState.addEventListener('change', () => {
+  active = appActive();
+  appListeners.forEach((listener) => listener());
+});
+
+/**
+ * Whether this screen is the one being looked at: in front of its navigator, with the app in the
+ * foreground. For the loops that never end — a breathing glow, cars on a road, a blinking colon —
+ * which otherwise run on behind every tab and every pushed screen, on a phone in a pocket.
+ *
+ * Only for components inside a navigator screen (every route, and anything they render).
+ */
+export function useOnScreen(): boolean {
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+  const foreground = useSyncExternalStore(
+    (listener) => {
+      appListeners.add(listener);
+      return () => appListeners.delete(listener);
+    },
+    () => active,
+  );
+  return focused && foreground;
+}
+
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /**
@@ -110,6 +152,18 @@ export const PressableScale = forwardRef<
 >(function PressableScale({ style, scaleTo = 0.97, onPressIn, onPressOut, ...props }, ref) {
   const reduce = useReduceMotion();
   const [progress] = useState(() => new Animated.Value(0));
+  /*
+   * Made once, not per render: a new interpolation each render is a new native animated node,
+   * detached and re-attached on every re-render of every pressable on the screen.
+   */
+  const pressed = useMemo(
+    () => ({
+      transform: [
+        { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [1, scaleTo] }) },
+      ],
+    }),
+    [progress, scaleTo],
+  );
 
   const animateTo = (toValue: 0 | 1) => {
     if (reduce) {
@@ -137,14 +191,7 @@ export const PressableScale = forwardRef<
         animateTo(0);
         onPressOut?.(event);
       }}
-      style={[
-        style,
-        {
-          transform: [
-            { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [1, scaleTo] }) },
-          ],
-        },
-      ]}
+      style={[style, pressed]}
     />
   );
 });
@@ -167,6 +214,16 @@ export function Rise({
 }) {
   const reduce = useReduceMotion();
   const [progress] = useState(() => new Animated.Value(reduce ? 1 : 0));
+  // Made once, for the same reason as `PressableScale`'s: Rise wraps nearly everything.
+  const entrance = useMemo(
+    () => ({
+      opacity: progress,
+      transform: [
+        { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [distance, 0] }) },
+      ],
+    }),
+    [progress, distance],
+  );
 
   useEffect(() => {
     if (reduce) {
@@ -184,23 +241,7 @@ export function Rise({
     return () => animation.stop();
   }, [progress, index, reduce]);
 
-  return (
-    <Animated.View
-      style={[
-        style,
-        {
-          opacity: progress,
-          transform: [
-            {
-              translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [distance, 0] }),
-            },
-          ],
-        },
-      ]}
-    >
-      {children}
-    </Animated.View>
-  );
+  return <Animated.View style={[style, entrance]}>{children}</Animated.View>;
 }
 
 /** Scales in from nothing with a bounce — for a badge, a tick, a dot that just appeared. */
