@@ -8,7 +8,8 @@
       "node": "22.20.0",
       "pnpm": "11.12.0",
       "env": {
-        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "API_URL": "https://garaj-api-p3k1.onrender.com"
       }
     },
     "preview": {
