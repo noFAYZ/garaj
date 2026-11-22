@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
@@ -45,8 +46,9 @@ import { Button, Loading, Skeleton } from '@/lib/ui';
  * list. So a field this form offers is one the server accepts, a boat gets hull and mooring, a
  * motorcycle gets its chain, and neither is written down twice.
  *
- * One scrolling column rather than the web's sidebar: there is no room beside a panel on a phone,
- * and a tab strip over six sections is a second navigation competing with the dock.
+ * Tabs rather than one long column (user asked): Identity, Readings, Papers and — for a type that
+ * has any — Specs, the web's sidebar sections folded into four. The tabs stay put under the header
+ * and Save is in it, so nothing floats over the fields.
  */
 export default function EditVehicleScreen() {
   const { vehicleId } = useLocalSearchParams<{ vehicleId: string }>();
@@ -61,6 +63,7 @@ export default function EditVehicleScreen() {
   const initial = useMemo(() => (data ? initialForm(data) : null), [data]);
   const [form, setForm] = useState<Record<string, string> | null>(null);
   const [picking, setPicking] = useState<SpecField | null>(null);
+  const [tab, setTab] = useState<Tab>('identity');
 
   // The form is seeded once, when the vehicle lands — after that it is the person's to change.
   const current = form ?? initial;
@@ -90,7 +93,7 @@ export default function EditVehicleScreen() {
 
   if (vehicle.isPending || !current) {
     return (
-      <View style={{ flex: 1, backgroundColor: theme.background, padding: spacing.md }}>
+      <View style={{ flex: 1, backgroundColor: 'transparent', padding: spacing.md }}>
         <Loading label="Loading vehicle" />
         <Skeleton width="100%" height={180} radius={radius.lg} />
       </View>
@@ -101,199 +104,239 @@ export default function EditVehicleScreen() {
   const specsIn = (capabilities: readonly VehicleCapability[]) =>
     specFields.filter((field) => capabilities.some((c) => CAPABILITY_OF[field.key] === c));
 
+  const specSections = SPEC_SECTIONS.map(([title, icon, capabilities]) => ({
+    title,
+    icon,
+    fields: specsIn(capabilities),
+  })).filter((section) => section.fields.length > 0);
+  const tabs: { value: Tab; label: string; icon: IconName }[] = [
+    { value: 'identity', label: 'Identity', icon: 'car-outline' },
+    { value: 'readings', label: 'Readings', icon: 'speedometer-outline' },
+    { value: 'papers', label: 'Papers', icon: 'document-text-outline' },
+    // A type with no spec groups of its own (a bicycle) has no Specs tab.
+    ...(specSections.length > 0
+      ? [{ value: 'specs' as const, label: 'Specs', icon: 'construct-outline' as const }]
+      : []),
+  ];
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ flex: 1, backgroundColor: theme.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
     >
-      <Stack.Screen options={{ title: 'Edit details' }} />
-
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
-        <Section title="Identity" index={0}>
-          <Panel>
-            <Field label="Nickname" value={current.nickname} onChange={set('nickname')} />
-            <View style={styles.pair}>
-              <Field label="Make" value={current.make} onChange={set('make')} />
-              <Field label="Model" value={current.model} onChange={set('model')} />
-            </View>
-            <View style={styles.pair}>
-              <Field label="Variant" value={current.variant} onChange={set('variant')} />
-              <PanelCell label="Year">
-                <FigureInput
-                  value={current.year}
-                  onChangeText={(text) => set('year')(digitsOnly(text, 4))}
-                  placeholder="—"
-                  keyboardType="number-pad"
-                  accessibilityLabel="Year"
-                />
-              </PanelCell>
-            </View>
-            <Field label="Colour" value={current.color} onChange={set('color')} />
-            <PanelCell label="Status">
-              <Segmented
-                value={current.status!}
-                options={VEHICLE_STATUSES.map((status) => ({
-                  value: status,
-                  label: humanise(status),
-                }))}
-                onChange={set('status')}
-              />
-            </PanelCell>
-          </Panel>
-        </Section>
-
-        <Section title="Readings" index={1}>
-          <Panel>
-            <PanelCell label="Odometer" note="Only ever moves forward">
-              <FigureInput
-                unit={current.odometerUnit === 'MI' ? 'mi' : 'km'}
-                value={
-                  current.currentOdometer ? Number(current.currentOdometer).toLocaleString() : ''
-                }
-                onChangeText={(text) => set('currentOdometer')(digitsOnly(text, 9))}
-                placeholder="0"
-                keyboardType="number-pad"
-                accessibilityLabel="Odometer"
-              />
-            </PanelCell>
-            <PanelCell label="Unit">
-              <Segmented
-                value={current.odometerUnit!}
-                options={DISTANCE_UNITS.map((unit) => ({
-                  value: unit,
-                  label: unit === 'MI' ? 'Miles' : 'Kilometres',
-                }))}
-                onChange={set('odometerUnit')}
-              />
-            </PanelCell>
-            {data!.capabilities.includes('engineHours') ? (
-              <PanelCell label="Engine hours">
-                <FigureInput
-                  unit="h"
-                  value={current.currentEngineHours}
-                  onChangeText={(text) => set('currentEngineHours')(digitsOnly(text, 7))}
-                  placeholder="0"
-                  keyboardType="number-pad"
-                  accessibilityLabel="Engine hours"
-                />
-              </PanelCell>
-            ) : null}
-          </Panel>
-        </Section>
-
-        <Section title="Registration" index={2}>
-          <Panel>
-            <PanelCell label="Number plate">
-              <TextInput
-                value={current.registrationIdentifier}
-                onChangeText={(text) => set('registrationIdentifier')(text.toUpperCase())}
-                placeholder="—"
-                placeholderTextColor={theme.borderStrong}
-                autoCapitalize="characters"
-                accessibilityLabel="Number plate"
-                maxLength={32}
-                style={[typeScale.headline, styles.plate, { color: theme.foreground }]}
-              />
-            </PanelCell>
-            <PanelCell label="VIN / frame number" note="17 characters on most road vehicles">
-              <TextInput
-                value={current.identificationNumber}
-                onChangeText={(text) => set('identificationNumber')(text.toUpperCase())}
-                placeholder="—"
-                placeholderTextColor={theme.borderStrong}
-                autoCapitalize="characters"
-                accessibilityLabel="VIN"
-                maxLength={64}
-                style={[typeScale.headline, styles.mono, { color: theme.foreground }]}
-              />
-            </PanelCell>
-            <SpecCells
-              fields={specsIn(['registration', 'insurance'])}
-              form={current}
-              onChange={set}
-              onPick={setPicking}
+      {/* Save is the header's, with how many fields it carries — no bar floating at the foot. */}
+      <Stack.Screen
+        options={{
+          title: 'Edit details',
+          headerRight: () => (
+            <Button
+              label={changed.length > 0 ? `Save · ${changed.length}` : 'Save'}
+              a11yLabel={
+                changed.length > 0 ? `Save ${changed.length} changes` : 'No changes to save'
+              }
+              size="sm"
+              variant="primary"
+              loading={save.isPending}
+              disabled={changed.length === 0}
+              onPress={() => save.mutate()}
             />
-          </Panel>
-        </Section>
+          ),
+        }}
+      />
 
-        <Section title="Ownership" index={3}>
-          <Panel>
-            <PanelCell label="Purchased">
-              <DateField
-                value={current.purchaseDate ?? ''}
-                onChange={set('purchaseDate')}
-                label="Purchased"
-                placeholder="Not recorded"
-              />
-            </PanelCell>
-            <View style={styles.pair}>
-              <PanelCell label="Price">
-                <FigureInput
-                  unit={current.purchaseCurrency}
-                  value={current.purchasePrice}
-                  onChangeText={(text) => set('purchasePrice')(amountOnly(text))}
-                  placeholder="0.00"
-                  keyboardType="decimal-pad"
-                  accessibilityLabel="Purchase price"
-                />
-              </PanelCell>
-              <PanelCell label="Currency">
-                <TextInput
-                  value={current.purchaseCurrency}
-                  onChangeText={(text) => set('purchaseCurrency')(text.toUpperCase().slice(0, 3))}
-                  placeholder="USD"
-                  placeholderTextColor={theme.borderStrong}
-                  autoCapitalize="characters"
-                  accessibilityLabel="Currency"
-                  maxLength={3}
-                  style={[typeScale.headline, styles.mono, { color: theme.foreground }]}
-                />
-              </PanelCell>
-            </View>
-          </Panel>
-        </Section>
+      {/* The tabs stay put under the header; only the tab's own fields scroll. */}
+      <View style={styles.tabs}>
+        <Segmented small value={tab} options={tabs} onChange={setTab} />
+      </View>
 
-        {/* Generated from the type's own descriptors: a car has no hull, a bicycle no fuel. */}
-        {(
-          [
-            ['Drivetrain', ['engine', 'fuelSystem', 'electricSystem', 'battery', 'transmission']],
-            ['Wheels & tyres', ['tires', 'chain']],
-            ['Hull & mooring', ['hull', 'mooring']],
-            ['Towing', ['trailer']],
-          ] as [string, VehicleCapability[]][]
-        ).map(([title, capabilities], index) => {
-          const fields = specsIn(capabilities);
-          if (fields.length === 0) return null;
-          return (
-            <Section key={title} title={title} index={4 + index}>
+      {/* Keyed by the tab, so each opens at its top and arrives as a page does. */}
+      <ScrollView
+        key={tab}
+        contentContainerStyle={[
+          styles.page,
+          { paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xl },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        {tab === 'identity' ? (
+          <>
+            <Section title="Vehicle" icon="car-sport-outline" index={0}>
               <Panel>
-                <SpecCells fields={fields} form={current} onChange={set} onPick={setPicking} />
+                <Field label="Nickname" value={current.nickname} onChange={set('nickname')} />
+                <View style={styles.pair}>
+                  <Field label="Make" value={current.make} onChange={set('make')} />
+                  <Field label="Model" value={current.model} onChange={set('model')} />
+                </View>
+                <View style={styles.pair}>
+                  <Field label="Variant" value={current.variant} onChange={set('variant')} />
+                  <PanelCell label="Year">
+                    <FigureInput
+                      value={current.year}
+                      onChangeText={(text) => set('year')(digitsOnly(text, 4))}
+                      placeholder="—"
+                      keyboardType="number-pad"
+                      accessibilityLabel="Year"
+                    />
+                  </PanelCell>
+                </View>
+                <Field label="Colour" value={current.color} onChange={set('color')} />
               </Panel>
             </Section>
-          );
-        })}
+            <Section title="Status" icon="flag-outline" index={1}>
+              <Panel>
+                <PanelCell label="In the garage as">
+                  <Segmented
+                    small
+                    value={current.status!}
+                    options={VEHICLE_STATUSES.map((status) => ({
+                      value: status,
+                      label: humanise(status),
+                    }))}
+                    onChange={set('status')}
+                  />
+                </PanelCell>
+              </Panel>
+            </Section>
+          </>
+        ) : tab === 'readings' ? (
+          <>
+            <Section title="Odometer" icon="speedometer-outline" index={0}>
+              <Panel>
+                <PanelCell label="Reading" note="Only ever moves forward">
+                  <FigureInput
+                    unit={current.odometerUnit === 'MI' ? 'mi' : 'km'}
+                    value={
+                      current.currentOdometer
+                        ? Number(current.currentOdometer).toLocaleString()
+                        : ''
+                    }
+                    onChangeText={(text) => set('currentOdometer')(digitsOnly(text, 9))}
+                    placeholder="0"
+                    keyboardType="number-pad"
+                    accessibilityLabel="Odometer"
+                  />
+                </PanelCell>
+                <PanelCell label="Unit">
+                  <Segmented
+                    small
+                    value={current.odometerUnit!}
+                    options={DISTANCE_UNITS.map((unit) => ({
+                      value: unit,
+                      label: unit === 'MI' ? 'Miles' : 'Kilometres',
+                    }))}
+                    onChange={set('odometerUnit')}
+                  />
+                </PanelCell>
+              </Panel>
+            </Section>
+            {data!.capabilities.includes('engineHours') ? (
+              <Section title="Engine" icon="time-outline" index={1}>
+                <Panel>
+                  <PanelCell label="Engine hours">
+                    <FigureInput
+                      unit="h"
+                      value={current.currentEngineHours}
+                      onChangeText={(text) => set('currentEngineHours')(digitsOnly(text, 7))}
+                      placeholder="0"
+                      keyboardType="number-pad"
+                      accessibilityLabel="Engine hours"
+                    />
+                  </PanelCell>
+                </Panel>
+              </Section>
+            ) : null}
+          </>
+        ) : tab === 'papers' ? (
+          <>
+            <Section title="Registration" icon="id-card-outline" index={0}>
+              <Panel>
+                <PanelCell label="Number plate">
+                  <TextInput
+                    value={current.registrationIdentifier}
+                    onChangeText={(text) => set('registrationIdentifier')(text.toUpperCase())}
+                    placeholder="—"
+                    placeholderTextColor={theme.borderStrong}
+                    autoCapitalize="characters"
+                    accessibilityLabel="Number plate"
+                    maxLength={32}
+                    style={[typeScale.headline, styles.plate, { color: theme.foreground }]}
+                  />
+                </PanelCell>
+                <PanelCell label="VIN / frame number" note="17 characters on most road vehicles">
+                  <TextInput
+                    value={current.identificationNumber}
+                    onChangeText={(text) => set('identificationNumber')(text.toUpperCase())}
+                    placeholder="—"
+                    placeholderTextColor={theme.borderStrong}
+                    autoCapitalize="characters"
+                    accessibilityLabel="VIN"
+                    maxLength={64}
+                    style={[typeScale.headline, styles.mono, { color: theme.foreground }]}
+                  />
+                </PanelCell>
+                <SpecCells
+                  fields={specsIn(['registration', 'insurance'])}
+                  form={current}
+                  onChange={set}
+                  onPick={setPicking}
+                />
+              </Panel>
+            </Section>
+            <Section title="Ownership" icon="key-outline" index={1}>
+              <Panel>
+                <PanelCell label="Purchased">
+                  <DateField
+                    value={current.purchaseDate ?? ''}
+                    onChange={set('purchaseDate')}
+                    label="Purchased"
+                    placeholder="Not recorded"
+                  />
+                </PanelCell>
+                <View style={styles.pair}>
+                  <PanelCell label="Price">
+                    <FigureInput
+                      unit={current.purchaseCurrency}
+                      value={current.purchasePrice}
+                      onChangeText={(text) => set('purchasePrice')(amountOnly(text))}
+                      placeholder="0.00"
+                      keyboardType="decimal-pad"
+                      accessibilityLabel="Purchase price"
+                    />
+                  </PanelCell>
+                  <PanelCell label="Currency">
+                    <TextInput
+                      value={current.purchaseCurrency}
+                      onChangeText={(text) =>
+                        set('purchaseCurrency')(text.toUpperCase().slice(0, 3))
+                      }
+                      placeholder="USD"
+                      placeholderTextColor={theme.borderStrong}
+                      autoCapitalize="characters"
+                      accessibilityLabel="Currency"
+                      maxLength={3}
+                      style={[typeScale.headline, styles.mono, { color: theme.foreground }]}
+                    />
+                  </PanelCell>
+                </View>
+              </Panel>
+            </Section>
+          </>
+        ) : (
+          // Generated from the type's own descriptors: a car has no hull, a bicycle no fuel.
+          specSections.map((section, index) => (
+            <Section key={section.title} title={section.title} icon={section.icon} index={index}>
+              <Panel>
+                <SpecCells
+                  fields={section.fields}
+                  form={current}
+                  onChange={set}
+                  onPick={setPicking}
+                />
+              </Panel>
+            </Section>
+          ))
+        )}
       </ScrollView>
-
-      {/* The count is the point: six sections scroll, and only one is ever on screen. */}
-      <View
-        style={[
-          styles.footer,
-          { backgroundColor: theme.card, paddingBottom: Math.max(insets.bottom, spacing.sm) },
-        ]}
-      >
-        <Text style={[typeScale.caption, { flex: 1, color: theme.mutedForeground }]}>
-          {changed.length === 0
-            ? 'No changes yet'
-            : `${String(changed.length).padStart(2, '0')} to save`}
-        </Text>
-        <Button
-          label="Save changes"
-          variant="primary"
-          loading={save.isPending}
-          disabled={changed.length === 0}
-          onPress={() => save.mutate()}
-        />
-      </View>
 
       {picking ? (
         <ListPicker
@@ -315,18 +358,25 @@ export default function EditVehicleScreen() {
   );
 }
 
+/** A tab's group of fields under its icon and name. */
 function Section({
   title,
+  icon,
   index,
   children,
 }: {
   title: string;
+  icon: IconName;
   index: number;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
   return (
     <Rise index={index} style={{ gap: spacing.sm }}>
-      <Eyebrow>{title}</Eyebrow>
+      <View style={styles.sectionHead}>
+        <Ionicons name={icon} size={14} color={theme.mutedForeground} />
+        <Eyebrow>{title}</Eyebrow>
+      </View>
       {children}
     </Rise>
   );
@@ -375,69 +425,93 @@ function SpecCells({
 }) {
   const theme = useTheme();
 
+  const cells = fields.map((field) => {
+    const key = specKey(field.key);
+    const value = form[key] ?? '';
+
+    if (field.kind === 'select') {
+      return (
+        <PanelCell key={field.key} label={field.label}>
+          <PressableScale
+            onPress={() => {
+              haptic.selection();
+              onPick(field);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${field.label}: ${value ? humanise(value) : 'not recorded'}`}
+            scaleTo={0.98}
+            style={{ paddingVertical: 4 }}
+          >
+            <Text
+              style={[typeScale.headline, { color: value ? theme.foreground : theme.borderStrong }]}
+            >
+              {value ? humanise(value) : '—'}
+            </Text>
+          </PressableScale>
+        </PanelCell>
+      );
+    }
+
+    const numeric = field.kind === 'number' || field.kind === 'integer';
+    return (
+      <PanelCell key={field.key} label={field.label}>
+        {numeric ? (
+          <FigureInput
+            unit={field.unit}
+            value={value}
+            onChangeText={(text) =>
+              onChange(key)(field.kind === 'integer' ? digitsOnly(text, 9) : amountOnly(text))
+            }
+            placeholder="—"
+            keyboardType={field.kind === 'integer' ? 'number-pad' : 'decimal-pad'}
+            accessibilityLabel={field.label}
+          />
+        ) : (
+          <TextInput
+            value={value}
+            onChangeText={onChange(key)}
+            placeholder="—"
+            placeholderTextColor={theme.borderStrong}
+            accessibilityLabel={field.label}
+            maxLength={200}
+            style={[typeScale.headline, { color: theme.foreground, paddingVertical: 2 }]}
+          />
+        )}
+      </PanelCell>
+    );
+  });
+
+  // Two to a row, as make and model sit: a spec is a short value, and a column of them ran long.
   return (
     <>
-      {fields.map((field) => {
-        const key = specKey(field.key);
-        const value = form[key] ?? '';
-
-        if (field.kind === 'select') {
-          return (
-            <PanelCell key={field.key} label={field.label}>
-              <PressableScale
-                onPress={() => {
-                  haptic.selection();
-                  onPick(field);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`${field.label}: ${value ? humanise(value) : 'not recorded'}`}
-                scaleTo={0.98}
-                style={{ paddingVertical: 4 }}
-              >
-                <Text
-                  style={[
-                    typeScale.headline,
-                    { color: value ? theme.foreground : theme.borderStrong },
-                  ]}
-                >
-                  {value ? humanise(value) : '—'}
-                </Text>
-              </PressableScale>
-            </PanelCell>
-          );
-        }
-
-        const numeric = field.kind === 'number' || field.kind === 'integer';
-        return (
-          <PanelCell key={field.key} label={field.label}>
-            {numeric ? (
-              <FigureInput
-                unit={field.unit}
-                value={value}
-                onChangeText={(text) =>
-                  onChange(key)(field.kind === 'integer' ? digitsOnly(text, 9) : amountOnly(text))
-                }
-                placeholder="—"
-                keyboardType={field.kind === 'integer' ? 'number-pad' : 'decimal-pad'}
-                accessibilityLabel={field.label}
-              />
-            ) : (
-              <TextInput
-                value={value}
-                onChangeText={onChange(key)}
-                placeholder="—"
-                placeholderTextColor={theme.borderStrong}
-                accessibilityLabel={field.label}
-                maxLength={200}
-                style={[typeScale.headline, { color: theme.foreground, paddingVertical: 2 }]}
-              />
-            )}
-          </PanelCell>
+      {Array.from({ length: Math.ceil(cells.length / 2) }, (_, row) => {
+        const pair = cells.slice(row * 2, row * 2 + 2);
+        return pair.length === 2 ? (
+          <View key={row} style={styles.pair}>
+            {pair}
+          </View>
+        ) : (
+          pair[0]
         );
       })}
     </>
   );
 }
+
+type IconName = keyof typeof Ionicons.glyphMap;
+type Tab = 'identity' | 'readings' | 'papers' | 'specs';
+
+/** The Specs tab's groups, each with the capabilities it gathers. */
+const SPEC_SECTIONS: [string, IconName, VehicleCapability[]][] = [
+  [
+    'Drivetrain',
+    'cog-outline',
+    ['engine', 'fuelSystem', 'electricSystem', 'battery', 'transmission'],
+  ],
+  ['Wheels & tyres', 'disc-outline', ['tires', 'chain']],
+  ['Hull & mooring', 'boat-outline', ['hull', 'mooring']],
+  ['Towing', 'link-outline', ['trailer']],
+];
 
 /** Specs share a namespace with the identity fields, so they are kept apart in form state. */
 const specKey = (key: string) => `spec:${key}`;
@@ -546,15 +620,10 @@ function buildPatch(
 }
 
 const styles = StyleSheet.create({
-  page: { padding: spacing.md, gap: spacing.lg, paddingBottom: spacing.xl },
+  page: { padding: spacing.md, gap: spacing.lg },
+  tabs: { paddingHorizontal: spacing.md, paddingTop: spacing.xs, paddingBottom: spacing.sm },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
   pair: { flexDirection: 'row', gap: StyleSheet.hairlineWidth },
   plate: { letterSpacing: 2, fontWeight: '700', paddingVertical: 2 },
   mono: { letterSpacing: 1, paddingVertical: 2 },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-  },
 });

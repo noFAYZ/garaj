@@ -28,11 +28,11 @@ import {
   type FileParams,
   type PickedFile,
 } from '@/lib/file-picker';
-import { DATE_LOCALE, humanise } from '@/lib/format';
+import { DATE_LOCALE, fileSize, humanise } from '@/lib/format';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
 import { enqueueUpload, flush } from '@/lib/offline';
 import { addMonths, countdown, validity } from '@/lib/papers';
-import { cardSurface, figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { cardSurface, figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty } from '@/lib/ui';
 
 const DOC_GLYPH: Partial<Record<DocumentType, string>> = {
@@ -74,12 +74,6 @@ const DAY = new Intl.DateTimeFormat(DATE_LOCALE, {
   year: 'numeric',
 });
 const dayOf = (iso: string) => DAY.format(new Date(`${iso}T00:00:00`));
-
-function fileSize(bytes: number | null | undefined): string | null {
-  if (!bytes) return null;
-  if (bytes < 1000 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /**
  * File a paper against a vehicle, on one screen without scrolling for the common case: what it is
@@ -187,7 +181,7 @@ export default function AddDocumentScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       // The stack header over this screen: the status bar and its 44pt bar.
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}
-      style={{ flex: 1, backgroundColor: theme.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
     >
       <Stack.Screen options={{ title: 'Add a document' }} />
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
@@ -384,7 +378,7 @@ function FileCard({ file, onRemove }: { file: PickedFile; onRemove: () => void }
           {file.name}
         </Text>
         <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-          {[kind, fileSize(file.size)].filter(Boolean).join(' · ')}
+          {[kind, file.size ? fileSize(file.size) : null].filter(Boolean).join(' · ')}
         </Text>
       </View>
       <PressableScale
@@ -529,7 +523,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     padding: 10,
-    borderRadius: radius.xl,
+    ...leaf('sm'),
   },
   preview: {
     width: 44,
@@ -547,7 +541,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sheet: { borderRadius: radius.xl + 2 },
+  sheet: leaf('md'),
   cell: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, gap: 4 },
   cellError: { paddingHorizontal: 14, paddingBottom: 10 },
   label: { fontSize: 10, lineHeight: 13, fontWeight: '600', letterSpacing: 1 },

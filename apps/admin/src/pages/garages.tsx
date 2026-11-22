@@ -3,7 +3,7 @@ import { ArrowDownUp, Copy, Trash2, UserRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Icon, type IconName } from '@/components/icons';
 import { Button, EmptyState } from '@/components/ui/primitives';
-import { Readings } from '@/components/ui/overview';
+import { Readings } from '../components/readings';
 import { ListSkeleton, Loading, Skeleton } from '@/components/ui/skeleton';
 import { raise } from '@/components/ui/toaster';
 import { formatDate, humanise } from '@/lib/format';

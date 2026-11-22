@@ -72,7 +72,7 @@ export function HealthDial({
             // Starts at twelve o'clock rather than three, which is where a gauge reads from.
             transform={`rotate(-90 ${size / 2} ${size / 2})`}
             className={cn(
-              'animate-dial stroke-current transition-[stroke-dashoffset] duration-500',
+              'animate-dial stroke-current transition-[stroke-dashoffset] duration-250',
               tone,
             )}
           />

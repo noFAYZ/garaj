@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
-import * as FileSystem from 'expo-file-system';
+// The path-and-string API; SDK 54 moved it under `legacy` when it made the File/Directory one default.
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -15,9 +17,10 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { api } from '@/lib/api';
-import { PressableScale } from '@/lib/motion';
+import { HeaderKey } from '@/components/settings-kit';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 import { Button } from '@/lib/ui';
+import { dialog, FAILED } from '@/lib/dialog';
 
 type Loaded =
   | { kind: 'image'; url: string }
@@ -150,6 +153,21 @@ function pdfPage(base64: string, background: string, foreground: string): string
 </script></body></html>`;
 }
 
+/**
+ * The downloaded PDF in the phone's own viewer (Drive, Files, whatever handles PDFs) — offered
+ * beside the in-app one, and the way out when that one cannot draw: pdf.js comes from a CDN, so
+ * with no signal the page has nothing to draw with, while the file itself is already on the phone.
+ */
+async function openWithPhone(file: string): Promise<void> {
+  const uri = await FileSystem.getContentUriAsync(file);
+  // FLAG_GRANT_READ_URI_PERMISSION: the other app may read this one file, and only it.
+  await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+    data: uri,
+    type: 'application/pdf',
+    flags: 1,
+  });
+}
+
 /** Android's half: the downloaded file read into the page that draws it. */
 function useAndroidPdf(file: string | null): { html: string | null; error: string | null } {
   const theme = useTheme();
@@ -195,6 +213,19 @@ export default function DocumentScreen() {
   const data = file.data;
   const shareUrl = data && (data.kind === 'image' || data.kind === 'other') ? data.url : null;
   const pdfFile = data?.kind === 'pdf' ? data.file : null;
+  // Android only: iOS draws the PDF natively and has its own share sheet for it.
+  const handOff =
+    pdfFile && Platform.OS === 'android'
+      ? () =>
+          void openWithPhone(pdfFile).catch(() =>
+            dialog(
+              'No app opens PDFs',
+              'Install one — Google Drive does — and try again.',
+              undefined,
+              FAILED,
+            ),
+          )
+      : null;
   const android = useAndroidPdf(pdfFile);
   // The downloaded copy is the screen's alone: gone with it, and with each fresh download.
   useEffect(() => {
@@ -209,21 +240,17 @@ export default function DocumentScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <Stack.Screen
         options={{
           title: title ?? data?.filename ?? 'Document',
           headerRight: () =>
-            shareUrl ? (
-              <PressableScale
-                onPress={() => void Linking.openURL(shareUrl)}
-                accessibilityRole="button"
-                accessibilityLabel="Open in another app"
-                hitSlop={8}
-                scaleTo={0.9}
-              >
-                <Ionicons name="share-outline" size={22} color={theme.foreground} />
-              </PressableScale>
+            shareUrl || handOff ? (
+              <HeaderKey
+                icon="share-outline"
+                label="Open in another app"
+                onPress={() => (handOff ? handOff() : void Linking.openURL(shareUrl!))}
+              />
             ) : null,
         }}
       />
@@ -244,7 +271,10 @@ export default function DocumentScreen() {
           <Text style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}>
             {renderError ?? file.error?.message ?? 'The file did not load.'}
           </Text>
-          <Button label="Try again" variant="primary" onPress={retry} />
+          {handOff ? (
+            <Button label="Open in another app" variant="primary" onPress={handOff} />
+          ) : null}
+          <Button label="Try again" variant={handOff ? 'secondary' : 'primary'} onPress={retry} />
         </View>
       ) : data.kind === 'image' ? (
         // A ScrollView zooms natively on iOS; Android shows the page fitted, which reads a receipt.

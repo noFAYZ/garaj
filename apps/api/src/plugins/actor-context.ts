@@ -16,11 +16,17 @@ import { schema } from '@vehicle-os/database';
 import { can, type ActorContext, type Capability } from '@vehicle-os/domain';
 import { ForbiddenError, NotFoundError, UnauthorizedError } from '../infrastructure/errors';
 import { hashApiKey, isApiKey } from '../modules/api-keys/api-key-token';
+import {
+  findVehicleById,
+  type VehicleWithPhoto,
+} from '../modules/vehicles/infrastructure/repositories/vehicle-repository';
 
 declare module 'fastify' {
   interface FastifyRequest {
     /** Present only after `requireAuth`; undefined on public routes. */
     actor?: ActorContext;
+    /** The route's vehicle, already asked for — taken once by `requireVehicleAccess`. */
+    vehicleLookup?: { readonly id: string; readonly row: Promise<VehicleWithPhoto | null> };
   }
   interface FastifyInstance {
     requireAuth: (request: FastifyRequest) => Promise<ActorContext>;
@@ -112,6 +118,8 @@ export function onlineCount(now = Date.now()): number {
 export function markSeen(userId: string, now = Date.now()): void {
   lastSeen.set(userId, now);
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The credential a request carries: the bearer token, else the session cookie. */
 function credentialOf(request: FastifyRequest): string | null {
@@ -235,6 +243,21 @@ export default fp(
      * shows up directly in the p95 target.
      */
     fastify.addHook('onRequest', async (request) => {
+      /*
+       * A vehicle route's vehicle is read alongside the caller's memberships rather than after
+       * them: the access check needs both, and neither depends on the other, so a phone opening
+       * a vehicle — a dozen requests at once — pays one round trip to the database before the
+       * work instead of two. Only for a signed-in request, and only a well-formed id; the check
+       * itself still happens in `requireVehicleAccess`.
+       */
+      const vehicleId = (request.params as { vehicleId?: unknown } | undefined)?.vehicleId;
+      if (typeof vehicleId === 'string' && UUID.test(vehicleId) && credentialOf(request)) {
+        const row = findVehicleById(fastify.db, vehicleId);
+        // Awaited by the route, or dropped with a request that is refused first.
+        row.catch(() => undefined);
+        request.vehicleLookup = { id: vehicleId, row };
+      }
+
       const actor = await loadActor(request);
       if (actor) request.actor = actor;
       if (actor?.credential === 'session') markSeen(actor.userId);

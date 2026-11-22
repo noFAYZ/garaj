@@ -25,7 +25,6 @@ import {
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Children, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Alert,
   Animated,
   ScrollView,
   StyleSheet,
@@ -33,6 +32,7 @@ import {
   View,
   type StyleProp,
   type ViewStyle,
+  type ScrollViewInstance,
 } from 'react-native';
 import type { CostTrends, ValuationSummary, VehicleHealth } from '@vehicle-os/contracts';
 import {
@@ -46,6 +46,7 @@ import {
 } from '@vehicle-os/api-client/react';
 import {
   ColumnChart,
+  LABEL,
   Ladder,
   LineChart,
   RankBars,
@@ -70,13 +71,21 @@ import {
   useIgnition,
   useReduceMotion,
 } from '@/lib/motion';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
-import { DATE_LOCALE, compactMoney, formatDistance, formatMoney, humanise } from '@/lib/format';
+import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import {
+  pad,
+  compactMoney,
+  DATE_LOCALE,
+  formatDistance,
+  formatMoney,
+  humanise,
+  plural,
+} from '@/lib/format';
+import { dialog, FAILED } from '@/lib/dialog';
 
 /** The months of spend Stats charts, and the vehicle's hero reads its month from. */
 export const STATS_MONTHS = 24;
 
-const pad = (value: number) => String(value).padStart(2, '0');
 const MONTH_YEAR = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', year: '2-digit' });
 const DAY_MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', day: 'numeric' });
 
@@ -106,7 +115,6 @@ const perUnit = (amountMinor: number, currency: string) =>
   (amountMinor / 10 ** minorUnitExponent(currency)).toFixed(3);
 const rate = (amountMinor: number, distance: number | null, currency: string) =>
   distance ? cents(amountMinor / distance, currency) : '—';
-const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 /** `12k`, `8.4k`, `640` — a distance for an axis. */
 const compact = (value: number) =>
   value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(Math.round(value));
@@ -438,9 +446,15 @@ function Refueling({ report }: { report: VehicleReport }) {
         const bought = fuel.units.find((entry) => entry.unit === fuelUnit);
         const label = UNIT_LABEL[fuelUnit] ?? fuelUnit;
         const named = units.length > 1 ? ` · ${label}` : '';
+        const fills = bought?.prices.slice(-16) ?? [];
+        const paid = bought?.prices.map((fill) => fill.perUnitMinor) ?? [];
         return [
           use && use.points.length >= 2 ? (
-            <Card key={`use-${fuelUnit}`} label={`Consumption${named} · ${rateUnit(fuelUnit)}`}>
+            <Card
+              key={`use-${fuelUnit}`}
+              label={`Fuel efficiency${named}`}
+              trailing={<Tag>{rateUnit(fuelUnit)}</Tag>}
+            >
               <LineChart
                 series={[
                   {
@@ -450,28 +464,63 @@ function Refueling({ report }: { report: VehicleReport }) {
                     points: use.points.slice(-16),
                   },
                 ]}
-                reference={{ value: use.average, label: `avg ${use.average.toFixed(1)}` }}
+                reference={{ value: use.average }}
                 formatY={(value) => value.toFixed(1)}
                 formatX={(x) => DAY_MONTH.format(new Date(x))}
               />
+              <Facts
+                items={[
+                  { label: 'Best', value: use.best.toFixed(1) },
+                  { label: 'Average', value: use.average.toFixed(1) },
+                  { label: 'Worst', value: use.worst.toFixed(1) },
+                ]}
+              />
             </Card>
           ) : null,
-          bought && bought.prices.length >= 2 && bought.pricePerUnitMinor ? (
-            <Card key={`price-${fuelUnit}`} label={`Price${named} · ${currency}/${label}`}>
+          bought?.pricePerUnitMinor && fills.length >= 2 ? (
+            <Card
+              key={`price-${fuelUnit}`}
+              label={`Fuel price${named}`}
+              trailing={<Tag>{`${currency}/${label}`}</Tag>}
+            >
               <LineChart
                 series={[
                   {
                     key: 'price',
                     label: `per ${label}`,
                     color: colors.REFUELING,
-                    points: bought.prices
-                      .map((price) => ({ x: price.at, y: price.perUnitMinor }))
-                      .slice(-16),
+                    points: fills.map((fill) => ({ x: fill.at, y: fill.perUnitMinor })),
                   },
                 ]}
-                reference={{ value: bought.pricePerUnitMinor, label: 'avg' }}
+                reference={{ value: bought.pricePerUnitMinor }}
                 formatY={(value) => perUnit(value, currency)}
                 formatX={(x) => DAY_MONTH.format(new Date(x))}
+              />
+              <Facts
+                items={[
+                  { label: 'Low', value: perUnit(Math.min(...paid), currency) },
+                  { label: 'Average', value: perUnit(bought.pricePerUnitMinor, currency) },
+                  { label: 'High', value: perUnit(Math.max(...paid), currency) },
+                ]}
+              />
+            </Card>
+          ) : null,
+          // Each fill a column of what went in; a tap reads its day and what it cost.
+          bought && fills.length >= 2 ? (
+            <Card key={`fills-${fuelUnit}`}>
+              <ColumnChart
+                large={false}
+                label={`Refuels${named}`}
+                total={bought.quantity}
+                buckets={fills.map((fill, index) => ({
+                  key: `${fill.at}-${index}`,
+                  label: DAY_MONTH.format(new Date(fill.at)).toUpperCase(),
+                  long: `${DAY_MONTH.format(new Date(fill.at))} · ${money(fill.amountMinor, currency)}`,
+                  values: { quantity: fill.quantity },
+                }))}
+                series={[{ key: 'quantity', label, color: colors.REFUELING }]}
+                format={(value) => `${value.toFixed(1)} ${label}`}
+                formatAxis={(value) => value.toFixed(0)}
               />
             </Card>
           ) : null,
@@ -493,6 +542,13 @@ function Refueling({ report }: { report: VehicleReport }) {
           ) : null,
         ];
       })}
+
+      {/* The charts above need what went in; say what is missing rather than show nothing. */}
+      {fuel.units.length === 0 ? (
+        <Empty glyph="⛽" text="Log how much went in to chart price, efficiency and refuels" />
+      ) : !efficiency.some((entry) => entry.points.length >= 2) ? (
+        <Empty glyph="⛽" text="Log the odometer with each fill to chart efficiency" />
+      ) : null}
 
       <Kpis
         items={[
@@ -604,6 +660,21 @@ function GroupTab({ report, group }: { report: VehicleReport; group: 'SERVICES' 
         </Card>
       ) : null}
 
+      {/* Only once a kind holds several bills: otherwise it is By kind again. */}
+      {detail.largest.length > 1 && detail.count > detail.byCategory.length ? (
+        <Card label="Largest">
+          <RankBars
+            rows={detail.largest.map((row) => ({
+              key: row.id,
+              label: row.description,
+              value: row.amount.amountMinor,
+              display: money(row.amount.amountMinor, currency),
+              color: colors[group],
+            }))}
+          />
+        </Card>
+      ) : null}
+
       <Entries rows={detail.rows} />
     </Stack>
   );
@@ -662,6 +733,10 @@ function Income({ report }: { report: VehicleReport }) {
             label: 'Net',
             value: money(data.net, currency),
             tone: ahead ? theme.success : theme.destructive,
+          },
+          {
+            label: 'Per entry',
+            value: data.averageMinor === null ? '—' : money(data.averageMinor, currency),
           },
           { label: `Per ${unit}`, value: rate(data.total, distance, currency) },
           {
@@ -745,7 +820,7 @@ function Routes({ report }: { report: VehicleReport }) {
     try {
       await shareMileageReport({ id: vehicleId, name: vehicle?.displayName ?? 'vehicle' }, range);
     } catch (error) {
-      Alert.alert('Could not share the report', (error as Error).message);
+      dialog('Could not share the report', (error as Error).message, undefined, FAILED);
     } finally {
       setSharing(false);
     }
@@ -1093,7 +1168,7 @@ function Distance({
 function ReportTabs({ value, onChange }: { value: ReportTab; onChange: (tab: ReportTab) => void }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
-  const scroller = useRef<ScrollView>(null);
+  const scroller = useRef<ScrollViewInstance>(null);
   const placed = useRef(false);
   const [frames, setFrames] = useState<Partial<Record<ReportTab, { x: number; width: number }>>>(
     {},
@@ -1200,7 +1275,7 @@ function Card({
     <View style={[styles.card, { backgroundColor: theme.card }, style]}>
       {label ? (
         <View style={styles.cardHead}>
-          <Eyebrow style={{ flex: 1 }}>{label}</Eyebrow>
+          <Eyebrow style={[styles.label, { flex: 1 }]}>{label}</Eyebrow>
           {trailing}
         </View>
       ) : null}
@@ -1235,7 +1310,7 @@ function Kpis({ items }: { items: (Kpi | null | false | undefined | '')[] }) {
           accessibilityLabel={`${item.label}: ${item.value}${item.unit ? ` ${item.unit}` : ''}`}
           style={[styles.kpi, { flexBasis: basis, backgroundColor: theme.card }]}
         >
-          <Eyebrow style={styles.kpiLabel}>{item.label}</Eyebrow>
+          <Eyebrow style={styles.label}>{item.label}</Eyebrow>
           <View style={styles.kpiLine}>
             <Text
               numberOfLines={1}
@@ -1298,7 +1373,7 @@ function Facts({
           accessibilityLabel={`${item.label}: ${item.value}`}
           style={{ flex: 1, gap: 2 }}
         >
-          <Eyebrow style={styles.kpiLabel}>{item.label}</Eyebrow>
+          <Eyebrow style={styles.label}>{item.label}</Eyebrow>
           <Text numberOfLines={1} style={[figure, styles.factValue, { color: theme.foreground }]}>
             {item.value}
           </Text>
@@ -1377,7 +1452,7 @@ function Entries({ rows }: { rows: readonly LedgerRow[] }) {
         scaleTo={0.98}
         style={styles.cardHead}
       >
-        <Eyebrow style={{ flex: 1 }}>Entries</Eyebrow>
+        <Eyebrow style={[styles.label, { flex: 1 }]}>Entries</Eyebrow>
         <Tag>{pad(rows.length)}</Tag>
         <Ionicons
           name={open ? 'chevron-up' : 'chevron-down'}
@@ -1422,7 +1497,7 @@ function Locked({ wall, title }: { wall: PlanWall; title: string }) {
           <Ionicons name="lock-closed" size={16} color={theme.primary} />
         </View>
         <View style={{ flex: 1, gap: 2 }}>
-          <Eyebrow>
+          <Eyebrow style={styles.label}>
             {wall.requiredPlan ? `${PLAN_NAMES[wall.requiredPlan]} plan` : 'Paid plan'}
           </Eyebrow>
           <Text style={[typeScale.headline, { color: theme.foreground }]}>{title}</Text>
@@ -1480,7 +1555,7 @@ const styles = StyleSheet.create({
   tab: { paddingTop: 4, paddingBottom: 11 },
   tabLabel: { fontSize: 14.5, lineHeight: 19, fontWeight: '600', letterSpacing: -0.1 },
   tabBar: { position: 'absolute', bottom: 0, height: 2.5, borderRadius: 2 },
-  card: { borderRadius: radius.xxl, padding: spacing.lg, gap: spacing.md },
+  card: { ...leaf('md'), padding: spacing.lg, gap: spacing.md },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 22 },
   pair: { flexDirection: 'row', gap: spacing.md },
   half: { flex: 1, minWidth: 0 },
@@ -1496,14 +1571,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: StyleSheet.hairlineWidth * 2,
-    borderRadius: radius.xxl,
+    ...leaf('md'),
     overflow: 'hidden',
   },
-  kpi: { flexGrow: 1, minWidth: 0, gap: 4, paddingHorizontal: 14, paddingVertical: 12 },
-  kpiLabel: { fontSize: 10, lineHeight: 13 },
-  kpiLine: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
-  kpiValue: { flexShrink: 1, fontSize: 18, lineHeight: 23, fontWeight: '700', letterSpacing: -0.5 },
-  kpiUnit: { fontSize: 11, fontWeight: '600' },
+  kpi: { flexGrow: 1, minWidth: 0, gap: 3, paddingHorizontal: 14, paddingVertical: 10 },
+  label: LABEL,
+  // A long unit wraps under its figure rather than cutting either.
+  kpiLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 4 },
+  kpiValue: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '700', letterSpacing: -0.5 },
+  // The unit is read whole; the figure beside it is the one that shrinks to fit.
+  kpiUnit: { flexShrink: 0, fontSize: 11, fontWeight: '600' },
   figureLine: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
   figure: { flexShrink: 1, fontSize: 22, lineHeight: 27, fontWeight: '700', letterSpacing: -0.7 },
   figureLarge: {
@@ -1517,9 +1594,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth * 2,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm + 2,
   },
-  factValue: { fontSize: 14, lineHeight: 18, fontWeight: '700' },
+  factValue: { fontSize: 13.5, lineHeight: 18, fontWeight: '700' },
   tag: {
     flexDirection: 'row',
     alignItems: 'center',

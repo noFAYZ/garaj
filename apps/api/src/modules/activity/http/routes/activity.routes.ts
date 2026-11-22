@@ -59,25 +59,30 @@ export const activityRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
       const limit = normaliseLimit(request.query.limit);
       const cursor = request.query.cursor ? decodeKeysetCursor(request.query.cursor) : undefined;
 
-      const rows = await listEvents(fastify.db, {
-        vehicleId: request.params.vehicleId,
-        eventTypes: toArray(request.query.eventType),
-        limit,
-        cursor: cursor ? { occurredAt: cursor.at, id: cursor.id } : undefined,
-      });
+      /*
+       * The first page's three reads go out together — one round trip, not two. A later page
+       * carries no schedules or tasks, so it reads only the events.
+       */
+      const [rows, plans, tasks] = await Promise.all([
+        listEvents(fastify.db, {
+          vehicleId: request.params.vehicleId,
+          eventTypes: toArray(request.query.eventType),
+          limit,
+          cursor: cursor ? { occurredAt: cursor.at, id: cursor.id } : undefined,
+        }),
+        cursor ? [] : listPlans(fastify.db, request.params.vehicleId),
+        cursor
+          ? []
+          : listTasks(fastify.db, {
+              garageIds: [garageId],
+              vehicleId: request.params.vehicleId,
+              openOnly: true,
+            }),
+      ]);
       const page = toPage(rows, limit, (row) => encodeCursor([row.occurredAt, row.id]));
       const done = { data: page.data.map(serializeEvent), pagination: page.pagination };
 
       if (cursor) return { planned: [], done };
-
-      const [plans, tasks] = await Promise.all([
-        listPlans(fastify.db, request.params.vehicleId),
-        listTasks(fastify.db, {
-          garageIds: [garageId],
-          vehicleId: request.params.vehicleId,
-          openOnly: true,
-        }),
-      ]);
 
       const planned: PlannedItem[] = [
         ...plans.map((plan) => ({

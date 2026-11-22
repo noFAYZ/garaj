@@ -18,6 +18,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 import { ApiError, planWall, RequestTimeoutError, type PlanWall } from '@vehicle-os/api-client';
+import type {
+  CompleteMaintenance,
+  CreateEvent,
+  CreateMaintenancePlan,
+  CreateTask,
+  CreateVehicle,
+  FinalizeDocumentUpload,
+  FinalizePhotoUpload,
+  LogMaintenance,
+  Task,
+  UpdateGarage,
+  UpdateUserProfile,
+  UpdateVehicle,
+} from '@vehicle-os/contracts';
 import { newId } from '@vehicle-os/utils';
 import { api } from './api';
 import { uploadDocumentFile, uploadPhotoFile } from './file-picker';
@@ -29,22 +43,25 @@ const QUEUE_KEY = 'vehicleos.pending-writes';
  * What a queued write is: a named action with its arguments, not a serialised HTTP request. The
  * endpoint can change between the version that queued an entry and the one that sends it, and a
  * named action lets this file decide what to do about that.
+ *
+ * Each body is the contract the endpoint validates, so a change to one is a compile error at
+ * every form that queues it — not an entry that sits on a phone and fails when it finally sends.
  */
 export type PendingWrite = (
-  | { kind: 'event'; vehicleId: string; body: Record<string, unknown> }
+  | { kind: 'event'; vehicleId: string; body: CreateEvent }
   /** Completing a schedule: the service record, the activity item and the restarted clock. */
-  | { kind: 'maintenance'; vehicleId: string; planId: string; body: Record<string, unknown> }
+  | { kind: 'maintenance'; vehicleId: string; planId: string; body: CompleteMaintenance }
   /** An unscheduled service, filed as a maintenance record. */
-  | { kind: 'maintenance-log'; vehicleId: string; body: Record<string, unknown> }
-  | { kind: 'task-create'; vehicleId: string | null; body: Record<string, unknown> }
-  | { kind: 'plan-create'; vehicleId: string; body: Record<string, unknown> }
-  | { kind: 'task-status'; taskId: string; status: string }
+  | { kind: 'maintenance-log'; vehicleId: string; body: LogMaintenance }
+  | { kind: 'task-create'; vehicleId: string | null; body: CreateTask }
+  | { kind: 'plan-create'; vehicleId: string; body: CreateMaintenancePlan }
+  | { kind: 'task-status'; taskId: string; status: Task['status'] }
   /** A vehicle added offline. Its id is chosen here, so later writes can already refer to it. */
-  | { kind: 'vehicle-create'; body: Record<string, unknown> }
-  | { kind: 'vehicle-update'; vehicleId: string; body: Record<string, unknown> }
+  | { kind: 'vehicle-create'; body: CreateVehicle }
+  | { kind: 'vehicle-update'; vehicleId: string; body: UpdateVehicle }
   | { kind: 'vehicle-archive'; vehicleId: string }
-  | { kind: 'profile-update'; body: Record<string, unknown> }
-  | { kind: 'garage-update'; garageId: string; body: Record<string, unknown> }
+  | { kind: 'profile-update'; body: UpdateUserProfile }
+  | { kind: 'garage-update'; garageId: string; body: UpdateGarage }
   /**
    * A document or photo, with its bytes copied somewhere durable (`local-files`). `path` names
    * that copy (older entries hold its absolute path), and it is deleted once the upload finishes
@@ -60,7 +77,7 @@ export type PendingWrite = (
       name: string;
       mimeType: string;
       size: number;
-      body: Record<string, unknown>;
+      body: FinalizeDocumentUpload | FinalizePhotoUpload;
     }
 ) & {
   id: string;
@@ -213,37 +230,37 @@ export async function keptFiles(): Promise<string[]> {
 async function send(entry: PendingWrite): Promise<void> {
   switch (entry.kind) {
     case 'event':
-      await api.events.create(entry.vehicleId, entry.body as never);
+      await api.events.create(entry.vehicleId, entry.body);
       return;
     case 'maintenance':
-      await api.maintenance.complete(entry.vehicleId, entry.planId, entry.body as never);
+      await api.maintenance.complete(entry.vehicleId, entry.planId, entry.body);
       return;
     case 'maintenance-log':
-      await api.maintenance.log(entry.vehicleId, entry.body as never);
+      await api.maintenance.log(entry.vehicleId, entry.body);
       return;
     case 'task-create':
-      await api.tasks.create(entry.body as never);
+      await api.tasks.create(entry.body);
       return;
     case 'plan-create':
-      await api.maintenance.createPlan(entry.vehicleId, entry.body as never);
+      await api.maintenance.createPlan(entry.vehicleId, entry.body);
       return;
     case 'task-status':
-      await api.tasks.update(entry.taskId, { status: entry.status as never });
+      await api.tasks.update(entry.taskId, { status: entry.status });
       return;
     case 'vehicle-create':
-      await api.vehicles.create(entry.body as never);
+      await api.vehicles.create(entry.body);
       return;
     case 'vehicle-update':
-      await api.vehicles.update(entry.vehicleId, entry.body as never);
+      await api.vehicles.update(entry.vehicleId, entry.body);
       return;
     case 'vehicle-archive':
       await api.vehicles.archive(entry.vehicleId);
       return;
     case 'profile-update':
-      await api.users.updateMe(entry.body as never);
+      await api.users.updateMe(entry.body);
       return;
     case 'garage-update':
-      await api.garages.update(entry.garageId, entry.body as never);
+      await api.garages.update(entry.garageId, entry.body);
       return;
     case 'upload':
       await sendUpload(entry);
@@ -267,9 +284,14 @@ async function sendUpload(entry: Extract<PendingWrite, { kind: 'upload' }>): Pro
     size: entry.size,
   };
   if (entry.target === 'document') {
-    await uploadDocumentFile(entry.vehicleId, file, entry.body as never, entry.uploadId);
+    await uploadDocumentFile(
+      entry.vehicleId,
+      file,
+      entry.body as FinalizeDocumentUpload,
+      entry.uploadId,
+    );
   } else {
-    await uploadPhotoFile(entry.vehicleId, file, entry.body as never, entry.uploadId);
+    await uploadPhotoFile(entry.vehicleId, file, entry.body as FinalizePhotoUpload, entry.uploadId);
   }
   await forgetLocally(entry.path);
 }
@@ -283,11 +305,18 @@ class LostFileError extends Error {
 }
 
 /**
- * Failures that are the connection's, and so pass with time: no route, a timeout, the server
- * down or the session expired. They wait for the next run however often they happen.
+ * Failures that pass with time: no route, a timeout, the server down, the session expired, or
+ * the server asking for a pause — too many requests (429) or a request it gave up waiting for
+ * (408). None says anything about the entry, so they wait for the next run however often they
+ * happen; marking a fill-up "Not saved" because a long-offline phone sent too much at once would
+ * lose it for no reason.
  */
 function waitsForNetwork(error: unknown): boolean {
-  if (error instanceof ApiError) return error.status >= 500 || error.status === 401;
+  if (error instanceof ApiError) {
+    return (
+      error.status >= 500 || error.status === 401 || error.status === 408 || error.status === 429
+    );
+  }
   if (error instanceof RequestTimeoutError) return true;
   // React Native's `fetch` fails with "Network request failed"; an upload cut off mid-way says so too.
   return error instanceof Error && /network/i.test(error.message);

@@ -7,6 +7,7 @@
  */
 
 import type {
+  VehicleParts,
   ApiKey,
   ConditionAssessment,
   ConditionSummary,
@@ -60,6 +61,11 @@ export interface QueryConfig<T> {
   refetchOnWindowFocus?: boolean;
 }
 
+/** The API's largest vehicle page, which is also the largest fleet a plan holds. */
+const VEHICLES_PAGE = 100;
+/** The report lists' page size: `LEDGER_PAGE_MAX` on the API. */
+const LEDGER_PAGE = 500;
+
 export const queryKeys = {
   me: () => ['me'] as const,
   apiKeys: () => ['me', 'api-keys'] as const,
@@ -85,6 +91,8 @@ export const queryKeys = {
   activity: (vehicleId: string, filters?: Record<string, unknown>) =>
     ['vehicles', vehicleId, 'activity', filters ?? {}] as const,
   photos: (vehicleId: string) => ['vehicles', vehicleId, 'photos'] as const,
+  // Under the vehicle, so an entry saved anywhere that invalidates it refreshes its parts too.
+  parts: (vehicleId: string) => ['vehicles', vehicleId, 'parts'] as const,
 
   // Under the 'vehicles' prefix for the same reason: completing a service moves the plan,
   // the timeline and the odometer, and one invalidation should reach all three.
@@ -172,7 +180,12 @@ export function vehiclesQuery(
 ): QueryConfig<Page<Vehicle>> {
   return {
     queryKey: queryKeys.vehicles(filters),
-    queryFn: () => client.vehicles.list(filters),
+    /*
+     * The whole fleet in one page — every screen that lists vehicles (the garage, the pickers,
+     * a bay's number) treats this as all of them. The server's default page is 25, and a
+     * Business plan holds 100, so without the limit vehicle 26 onwards was simply missing.
+     */
+    queryFn: () => client.vehicles.list({ ...filters, limit: VEHICLES_PAGE }),
     ...options,
   };
 }
@@ -224,6 +237,18 @@ export function photosQuery(
   return {
     queryKey: queryKeys.photos(vehicleId),
     queryFn: () => client.photos.list(vehicleId),
+    ...options,
+  };
+}
+
+export function partsQuery(
+  client: ApiClient,
+  vehicleId: string,
+  options?: Options<VehicleParts>,
+): QueryConfig<VehicleParts> {
+  return {
+    queryKey: queryKeys.parts(vehicleId),
+    queryFn: () => client.parts.list(vehicleId),
     ...options,
   };
 }
@@ -532,8 +557,8 @@ export function passportQuery(
 /**
  * Every page of a list, for a report that has to see all of it.
  *
- * ponytail: capped at 20 pages (2,000 rows) per window — years of daily entries. Past that the
- * report needs a server-side aggregate, not more round trips.
+ * ponytail: capped at 20 pages (10,000 rows) per window — decades of daily entries, and one or
+ * two requests for almost everyone. Past that the report needs a server-side aggregate.
  */
 async function allPages<T>(fetch: (cursor?: string) => Promise<Page<T>>, cap = 20): Promise<T[]> {
   const rows: T[] = [];
@@ -557,7 +582,7 @@ export function expenseLedgerQuery(
   return {
     queryKey: queryKeys.ledger(vehicleId, from),
     queryFn: () =>
-      allPages((cursor) => client.expenses.list(vehicleId, { from, limit: 100, cursor })),
+      allPages((cursor) => client.expenses.list(vehicleId, { from, limit: LEDGER_PAGE, cursor })),
     ...options,
   };
 }
@@ -572,7 +597,11 @@ export function readingsQuery(
   return {
     queryKey: queryKeys.readings(vehicleId, from),
     queryFn: async () =>
-      (await allPages((cursor) => client.events.list(vehicleId, { from, limit: 100, cursor })))
+      (
+        await allPages((cursor) =>
+          client.events.list(vehicleId, { from, limit: LEDGER_PAGE, cursor }),
+        )
+      )
         .filter((event) => event.odometer !== null)
         .map((event) => ({ occurredAt: event.occurredAt, odometer: event.odometer })),
     ...options,
@@ -589,7 +618,7 @@ export function incomeLedgerQuery(
   return {
     queryKey: queryKeys.income(vehicleId, from),
     queryFn: () =>
-      allPages((cursor) => client.income.list(vehicleId, { from, limit: 100, cursor })),
+      allPages((cursor) => client.income.list(vehicleId, { from, limit: LEDGER_PAGE, cursor })),
     ...options,
   };
 }

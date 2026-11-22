@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { AiAttachment, EntryDraft, Vehicle } from '@vehicle-os/contracts';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { AiAttachment, EntryDraft, MaintenancePlan, Vehicle } from '@vehicle-os/contracts';
 import {
   EVENT_TYPES,
   TRIP_PURPOSES,
   isKnownCurrency,
   minorUnitExponent,
+  seedPartLines,
   type EventType,
   type TripPurpose,
 } from '@vehicle-os/domain';
@@ -41,8 +42,10 @@ import {
   symbolOf,
 } from '@vehicle-os/ui';
 import { newId } from '@vehicle-os/utils';
+import { readDue } from '@/components/activity-feed';
 import { Fact, Line, PhotoKey, Rail } from '@/components/add-kit';
 import { BrandLogo } from '@/components/brand-logo';
+import { PartLinesField, toLine, useParts, type PartDraft } from '@/components/parts-kit';
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
@@ -51,13 +54,14 @@ import { useReportDirty } from '@/lib/discard';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
 import { pickPhoto, readBase64, type PickedFile } from '@/lib/file-picker';
 import { formatDistance, formatMoney, humanise, toMinorUnits } from '@/lib/format';
-import { Eyebrow, FigureInput, Panel, PanelCell, Segmented } from '@/lib/instrument';
+import { Eyebrow, FigureInput, Glyph, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { haptic, PressableScale, Pulse, Rise } from '@/lib/motion';
 import { enqueue, enqueueUpload, flush } from '@/lib/offline';
 import { askForPush } from '@/lib/push';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 import { useUnitsFor } from '@/lib/vehicle-units';
+import { dialog } from '@/lib/dialog';
 
 export type ActivityMode = 'done' | 'planned';
 export type QuickAction = 'fuel' | 'odometer' | 'service';
@@ -100,7 +104,10 @@ const READABLE = new Set<string>(['image/jpeg', 'image/png', 'image/webp']);
 /** The reader's limit on a photo, as base64 (about 3 MB of picture). */
 const READ_LIMIT = 4_000_000;
 /** The papers a service's photo is filed as, where the entry it belongs to has no id yet. */
-const PAPER: Partial<Record<EventType, string>> = { MAINTENANCE: 'SERVICE_INVOICE' };
+/** The paper a service's photo is filed as, when the service itself cannot hold it yet. */
+const SERVICE_PAPER = 'SERVICE_INVOICE' as const;
+/** The kinds that put something into the vehicle, and so ask what went in. */
+const PART_KINDS = new Set<EventType>(['MAINTENANCE', 'REPAIR', 'PART_INSTALLED', 'MODIFICATION']);
 
 /*
  * The vehicle an entry was last saved for, so the next one from the app's own + starts there.
@@ -132,6 +139,7 @@ export function AddActivity({
   initialMode = 'done',
   initialKind = null,
   initialLine = '',
+  initialScheduleId = null,
   initialPhoto = null,
   lead,
   inSheet = false,
@@ -145,6 +153,8 @@ export function AddActivity({
   initialMode?: ActivityMode;
   initialKind?: EventType | null;
   initialLine?: string;
+  /** A reminder's Log: the form opens on completing that schedule. */
+  initialScheduleId?: string | null;
   /** A photo taken before the form opened — the sheet's "A receipt". */
   initialPhoto?: PickedFile | null;
   /** Beside the mode switch: the sheet's back key. */
@@ -158,6 +168,7 @@ export function AddActivity({
   onDone: () => void;
   onAddVehicle: () => void;
 }) {
+  const theme = useTheme();
   const [mode, setMode] = useState<ActivityMode>(initialMode);
   const vehicles = useQuery(vehiclesQuery(api));
   const bound = useQuery({ ...vehicleQuery(api, vehicleId ?? ''), enabled: Boolean(vehicleId) });
@@ -207,16 +218,24 @@ export function AddActivity({
     <View style={inSheet ? styles.sheet : styles.screen}>
       <View style={[styles.top, inSheet ? null : { paddingHorizontal: spacing.lg }]}>
         {lead}
-        <View style={{ flex: 1 }}>
-          <Segmented
-            value={mode}
-            options={[
-              { value: 'done', label: 'Done' },
-              { value: 'planned', label: 'Reminder' },
-            ]}
-            onChange={setMode}
-          />
-        </View>
+        {/* Opened for a reminder, the form is for completing it: there is no mode to choose. */}
+        {initialScheduleId ? (
+          <Text style={[typeScale.headline, { flex: 1, color: theme.foreground }]}>
+            Log reminder
+          </Text>
+        ) : (
+          <View style={{ flex: 1 }}>
+            <Segmented
+              small
+              value={mode}
+              options={[
+                { value: 'done', label: 'Done' },
+                { value: 'planned', label: 'Reminder' },
+              ]}
+              onChange={setMode}
+            />
+          </View>
+        )}
       </View>
 
       {waiting ? (
@@ -229,6 +248,7 @@ export function AddActivity({
             vehicle={vehicle}
             initialKind={initialKind}
             initialLine={initialLine}
+            initialScheduleId={initialScheduleId}
             initialPhoto={initialPhoto}
             inSheet={inSheet}
             footerInset={footerInset}
@@ -287,6 +307,7 @@ function DoneForm({
   vehicle,
   initialKind,
   initialLine,
+  initialScheduleId,
   initialPhoto,
   inSheet,
   footerInset,
@@ -298,6 +319,7 @@ function DoneForm({
   vehicle: Vehicle;
   initialKind: EventType | null;
   initialLine: string;
+  initialScheduleId: string | null;
   initialPhoto: PickedFile | null;
   inSheet: boolean;
   footerInset: number;
@@ -323,7 +345,7 @@ function DoneForm({
   const parsed = useMemo(() => parseDone(line, { lastReading }), [line, lastReading]);
   // Set by hand; `null` is "not touched", and then the line, the photo, the default decide.
   const [kindSet, setKind] = useState<EventType | null>(initialKind);
-  const [scheduleId, setScheduleId] = useState<string | null>(null);
+  const [scheduleId, setScheduleId] = useState<string | null>(initialScheduleId);
   const [daySet, setDay] = useState<string | null>(null);
   const [odometerSet, setOdometer] = useState<string | null>(null);
   const [costSet, setCost] = useState<string | null>(null);
@@ -335,12 +357,15 @@ function DoneForm({
   const [rate, setRate] = useState('');
   const [photo, setPhoto] = useState<PickedFile | null>(initialPhoto);
   const [scan, setScan] = useState<Scan | null>(null);
+  // What went in, once a line is touched; until then, what the reminder being completed names.
+  const [linesSet, setLines] = useState<PartDraft[] | null>(null);
   const [saved, setSaved] = useState(false);
   // Something typed or a photo added: a kind or a day chip is one tap to choose again.
   useReportDirty(
     !saved &&
       (line.trim() !== initialLine.trim() ||
         [odometerSet, costSet, quantitySet, placeSet, distanceSet, rate].some(typed) ||
+        linesSet !== null ||
         photo !== initialPhoto),
     onDirty,
   );
@@ -356,6 +381,19 @@ function DoneForm({
   const receipt = scan?.state === 'read' ? scan.draft : null;
   const schedule = schedules.find((item) => item.id === scheduleId) ?? null;
   const kind: EventType = schedule ? 'MAINTENANCE' : (kindSet ?? parsed.kind ?? kinds[0]!);
+  /*
+   * Completing a reminder brings its parts, each the product fitted last time: "Oil change"
+   * arrives with the oil and the filter already filled, and is saved as it was before.
+   */
+  const { current: fittedNow, positions: fittable } = useParts(vehicle);
+  const takesParts = schedule !== null || PART_KINDS.has(kind);
+  const readParts = receipt?.parts;
+  const job = schedule?.title ?? null;
+  const seeded = useMemo(
+    () => seedPartLines(newId, vehicle, fittedNow, fittable, job, readParts),
+    [job, readParts, fittable, fittedNow, vehicle],
+  );
+  const lines = takesParts ? (linesSet ?? seeded) : [];
   const today = localDay();
   const day = daySet ?? parsed.day ?? receipt?.date ?? today;
   const odometer =
@@ -455,7 +493,11 @@ function DoneForm({
       });
       if (ticket !== asked.current) return;
       const found = [draft.amount, draft.litres, draft.provider, draft.date, draft.odometer];
-      const filled = found.some((value) => value !== undefined) || Boolean(draft.note);
+      // A part's label reads nothing but the part: that is a read too.
+      const filled =
+        found.some((value) => value !== undefined) ||
+        Boolean(draft.note) ||
+        Boolean(draft.parts?.length);
       if (filled) haptic.success();
       setScan(filled ? { state: 'read', draft } : { state: 'nothing' });
     } catch {
@@ -488,21 +530,26 @@ function DoneForm({
     void read(picked);
   };
 
-  // Three choices at most — all an Android alert shows. Another from the library is a hold.
+  // Three choices, as when this was the phone's own alert. Another from the library is a hold.
   const photoOptions = () =>
-    Alert.alert(`The ${photoIs}`, 'Hold the photo to choose another from your library.', [
-      { text: 'Retake', onPress: () => void attach('camera') },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () => {
-          asked.current += 1;
-          setPhoto(null);
-          setScan(null);
+    dialog(
+      `The ${photoIs}`,
+      'Hold the photo to choose another from your library.',
+      [
+        { text: 'Retake', onPress: () => void attach('camera') },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            asked.current += 1;
+            setPhoto(null);
+            setScan(null);
+          },
         },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { icon: 'image-outline' },
+    );
 
   const save = useMutation({
     mutationFn: async () => {
@@ -517,6 +564,8 @@ function DoneForm({
       // The measured amount leads the note, where the logbook reads it back as a fact.
       const note = measure && quantity ? `${quantity} ${quantityIn}` : '';
       const labour = amount !== undefined ? { laborCostAmountMinor: amount, costCurrency } : {};
+      // In the same write as the entry: offline, the lines queue and replay with it.
+      const parts = lines.length > 0 ? { parts: lines.map(toLine) } : {};
       // A read still on its way has nothing left to fill: what is on screen is the entry now.
       asked.current += 1;
       const upload = photo
@@ -535,24 +584,29 @@ function DoneForm({
          * A service goes in as a maintenance record, as on the web, so the history a buyer reads
          * has it; completing a schedule also restarts its clock.
          */
-        const body = {
+        const common = {
           // Chosen here, so a replay after a lost reply lands on this record rather than a second.
           id: newId(),
           performedAt: when,
-          ...(schedule
-            ? title
-              ? { workPerformed: title }
-              : {}
-            : { title: title || humanise(kind) }),
           ...(where ? { provider: where } : {}),
           ...odometerFields,
           ...labour,
+          ...parts,
         };
-        await enqueue(
-          schedule
-            ? { kind: 'maintenance', vehicleId, planId: schedule.id, body }
-            : { kind: 'maintenance-log', vehicleId, body },
-        );
+        if (schedule) {
+          await enqueue({
+            kind: 'maintenance',
+            vehicleId,
+            planId: schedule.id,
+            body: { ...common, ...(title ? { workPerformed: title } : {}) },
+          });
+        } else {
+          await enqueue({
+            kind: 'maintenance-log',
+            vehicleId,
+            body: { ...common, title: title || humanise(kind) },
+          });
+        }
         /*
          * ponytail: a queued service has no event id to file its photo against, so the photo is
          * kept as the service's invoice in Documents. Link it once the server takes a client id
@@ -563,7 +617,7 @@ function DoneForm({
             ...upload,
             target: 'document',
             body: {
-              documentType: PAPER.MAINTENANCE,
+              documentType: SERVICE_PAPER,
               title: title || schedule?.title || humanise(kind),
               issuedOn: day,
             },
@@ -584,6 +638,7 @@ function DoneForm({
             ...(where ? { provider: where } : {}),
             ...odometerFields,
             ...(amount !== undefined ? { costAmountMinor: amount, costCurrency } : {}),
+            ...parts,
             // A purpose is what puts a trip in the mileage log.
             ...(trip && purpose && distance
               ? {
@@ -638,9 +693,73 @@ function DoneForm({
     ? `Complete ${schedule.title}`
     : `Add ${humanise(kind).toLowerCase()}${price ? ` · ${price}` : ''}`;
   const empty =
-    !line.trim() && !odometer && !cost && !quantity && !photo && !schedule && !receipt?.note;
+    !line.trim() &&
+    !odometer &&
+    !cost &&
+    !quantity &&
+    !photo &&
+    !schedule &&
+    !receipt?.note &&
+    lines.length === 0;
   const odometerError =
     reading !== null && reading > 100_000_000 ? 'That is past 100,000,000' : null;
+
+  // Half a row each, so every note is a few words.
+  const odometerCell = asksOdometer(kind) ? (
+    <PanelCell
+      label={mark('Odometer', auto.odometer)}
+      note={
+        odometerError ??
+        (delta === null
+          ? lastReading === null
+            ? 'Optional'
+            : `Last ${lastReading.toLocaleString()}`
+          : delta >= 0
+            ? `+${delta.toLocaleString()} ${unit}`
+            : 'Below the last')
+      }
+      noteTone={odometerError ? 'destructive' : delta !== null && delta < 0 ? 'warning' : undefined}
+    >
+      <FigureInput
+        unit={unit}
+        value={reading !== null ? reading.toLocaleString() : ''}
+        onChangeText={(text) => setOdometer(digitsOnly(text, 10))}
+        placeholder={lastReading !== null ? lastReading.toLocaleString() : '0'}
+        keyboardType="number-pad"
+        accessibilityLabel={`Odometer in ${unit}`}
+      />
+    </PanelCell>
+  ) : null;
+  const costCell = (
+    <PanelCell
+      label={mark(costLabel(kind), auto.cost)}
+      note={cost ? 'Counts as spending' : 'Optional'}
+    >
+      <FigureInput
+        unit={costCurrency}
+        value={cost}
+        onChangeText={(text) => setCost(amountOnly(text))}
+        placeholder="0.00"
+        keyboardType="decimal-pad"
+        accessibilityLabel={`${costLabel(kind)} in ${costCurrency}`}
+      />
+    </PanelCell>
+  );
+  const quantityCell = measure ? (
+    <PanelCell
+      label={mark(measure === 'L' ? 'Fuel' : 'Energy', auto.quantity)}
+      note={measure === 'L' ? 'For economy' : 'For cost per kWh'}
+    >
+      <FigureInput
+        unit={quantityIn}
+        value={quantity}
+        onChangeText={(text) => setQuantity(amountOnly(text))}
+        placeholder="0.0"
+        keyboardType="decimal-pad"
+        accessibilityLabel={`${measure === 'L' ? 'Fuel' : 'Energy'} in ${quantityIn}`}
+      />
+    </PanelCell>
+  ) : null;
 
   return (
     <View style={inSheet ? styles.sheet : { flex: 1 }}>
@@ -654,23 +773,61 @@ function DoneForm({
         ]}
       >
         {head}
-        <Rail
-          label="Kind"
-          inset={spacing.lg}
-          items={kinds.map((option) => ({
-            key: option,
-            label: humanise(option),
-            glyph: eventEmoji(option),
-            selected: option === kind,
-            marked: option === kind && auto.kind,
-            disabled: schedule !== null && option !== kind,
-            onPress: () => {
-              // Choosing a kind is choosing not to complete a schedule.
+        {schedule ? (
+          <Completing
+            schedule={schedule}
+            unit={odometerUnit}
+            onUnlink={() => {
+              haptic.selection();
               setScheduleId(null);
-              setKind(option);
-            },
-          }))}
-        />
+            }}
+          />
+        ) : scheduleId !== null && activity.isPending ? (
+          // The reminder it was opened for, while the vehicle's list arrives.
+          <Skeleton width="100%" height={60} radius={radius.xl} />
+        ) : (
+          <>
+            <Rail
+              label="Kind"
+              inset={spacing.lg}
+              items={kinds.map((option) => ({
+                key: option,
+                label: humanise(option),
+                glyph: eventEmoji(option),
+                selected: option === kind,
+                marked: option === kind && auto.kind,
+                onPress: () => setKind(option),
+              }))}
+            />
+            {/* Up here, not under the figures: completing one decides what the rest are for. */}
+            {offered.length > 0 ? (
+              <Rail
+                label="Complete a reminder"
+                inset={spacing.lg}
+                items={offered.map((item) => ({
+                  key: item.id,
+                  label: item.title,
+                  glyph: jobEmoji(item.title),
+                  selected: false,
+                  marked: names(line, item.title),
+                  trailing:
+                    item.status === 'OVERDUE' || item.status === 'DUE_SOON' ? (
+                      <View
+                        style={[
+                          styles.dot,
+                          {
+                            backgroundColor:
+                              item.status === 'OVERDUE' ? theme.destructive : theme.warning,
+                          },
+                        ]}
+                      />
+                    ) : undefined,
+                  onPress: () => setScheduleId(item.id),
+                }))}
+              />
+            ) : null}
+          </>
+        )}
 
         <View style={{ gap: 6 }}>
           <Line
@@ -687,7 +844,14 @@ function DoneForm({
             returnKeyType="done"
           />
           {line.trim() === '' && again.length > 0 && !schedule ? (
-            <View style={styles.wrap}>
+            // One row that scrolls, however long the vehicle's own titles run.
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              style={{ marginHorizontal: -spacing.lg }}
+              contentContainerStyle={styles.again}
+            >
               {again.map((words) => (
                 <Fact
                   key={words}
@@ -696,75 +860,33 @@ function DoneForm({
                   onPress={() => setLine(`${words} `)}
                 />
               ))}
-            </View>
-          ) : (
+            </ScrollView>
+          ) : line.trim() !== '' || receipt?.note ? (
             <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
-              {line.trim() === '' && !receipt?.note
-                ? 'Say it in one go — amounts, km, the day and “at” a place are picked out.'
-                : `Saved as “${title || schedule?.title || humanise(kind)}”`}
+              Saved as “{title || schedule?.title || humanise(kind)}”
             </Text>
-          )}
+          ) : null}
         </View>
 
-        {/* The figures a logbook line is made of, as one panel: only the ones this kind takes. */}
+        {/*
+         * The figures a logbook line is made of, two to a row: a fill's cost and litres side by
+         * side with the odometer under them; anything else its odometer beside its cost.
+         */}
         <Panel>
-          {asksOdometer(kind) ? (
-            <PanelCell
-              label={mark('Odometer', auto.odometer)}
-              note={
-                odometerError ??
-                (delta === null
-                  ? lastReading === null
-                    ? 'Optional'
-                    : `Last ${lastReading.toLocaleString()} ${unit}`
-                  : delta >= 0
-                    ? `+${delta.toLocaleString()} ${unit} since the last reading`
-                    : 'Below the last reading')
-              }
-              noteTone={
-                odometerError ? 'destructive' : delta !== null && delta < 0 ? 'warning' : undefined
-              }
-            >
-              <FigureInput
-                unit={unit}
-                value={reading !== null ? reading.toLocaleString() : ''}
-                onChangeText={(text) => setOdometer(digitsOnly(text, 10))}
-                placeholder={lastReading !== null ? lastReading.toLocaleString() : '0'}
-                keyboardType="number-pad"
-                accessibilityLabel={`Odometer in ${unit}`}
-              />
-            </PanelCell>
-          ) : null}
-          <View style={styles.row}>
-            <PanelCell
-              label={mark(costLabel(kind), auto.cost)}
-              note={cost ? 'Filed as spending too' : 'Empty if it was free'}
-            >
-              <FigureInput
-                unit={costCurrency}
-                value={cost}
-                onChangeText={(text) => setCost(amountOnly(text))}
-                placeholder="0.00"
-                keyboardType="decimal-pad"
-                accessibilityLabel={`${costLabel(kind)} in ${costCurrency}`}
-              />
-            </PanelCell>
-            {measure ? (
-              <PanelCell
-                label={mark(measure === 'L' ? 'Fuel' : 'Energy', auto.quantity)}
-                note={measure === 'L' ? 'For the economy' : 'For the cost per kWh'}
-              >
-                <FigureInput
-                  unit={quantityIn}
-                  value={quantity}
-                  onChangeText={(text) => setQuantity(amountOnly(text))}
-                  placeholder="0.0"
-                  keyboardType="decimal-pad"
-                  accessibilityLabel={`${measure === 'L' ? 'Fuel' : 'Energy'} in ${quantityIn}`}
-                />
-              </PanelCell>
-            ) : null}
-          </View>
+          {measure ? (
+            <>
+              <View style={styles.row}>
+                {costCell}
+                {quantityCell}
+              </View>
+              {odometerCell}
+            </>
+          ) : (
+            <View style={styles.row}>
+              {odometerCell}
+              {costCell}
+            </View>
+          )}
           {trip && purpose ? (
             <View style={styles.row}>
               <PanelCell
@@ -773,7 +895,7 @@ function DoneForm({
                   tripShort
                     ? 'Needed for the log'
                     : distanceSet === null && measured
-                      ? 'From the last reading'
+                      ? 'From the odometer'
                       : 'Or the odometer'
                 }
                 noteTone={tripShort ? 'warning' : undefined}
@@ -832,34 +954,7 @@ function DoneForm({
             : null}
         </View>
 
-        {offered.length > 0 ? (
-          <Rail
-            label="Completes a schedule"
-            inset={spacing.lg}
-            items={offered.map((item) => ({
-              key: item.id,
-              label: item.title,
-              glyph: item.id === scheduleId ? undefined : jobEmoji(item.title),
-              selected: item.id === scheduleId,
-              marked: item.id !== scheduleId && names(line, item.title),
-              trailing:
-                item.id === scheduleId ? (
-                  <Ionicons name="checkmark" size={15} color={theme.primaryForeground} />
-                ) : item.status === 'OVERDUE' || item.status === 'DUE_SOON' ? (
-                  <View
-                    style={[
-                      styles.dot,
-                      {
-                        backgroundColor:
-                          item.status === 'OVERDUE' ? theme.destructive : theme.warning,
-                      },
-                    ]}
-                  />
-                ) : undefined,
-              onPress: () => setScheduleId(item.id === scheduleId ? null : item.id),
-            }))}
-          />
-        ) : null}
+        {takesParts ? <PartLinesField vehicle={vehicle} lines={lines} onChange={setLines} /> : null}
 
         {scan ? <ScanNote scan={scan} photo={photoIs} /> : null}
 
@@ -900,8 +995,8 @@ function DoneForm({
         <View style={{ flex: 1 }}>
           <Button
             label={action}
+            icon={schedule ? 'checkmark' : undefined}
             variant="primary"
-            size="lg"
             loading={save.isPending}
             disabled={empty || tripShort || Boolean(odometerError)}
             onPress={() => save.mutate()}
@@ -909,6 +1004,61 @@ function DoneForm({
         </View>
       </View>
     </View>
+  );
+}
+
+/**
+ * The reminder this entry completes, at the head of the form where the kind would be: its glyph,
+ * its name and how due it is, in the tone its row wears. × logs a plain service instead.
+ */
+function Completing({
+  schedule,
+  unit,
+  onUnlink,
+}: {
+  schedule: MaintenancePlan;
+  unit: Vehicle['odometerUnit'];
+  onUnlink: () => void;
+}) {
+  const theme = useTheme();
+  const { headline, tone } = readDue(schedule, unit);
+  const color =
+    tone === 'destructive'
+      ? theme.destructive
+      : tone === 'warning'
+        ? theme.warning
+        : theme.mutedForeground;
+  return (
+    <Rise>
+      <View
+        accessible
+        accessibilityLabel={`Completing ${schedule.title}, ${headline}`}
+        style={[
+          styles.completing,
+          { backgroundColor: theme.cardRaised, borderColor: theme.border },
+        ]}
+      >
+        <Glyph size={28}>{jobEmoji(schedule.title)}</Glyph>
+        <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+          <Text numberOfLines={1} style={[styles.completingTitle, { color: theme.foreground }]}>
+            {schedule.title}
+          </Text>
+          <Text numberOfLines={1} style={[styles.completingDue, { color }]}>
+            {headline}
+          </Text>
+        </View>
+        <PressableScale
+          onPress={onUnlink}
+          accessibilityRole="button"
+          accessibilityLabel={`Not ${schedule.title}: log something else`}
+          hitSlop={8}
+          scaleTo={0.88}
+          style={[styles.unlink, { backgroundColor: theme.muted }]}
+        >
+          <Ionicons name="close" size={15} color={theme.mutedForeground} />
+        </PressableScale>
+      </View>
+    </Rise>
   );
 }
 
@@ -1136,13 +1286,12 @@ function PlannedForm({
             accessibilityHint="“Every 10,000 km”, “on 11 Nov” and “next month” are picked out"
             returnKeyType="done"
           />
-          <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
-            {line.trim() === ''
-              ? 'Pick a job, or say it — “every 10,000 km”, “on 11 Nov”, “next month”.'
-              : title
-                ? `Saved as “${title}”`
-                : 'Say what needs doing, then when.'}
-          </Text>
+          {/* The placeholder and the jobs above say how; under it, only what it read back. */}
+          {line.trim() !== '' ? (
+            <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
+              {title ? `Saved as “${title}”` : 'Say what needs doing, then when.'}
+            </Text>
+          ) : null}
         </View>
 
         {vehicle ? (
@@ -1288,7 +1437,6 @@ function PlannedForm({
           <Button
             label={action}
             variant="primary"
-            size="lg"
             loading={save.isPending}
             disabled={!title || missingInterval || (!repeats && !garageId)}
             onPress={() => save.mutate()}
@@ -1434,7 +1582,7 @@ function NoVehicle({ onAddVehicle }: { onAddVehicle: () => void }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: spacing.md, paddingTop: spacing.sm },
+  screen: { flex: 1, gap: spacing.sm + 2, paddingTop: spacing.sm },
   /*
    * In the + sheet: everything shrinks to the room the screen — less the keyboard — leaves, and
    * only the fields scroll; the mode switch and the Save row stay put. The fields run out to the
@@ -1442,13 +1590,14 @@ const styles = StyleSheet.create({
    */
   sheet: { flexShrink: 1, gap: spacing.md },
   top: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  fields: { gap: spacing.md },
+  fields: { gap: spacing.sm + 4 },
   sheetFields: { flexShrink: 1, marginHorizontal: -spacing.lg },
   sheetContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
   screenContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
   row: { flexDirection: 'row', gap: StyleSheet.hairlineWidth },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm - 2 },
   hint: { paddingHorizontal: 4 },
+  again: { gap: spacing.sm - 2, paddingHorizontal: spacing.lg },
   cadence: { width: 220 },
   twin: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
   dot: { width: 7, height: 7, borderRadius: 999 },
@@ -1458,7 +1607,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
-    paddingTop: spacing.sm + 2,
+    paddingTop: spacing.sm,
+  },
+  completing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    ...leaf('sm'),
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingLeft: spacing.md,
+    paddingRight: 8,
+  },
+  completingTitle: { fontSize: 15, lineHeight: 19, fontWeight: '700', letterSpacing: -0.2 },
+  completingDue: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  unlink: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   saved: {
     flexDirection: 'row',

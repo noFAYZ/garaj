@@ -483,11 +483,18 @@ export const adminRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         const [paying] = await db
           .select({
             status: subscriptions.status,
+            provider: subscriptions.provider,
             stripeSubscriptionId: subscriptions.stripeSubscriptionId,
           })
           .from(subscriptions)
           .where(eq(subscriptions.userId, id))
           .limit(1);
+        if (paying?.provider === 'REVENUECAT' && LIVE_STATUSES.has(paying.status)) {
+          throw new ConflictError(
+            'PAID_THROUGH_STORE',
+            'This person pays through a phone app store. It is changed or refunded there (or in RevenueCat), not here.',
+          );
+        }
         if (paying?.stripeSubscriptionId && LIVE_STATUSES.has(paying.status)) {
           throw new ConflictError(
             'PAID_THROUGH_STRIPE',

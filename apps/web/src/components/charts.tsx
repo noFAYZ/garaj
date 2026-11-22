@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { fitLabels } from '@vehicle-os/ui';
 import { cn } from '@/lib/utils';
 
 /*
@@ -54,6 +55,16 @@ export interface Slice {
 
 const share = (value: number, total: number) => `${Math.round((value / (total || 1)) * 100)}%`;
 
+/**
+ * The report's small caps — a card's name, a figure's label: smaller and less tracked than the
+ * app's `text-label`. A plain string, so `cn()` cannot mistake its size for a colour.
+ */
+export const LABEL = 'text-[10px] font-semibold uppercase leading-3 tracking-[0.04em]';
+
+/** The axis' mono labels, sized before they are drawn: Cascadia's advance is 0.59em. */
+const tickWidth = (labels: readonly string[]) =>
+  Math.max(0, ...labels.map((text) => text.length)) * 10 * 0.59 + 6;
+
 function useWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(0);
@@ -95,7 +106,7 @@ export function ColumnChart({
   trailing,
   legend = true,
   large = true,
-  height = 168,
+  height = 132,
 }: {
   buckets: readonly ColumnBucket[];
   series: readonly ChartSeries[];
@@ -115,6 +126,7 @@ export function ColumnChart({
   height?: number;
 }) {
   const [active, setActive] = useState<number | null>(null);
+  const [row, span] = useWidth<HTMLDivElement>();
   const totals = buckets.map((bucket) =>
     series.reduce((sum, line) => sum + (bucket.values[line.key] ?? 0), 0),
   );
@@ -126,8 +138,17 @@ export function ColumnChart({
       0,
     ) || 1;
   const shown = active === null ? null : buckets[active]!;
-  // Every label while they fit; past eight, every other one or so, or they run into a smear.
-  const every = buckets.length > 8 ? Math.ceil(buckets.length / 7) : 1;
+  // Every label that has room under its column, counted back from the latest.
+  const step = buckets.length > 0 ? (span - 4 * (buckets.length - 1)) / buckets.length : 0;
+  const labelWidth = tickWidth(buckets.map((bucket) => bucket.label));
+  const ticks =
+    span > 0
+      ? fitLabels(
+          buckets.map((_, index) => index * (step + 4) + step / 2),
+          labelWidth,
+          span,
+        )
+      : [];
   const headline =
     mode === 'group' && shown
       ? (shown.values[series[0]!.key] ?? 0)
@@ -136,12 +157,12 @@ export function ColumnChart({
         : (total ?? totals.reduce((sum, value) => sum + value, 0));
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-0.5">
         <div className="flex min-h-6 items-center gap-2">
           <p
             aria-live="polite"
-            className="min-w-0 flex-1 truncate text-label uppercase text-muted-foreground"
+            className={`min-w-0 flex-1 truncate text-muted-foreground ${LABEL}`}
           >
             {shown ? shown.long : label}
           </p>
@@ -150,7 +171,7 @@ export function ColumnChart({
         <p
           className={cn(
             'truncate font-mono font-semibold tabular-nums tracking-tight text-foreground',
-            large ? 'text-[2rem] leading-10' : 'text-xl',
+            large ? 'text-[1.75rem] leading-9' : 'text-lg',
           )}
         >
           {format(headline)}
@@ -191,6 +212,7 @@ export function ColumnChart({
         ))}
         {/* Positioned, so it paints over the grid: an absolute sibling otherwise lands on top. */}
         <div
+          ref={row}
           className="relative flex items-end gap-1 border-b border-border pr-12"
           style={{ height }}
           onMouseLeave={() => setActive(null)}
@@ -246,19 +268,17 @@ export function ColumnChart({
             );
           })}
         </div>
-        <div className="mt-1.5 flex gap-1 pr-12">
-          {buckets.map((bucket, index) => (
-            // Centred and allowed past its column: on a phone a column is narrower than "SEP",
-            // and the skipped labels leave the room either side.
+        <div className="relative mt-1.5 h-3">
+          {ticks.map(({ index, left }) => (
             <span
-              key={bucket.key}
+              key={buckets[index]!.key}
               className={cn(
-                'flex min-w-0 flex-1 justify-center whitespace-nowrap font-mono text-[10px] uppercase tabular-nums',
+                'absolute top-0 whitespace-nowrap text-center font-mono text-[10px] uppercase leading-3 tabular-nums',
                 active === index ? 'text-foreground' : 'text-muted-foreground',
-                index % every !== 0 && active !== index && 'invisible',
               )}
+              style={{ left, width: labelWidth }}
             >
-              {bucket.label}
+              {buckets[index]!.label}
             </span>
           ))}
         </div>
@@ -311,7 +331,7 @@ export function LineChart({
   formatX,
   formatAxis = formatY,
   reference,
-  height = 150,
+  height = 112,
   area = false,
 }: {
   series: readonly LineSeries[];
@@ -319,7 +339,8 @@ export function LineChart({
   formatX: (x: number) => string;
   /** The scale's labels, when the readout's format is too wide for the gutter. */
   formatAxis?: (value: number) => string;
-  reference?: { value: number; label: string };
+  /** A level to read the line against (an average), as a dashed rule; the card names it. */
+  reference?: { value: number };
   height?: number;
   /** A soft fill under a single line, for a figure that accumulates. */
   area?: boolean;
@@ -342,8 +363,9 @@ export function LineChart({
   const plotWidth = Math.max(0, width - axis);
   const top = 8;
   const plotHeight = height - top - 6;
+  // Inset, so the first and last dots are drawn whole.
   const toX = (x: number) =>
-    maxX === minX ? plotWidth / 2 : ((x - minX) / (maxX - minX)) * plotWidth;
+    maxX === minX ? plotWidth / 2 : 5 + ((x - minX) / (maxX - minX)) * (plotWidth - 10);
   const toY = (y: number) => top + (1 - (y - minY) / (maxY - minY)) * plotHeight;
   const ticks = [high, low];
   const path = (points: readonly { x: number; y: number }[]) =>
@@ -360,6 +382,11 @@ export function LineChart({
     return { line, point: upTo[upTo.length - 1] ?? line.points[0] };
   });
   const only = series.length === 1 ? series[0]! : null;
+  // A label under every moment that has room for one — into the scale's gutter at the right,
+  // which is empty below the plot — and each moment a dot while they are few.
+  const xWidth = tickWidth(xs.map((x) => formatX(x)));
+  const xTicks = plotWidth > 0 ? fitLabels(xs.map(toX), xWidth, width) : [];
+  const dots = xs.length <= 24;
 
   const move = (clientX: number, left: number) => {
     const x =
@@ -373,7 +400,7 @@ export function LineChart({
   };
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-live="polite">
         <span className="font-mono text-[10px] font-semibold uppercase tabular-nums text-muted-foreground">
           {formatX(at)}
@@ -454,6 +481,21 @@ export function LineChart({
                 strokeLinecap="round"
               />
             ))}
+            {dots
+              ? series.flatMap((line) =>
+                  line.points.map((point) => (
+                    <circle
+                      key={`${line.key}-${point.x}`}
+                      cx={toX(point.x)}
+                      cy={toY(point.y)}
+                      r={2.75}
+                      fill="var(--color-card)"
+                      stroke={line.color}
+                      strokeWidth={1.5}
+                    />
+                  )),
+                )
+              : null}
             {reading.map(({ line, point }) =>
               point ? (
                 <circle
@@ -482,13 +524,19 @@ export function LineChart({
           : null}
       </div>
 
-      <div
-        className="flex justify-between pr-12 font-mono text-[10px] uppercase tabular-nums text-muted-foreground"
-        aria-hidden="true"
-      >
-        <span>{formatX(minX)}</span>
-        {reference ? <span>┄ {reference.label}</span> : null}
-        <span>{formatX(maxX)}</span>
+      <div className="relative h-3" aria-hidden="true">
+        {xTicks.map(({ index, left }) => (
+          <span
+            key={xs[index]}
+            className={cn(
+              'absolute top-0 whitespace-nowrap text-center font-mono text-[10px] uppercase leading-3 tabular-nums',
+              cursor !== null && xs[index] === at ? 'text-foreground' : 'text-muted-foreground',
+            )}
+            style={{ left, width: xWidth }}
+          >
+            {formatX(xs[index]!)}
+          </span>
+        ))}
       </div>
 
       <table className="sr-only">

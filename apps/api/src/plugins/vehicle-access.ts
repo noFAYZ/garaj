@@ -46,7 +46,11 @@ export default fp(
     fastify.decorate(
       'requireVehicleAccess',
       async (request: FastifyRequest, vehicleId: string, capability: Capability) => {
-        const vehicle = await findVehicleById(fastify.db, vehicleId);
+        // The read the request started on arrival (`actor-context`), once; anything later — a
+        // second check, or one after a write — reads afresh.
+        const prefetched = request.vehicleLookup?.id === vehicleId ? request.vehicleLookup : null;
+        if (prefetched) request.vehicleLookup = undefined;
+        const vehicle = await (prefetched?.row ?? findVehicleById(fastify.db, vehicleId));
         /*
          * A missing vehicle and a vehicle in someone else's garage both answer 404 — the
          * second falls through to `requireCapability`, which returns 404 for a non-member

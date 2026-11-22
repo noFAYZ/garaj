@@ -2,7 +2,6 @@
 
 import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
-import type { CSSProperties } from 'react';
 import type { Dashboard, Garage, Vehicle } from '@vehicle-os/contracts';
 import { BrandLogo } from '@/components/brand-logo';
 import { Icon } from '@/components/icons';
@@ -111,14 +110,14 @@ export function GarageCard({
       href={`/garages/${garage.id}`}
       aria-label={summary}
       className={cn(
-        'group flex flex-col gap-3.5 rounded-2xl bg-card/50 p-2.5 pb-4 transition-[background-color,translate,scale,box-shadow] duration-300 ease-out hover:-translate-y-1 hover:bg-card hover:shadow-float active:scale-[0.99]',
+        'group flex flex-col gap-3.5 rounded-2xl bg-card/50 p-2.5 pb-4 transition-[background-color,scale] duration-150 ease-out hover:bg-card active:scale-[0.99]',
         className,
       )}
     >
       {/* The floor. */}
       <div
         aria-hidden="true"
-        className="relative grid grid-cols-4 overflow-hidden rounded-xl bg-muted/60 px-1 pt-1.5 transition-colors duration-300 group-hover:bg-muted"
+        className="relative grid grid-cols-4 overflow-hidden rounded-xl bg-muted/60 px-1 pt-1.5 transition-colors duration-200 group-hover:bg-muted"
       >
         {Array.from({ length: BAYS }, (_, bay) => {
           const vehicle = parked[bay];
@@ -128,13 +127,12 @@ export function GarageCard({
             <div
               key={bay}
               className="relative flex aspect-[4/5] flex-col items-center justify-end px-1 pb-1"
-              style={{ '--bay': bay } as CSSProperties}
             >
               {/* The painted line between this bay and the last. */}
               {bay > 0 ? (
                 <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-[repeating-linear-gradient(to_bottom,var(--color-border-strong)_0_5px,transparent_5px_9px)]" />
               ) : null}
-              <span className="flex min-h-0 w-full flex-1 items-end justify-center transition-transform duration-300 ease-out [transition-delay:calc(var(--bay)*40ms)] group-hover:-translate-y-0.5">
+              <span className="flex min-h-0 w-full flex-1 items-end justify-center">
                 {isOverflow ? (
                   <span className="mb-2 font-mono text-sm font-semibold tabular-nums text-foreground">
                     +{count - (BAYS - 1)}
@@ -188,7 +186,7 @@ export function GarageCard({
         </div>
         <span
           aria-hidden="true"
-          className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground transition-[background-color,color,rotate] duration-300 group-hover:-rotate-45 group-hover:bg-primary group-hover:text-primary-foreground"
+          className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground transition-[background-color,color,rotate] duration-200 group-hover:-rotate-45 group-hover:bg-primary group-hover:text-primary-foreground"
         >
           <ArrowRight className="size-4" />
         </span>

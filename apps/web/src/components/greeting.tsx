@@ -242,7 +242,7 @@ function Fleet({ vehicles, className }: { vehicles: readonly Vehicle[]; classNam
                 zIndex: 10 - Math.round(Math.abs(spread) * 2),
               } as CSSProperties
             }
-            className="absolute bottom-1 left-1/2 h-28 w-[8.5rem] overflow-hidden rounded-2xl bg-muted shadow-float ring-4 ring-card transition-[translate,rotate] duration-500 ease-out [rotate:var(--r)] [translate:calc(-50%+var(--x))_var(--y)] group-hover/greeting:[rotate:var(--fr)] group-hover/greeting:[translate:calc(-50%+var(--fx))_var(--y)]"
+            className="absolute bottom-1 left-1/2 h-28 w-[8.5rem] overflow-hidden rounded-2xl bg-muted shadow-float ring-4 ring-card transition-[translate,rotate] duration-250 ease-out [rotate:var(--r)] [translate:calc(-50%+var(--x))_var(--y)] group-hover/greeting:[rotate:var(--fr)] group-hover/greeting:[translate:calc(-50%+var(--fx))_var(--y)]"
           >
             {photo ? (
               photo.isCutout ? (

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { Animated, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError } from '@vehicle-os/api-client';
 import {
   garageMembersQuery,
@@ -13,26 +14,19 @@ import {
 import type { Garage, GarageMember, Vehicle } from '@vehicle-os/contracts';
 import { capabilitiesFor, GARAGE_ROLES, type GarageRole } from '@vehicle-os/domain';
 import { BrandLogo } from '@/components/brand-logo';
+import { DashCell, DashNote, DashReading, DashReadings, DashValue } from '@/components/dash';
+import { RoundKey } from '@/components/onboarding-kit';
+import { Group } from '@/components/settings-kit';
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
-import { humanise } from '@/lib/format';
-import {
-  Chip,
-  Eyebrow,
-  Panel,
-  Reading,
-  SectionHeading,
-  SectionLink,
-  ToneChip,
-} from '@/lib/instrument';
+import { pad, humanise } from '@/lib/format';
+import { Chip, Eyebrow, SectionHeading, SectionLink, ToneChip } from '@/lib/instrument';
 import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
-import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
-import { Button, Empty, Face, Field, Ground, IconButton, Skeleton } from '@/lib/ui';
+import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { Button, Empty, Face, Field, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
-
-const pad = (value: number) => String(value).padStart(2, '0');
 
 /** Owner is not offered: ownership is handed over, never assigned from a list. */
 const ROLES = GARAGE_ROLES.filter((role) => role !== 'OWNER');
@@ -66,6 +60,7 @@ export default function GarageScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const garages = useQuery(garagesQuery(api));
   const vehicles = useQuery(vehiclesQuery(api, { garageId: id }));
   const members = useQuery(garageMembersQuery(api, id));
@@ -96,8 +91,9 @@ export default function GarageScreen() {
 
   if (!garages.isPending && !garage) {
     return (
-      <View style={[styles.missing, { backgroundColor: theme.background }]}>
-        <Stack.Screen options={{ title: 'Garage' }} />
+      <View style={[styles.missing, { paddingTop: insets.top + spacing.sm }]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <RoundKey icon="chevron-back" label="Back" onPress={() => router.back()} />
         <Empty
           title="Garage not found"
           description="It may have been deleted, or you may no longer be in it."
@@ -111,39 +107,11 @@ export default function GarageScreen() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: garage?.name ?? 'Garage',
-          headerRight: () => (
-            <View style={styles.headerActions}>
-              {canManage ? (
-                <IconButton
-                  icon="person-add-outline"
-                  size={36}
-                  onPress={() => {
-                    haptic.selection();
-                    setSheet({ kind: 'add' });
-                  }}
-                  label="Add someone"
-                />
-              ) : null}
-              {canAddVehicle ? (
-                <IconButton
-                  icon="add"
-                  tone="primary"
-                  size={36}
-                  onPress={addVehicle}
-                  label={`Add a vehicle to ${garage?.name ?? 'this garage'}`}
-                />
-              ) : null}
-            </View>
-          ),
-        }}
-      />
-
+      {/* No navigator bar: the page's own, back on the left and its two ways to add on the right. */}
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
-        style={{ backgroundColor: theme.background }}
-        contentContainerStyle={styles.page}
+        style={{ backgroundColor: 'transparent' }}
+        contentContainerStyle={[styles.page, { paddingTop: insets.top + spacing.sm }]}
         refreshControl={
           <RefreshControl
             refreshing={(members.isFetching || vehicles.isFetching) && !loading}
@@ -156,10 +124,36 @@ export default function GarageScreen() {
           />
         }
       >
+        <View style={styles.top}>
+          <RoundKey icon="chevron-back" label="Back" onPress={() => router.back()} />
+          <View style={styles.headerActions}>
+            {canManage ? (
+              <RoundKey
+                icon="person-add-outline"
+                label="Add someone"
+                onPress={() => setSheet({ kind: 'add' })}
+              />
+            ) : null}
+            {canAddVehicle ? (
+              <RoundKey
+                icon="add"
+                tone="primary"
+                label={`Add a vehicle to ${garage?.name ?? 'this garage'}`}
+                onPress={addVehicle}
+              />
+            ) : null}
+          </View>
+        </View>
         {/* The garage's plate: what it is, who is in it, and how its keys are spread. */}
         <Rise>
-          <View style={[styles.plate, { backgroundColor: theme.card }, rimmed(theme)]}>
-            <Ground cx="100%" cy="0%" />
+          <View
+            style={[
+              styles.plate,
+              { backgroundColor: theme.cardRaised },
+              rimmed(theme),
+              lift(theme, 'low'),
+            ]}
+          >
             <View style={{ gap: 4 }}>
               <Eyebrow>
                 Garage
@@ -167,7 +161,7 @@ export default function GarageScreen() {
                 {shared ? ` · Shared as ${humanise(garage.role)}` : ''}
               </Eyebrow>
               {garage ? (
-                <Text numberOfLines={2} style={[typeScale.display, { color: theme.foreground }]}>
+                <Text numberOfLines={2} style={[styles.name, { color: theme.foreground }]}>
                   {garage.name}
                 </Text>
               ) : (
@@ -188,7 +182,7 @@ export default function GarageScreen() {
                 <Skeleton width={120} height={36} radius={999} />
               ) : (
                 <View style={styles.crew}>
-                  <FaceStack members={memberList} size={30} ring={theme.card} />
+                  <FaceStack members={memberList} size={30} ring={theme.cardRaised} />
                   <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
                     <Text style={[figure, { fontWeight: '600', color: theme.foreground }]}>
                       {pad(memberList.length)}
@@ -204,24 +198,60 @@ export default function GarageScreen() {
               />
             </View>
 
-            <Panel direction="row">
-              <Reading
-                label="Keys"
-                value={vehicles.isPending ? undefined : pad(vehicleList.length)}
-                note={vehicleList.length === 1 ? 'vehicle' : 'vehicles'}
-              />
-              <Reading
-                label="Out"
-                value={loading ? undefined : pad(vehicleList.length - onHook)}
-                note={`${pad(drivers)} ${drivers === 1 ? 'driver' : 'drivers'}`}
-              />
-              <Reading
-                label="On hook"
-                value={loading ? undefined : pad(onHook)}
-                note={onHook ? 'nobody drives' : 'all taken'}
-                tone={onHook ? theme.warning : theme.success}
-              />
-            </Panel>
+            {/* How its keys are spread, on the dash's own tiles — Home's and the vehicle's. */}
+            <View style={styles.readings}>
+              <DashReadings>
+                <DashCell
+                  icon="key-outline"
+                  label="Keys"
+                  said={`${vehicleList.length} ${vehicleList.length === 1 ? 'vehicle' : 'vehicles'}`}
+                  index={1}
+                >
+                  <DashReading>
+                    <DashValue muted={vehicles.isPending}>
+                      {vehicles.isPending ? '—' : pad(vehicleList.length)}
+                    </DashValue>
+                  </DashReading>
+                  <DashNote>{vehicleList.length === 1 ? 'VEHICLE' : 'VEHICLES'}</DashNote>
+                </DashCell>
+                <DashCell
+                  icon="car-sport-outline"
+                  label="Out"
+                  said={`${vehicleList.length - onHook} out, ${drivers} ${drivers === 1 ? 'driver' : 'drivers'}`}
+                  index={2}
+                >
+                  <DashReading>
+                    <DashValue muted={loading}>
+                      {loading ? '—' : pad(vehicleList.length - onHook)}
+                    </DashValue>
+                  </DashReading>
+                  <DashNote>
+                    {pad(drivers)} {drivers === 1 ? 'DRIVER' : 'DRIVERS'}
+                  </DashNote>
+                </DashCell>
+                <DashCell
+                  icon="pin-outline"
+                  label="On hook"
+                  said={onHook ? `${onHook} nobody drives` : 'All taken'}
+                  aside={
+                    loading ? null : (
+                      <View
+                        style={[
+                          styles.hookDot,
+                          { backgroundColor: onHook ? theme.warning : theme.success },
+                        ]}
+                      />
+                    )
+                  }
+                  index={3}
+                >
+                  <DashReading>
+                    <DashValue muted={loading}>{loading ? '—' : pad(onHook)}</DashValue>
+                  </DashReading>
+                  <DashNote>{onHook ? 'NOBODY DRIVES' : 'ALL TAKEN'}</DashNote>
+                </DashCell>
+              </DashReadings>
+            </View>
           </View>
         </Rise>
 
@@ -236,7 +266,7 @@ export default function GarageScreen() {
               ? 'Who takes what. Press a key to hand it over or take it back.'
               : 'Who takes what. Press a key to open its vehicle.'}
           </Text>
-          <View style={[styles.board, { backgroundColor: theme.card }, rimmed(theme)]}>
+          <View style={[styles.board, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
             <View style={[styles.rail, { backgroundColor: theme.borderStrong }]} />
             <ScrollView
               horizontal
@@ -284,52 +314,51 @@ export default function GarageScreen() {
             title="People"
             count={members.isPending ? undefined : memberList.length}
           />
-          <View style={{ gap: spacing.sm }}>
-            {members.isPending
-              ? [0, 1].map((key) => (
-                  <Skeleton key={key} width="100%" height={72} radius={radius.xl} />
-                ))
-              : memberList.map((member, index) => (
-                  <Rise key={member.id} index={index}>
-                    <PersonRow
-                      member={member}
-                      isYou={member.userId === profile.data?.id}
-                      isOwner={member.userId === garage?.ownerId}
-                      vehicles={vehicleList.filter((v) => member.vehicleIds.includes(v.id))}
-                      onPress={
-                        canManage
-                          ? () => {
-                              haptic.selection();
-                              setSheet({ kind: 'person', memberId: member.id });
-                            }
-                          : undefined
-                      }
-                    />
-                  </Rise>
-                ))}
-            {canManage && !members.isPending ? (
-              <PressableScale
-                onPress={() => {
-                  haptic.selection();
-                  setSheet({ kind: 'add' });
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Add someone"
-                scaleTo={0.98}
-                style={[styles.addRow, { borderColor: theme.borderStrong }]}
-              >
-                <View style={[styles.addIcon, { backgroundColor: theme.primary }]}>
-                  <Ionicons name="person-add" size={18} color={theme.primaryForeground} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[typeScale.label, { color: theme.foreground }]}>Add someone</Text>
-                  <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                    By email, then hand them keys.
-                  </Text>
-                </View>
-              </PressableScale>
-            ) : null}
-          </View>
+          {members.isPending ? (
+            <Skeleton width="100%" height={144} style={leaf('md')} />
+          ) : (
+            <Group>
+              {memberList.map((member) => (
+                <PersonRow
+                  key={member.id}
+                  member={member}
+                  isYou={member.userId === profile.data?.id}
+                  isOwner={member.userId === garage?.ownerId}
+                  vehicles={vehicleList.filter((v) => member.vehicleIds.includes(v.id))}
+                  onPress={
+                    canManage
+                      ? () => {
+                          haptic.selection();
+                          setSheet({ kind: 'person', memberId: member.id });
+                        }
+                      : undefined
+                  }
+                />
+              ))}
+              {canManage ? (
+                <PressableScale
+                  onPress={() => {
+                    haptic.selection();
+                    setSheet({ kind: 'add' });
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add someone"
+                  scaleTo={0.98}
+                  style={styles.person}
+                >
+                  <View style={[styles.addIcon, { backgroundColor: theme.primarySoft }]}>
+                    <Ionicons name="person-add" size={18} color={theme.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[typeScale.label, { color: theme.primary }]}>Add someone</Text>
+                    <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+                      By email, then hand them keys.
+                    </Text>
+                  </View>
+                </PressableScale>
+              ) : null}
+            </Group>
+          )}
         </Rise>
       </ScrollView>
 
@@ -432,16 +461,16 @@ function Key({
           <View
             style={[
               styles.tag,
+              // On the hook: a quiet tag of the board's own grey. Out: raised, with a copper band.
               free
-                ? { borderColor: theme.borderStrong, borderStyle: 'dashed' }
-                : [
-                    { backgroundColor: theme.cardRaised, borderColor: theme.hairline },
-                    rimmed(theme),
-                  ],
+                ? { backgroundColor: theme.muted }
+                : [{ backgroundColor: theme.cardRaised }, lift(theme, 'low')],
             ]}
           >
             {/* The tag's punched hole, and a copper band on a key that is out. */}
-            <View style={[styles.hole, { backgroundColor: theme.card }]} />
+            <View
+              style={[styles.hole, { backgroundColor: free ? theme.cardRaised : theme.muted }]}
+            />
             {free ? null : <View style={[styles.band, { backgroundColor: theme.primary }]} />}
             <VehicleBadge vehicle={vehicle} size={48} />
             <View style={{ gap: 2, alignSelf: 'stretch' }}>
@@ -590,7 +619,7 @@ function PersonRow({
         keys ? `drives ${vehicles.map((v) => v.displayName).join(', ')}` : 'no keys'
       }`}
       scaleTo={0.98}
-      style={[styles.person, { backgroundColor: theme.card }, rimmed(theme)]}
+      style={styles.person}
     >
       <Face user={{ id: member.userId, image: member.image }} size={44} />
       <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
@@ -1025,23 +1054,28 @@ function AddSheet({
 const styles = StyleSheet.create({
   page: {
     padding: spacing.lg,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.xs,
     paddingBottom: spacing.xxl * 2,
     gap: spacing.xl,
   },
-  missing: { flex: 1, padding: spacing.lg, justifyContent: 'center' },
+  missing: { flex: 1, padding: spacing.lg },
+  // Part of the page, scrolling away with it: the page's gap would part it too far from the plate.
+  top: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: -spacing.sm,
+  },
+  name: { fontSize: 24, lineHeight: 29, fontWeight: '700', letterSpacing: -0.8 },
+  readings: { marginHorizontal: -spacing.sm, marginBottom: -spacing.sm },
+  hookDot: { width: 6, height: 6, borderRadius: 3 },
   section: { gap: spacing.sm },
   lede: { marginTop: -spacing.xs },
-  plate: {
-    borderRadius: radius.xxxl,
-    padding: spacing.lg,
-    gap: spacing.lg,
-    overflow: 'hidden',
-  },
+  plate: { ...leaf('lg'), padding: spacing.lg, gap: spacing.md },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   crewRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   crew: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  board: { borderRadius: radius.xxl, overflow: 'hidden', paddingTop: spacing.md },
+  board: { ...leaf('md'), overflow: 'hidden', paddingTop: spacing.md },
   // The rail the hooks are screwed to, across the top of the board.
   rail: {
     position: 'absolute',
@@ -1058,8 +1092,7 @@ const styles = StyleSheet.create({
   tag: {
     width: KEY,
     marginTop: -6,
-    borderRadius: radius.xl,
-    borderWidth: 1,
+    ...leaf('sm'),
     paddingTop: spacing.lg + 2,
     paddingHorizontal: spacing.sm,
     paddingBottom: spacing.md,
@@ -1079,23 +1112,15 @@ const styles = StyleSheet.create({
   },
   more: { borderRadius: 999, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   badge: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  // A row of the people card: the card is the surface, the rows only lay out.
   person: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    borderRadius: radius.xl,
-    padding: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  addRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    borderRadius: radius.xl,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    padding: spacing.md,
-  },
   addIcon: {
     width: 44,
     height: 44,

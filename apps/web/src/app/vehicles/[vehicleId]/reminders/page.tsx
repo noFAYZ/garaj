@@ -13,6 +13,9 @@ import { Button, EmptyState } from '@/components/ui/primitives';
 import { SectionHeading } from '@/components/ui/overview';
 import { ListSkeleton, Loading } from '@/components/ui/skeleton';
 import { AddEntryDialog, isAddMode, type AddMode } from '@/components/vehicle/add-entry';
+import { PartsPanel } from '@/components/vehicle/parts-panel';
+import { Icon } from '@/components/icons';
+import { Tabs, TabsList, TabsTrigger } from '@/components/motion/tabs';
 import { ScheduleRow } from '@/components/vehicle/schedule-row';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -41,6 +44,9 @@ function needsYou(item: PlannedItem): boolean {
  * Adding opens the add dialog straight on Reminder, in place (`?add=planned`, from the strip's key or
  * the empty state), so planning one never leaves the tab. The same activity entry the Logs tab
  * reads, so neither fetches twice.
+ *
+ * Parts & fluids is the tab's other half, as on the phone: what the jobs put in, a switch away from
+ * the jobs themselves (`?view=parts` opens on it).
  */
 export default function RemindersPage() {
   const { vehicleId } = useParams<{ vehicleId: string }>();
@@ -48,6 +54,9 @@ export default function RemindersPage() {
   const queryClient = useQueryClient();
   const needsId = useId();
   const laterId = useId();
+  const [view, setView] = useState<'reminders' | 'parts'>(() =>
+    searchParams.get('view') === 'parts' ? 'parts' : 'reminders',
+  );
 
   const vehicle = useQuery(vehicleQuery(api, vehicleId));
   const activity = useQuery(activityQuery(api, vehicleId));
@@ -93,7 +102,7 @@ export default function RemindersPage() {
     );
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-8">
       {adding ? (
         <AddEntryDialog
           vehicleId={vehicleId}
@@ -109,37 +118,54 @@ export default function RemindersPage() {
         />
       ) : null}
 
-      {activity.isPending ? (
-        <Loading label="Loading reminders">
-          <ListSkeleton rows={3} />
-        </Loading>
-      ) : planned.length === 0 ? (
-        <EmptyState
-          title="Nothing planned"
-          description="Repeating services and one-off jobs wait here, what needs you first."
-          action={
-            <Button variant="primary" aria-haspopup="dialog" onClick={() => setAdding('planned')}>
-              <Plus className="size-4" aria-hidden="true" />
-              Add a reminder
-            </Button>
-          }
-        />
-      ) : (
-        <>
-          {needs.length > 0 ? (
-            <section aria-labelledby={needsId} className="flex animate-rise flex-col gap-4">
-              <SectionHeading id={needsId} title="Needs you" count={needs.length} />
-              <ul className="flex flex-col gap-2">{needs.map(row)}</ul>
-            </section>
-          ) : null}
-          {later.length > 0 ? (
-            <section aria-labelledby={laterId} className="flex animate-rise flex-col gap-4">
-              <SectionHeading id={laterId} title="Coming up" count={later.length} />
-              <ul className="flex flex-col gap-2">{later.map(row)}</ul>
-            </section>
-          ) : null}
-        </>
-      )}
+      <Tabs value={view} onValueChange={(next) => setView(next as typeof view)}>
+        <TabsList className="bg-muted/60">
+          <TabsTrigger value="reminders" className="gap-2 px-4">
+            <Icon name="reminder" size={16} />
+            Reminders
+          </TabsTrigger>
+          <TabsTrigger value="parts" className="gap-2 px-4">
+            <Icon name="maintenance" size={16} />
+            Parts &amp; fluids
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {view === 'parts' ? <PartsPanel vehicleId={vehicleId} /> : null}
+
+      <div hidden={view === 'parts'} className="flex flex-col gap-10">
+        {activity.isPending ? (
+          <Loading label="Loading reminders">
+            <ListSkeleton rows={3} />
+          </Loading>
+        ) : planned.length === 0 ? (
+          <EmptyState
+            title="Nothing planned"
+            description="Repeating services and one-off jobs wait here, what needs you first."
+            action={
+              <Button variant="primary" aria-haspopup="dialog" onClick={() => setAdding('planned')}>
+                <Plus className="size-4" aria-hidden="true" />
+                Add a reminder
+              </Button>
+            }
+          />
+        ) : (
+          <>
+            {needs.length > 0 ? (
+              <section aria-labelledby={needsId} className="flex animate-rise flex-col gap-4">
+                <SectionHeading id={needsId} title="Needs you" count={needs.length} />
+                <ul className="flex flex-col gap-2">{needs.map(row)}</ul>
+              </section>
+            ) : null}
+            {later.length > 0 ? (
+              <section aria-labelledby={laterId} className="flex animate-rise flex-col gap-4">
+                <SectionHeading id={laterId} title="Coming up" count={later.length} />
+                <ul className="flex flex-col gap-2">{later.map(row)}</ul>
+              </section>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }

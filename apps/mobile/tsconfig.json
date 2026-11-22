@@ -3,7 +3,15 @@
   "compilerOptions": {
     "lib": ["ES2023"],
     "types": ["react"],
-    "paths": { "@/*": ["./*"] }
+    // An app emits no declarations; with them on, RN 0.88's private element types fail TS2742.
+    "declaration": false,
+    "declarationMap": false,
+    "paths": {
+      "@/*": ["./*"],
+      // The subpath is a bare `legacy.ts` re-exporting the package's source, which this config's
+      // strictness rejects; its built declarations are the same API.
+      "expo-file-system/legacy": ["./node_modules/expo-file-system/build/legacy/index.d.ts"]
+    }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
   "exclude": ["node_modules"]

@@ -1,0 +1,14 @@
+**/node_modules
+**/.next
+**/.expo
+**/.turbo
+**/dist
+**/coverage
+.git
+graphify-out
+apps/mobile/android
+apps/mobile/ios
+# Never bake secrets into the image: Cloud Run hands them in from Secret Manager.
+**/.env
+**/.env.*
+!.env.example

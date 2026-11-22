@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
+import { fitLabels } from '@vehicle-os/ui';
 import { STATUS } from '@/lib/chart-colors';
 import { ease, haptic, PressableScale, useReduceMotion } from '@/lib/motion';
 import { figure, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -33,6 +34,24 @@ export interface Series {
 
 const share = (value: number, total: number) => `${Math.round((value / (total || 1)) * 100)}%`;
 
+/** Stats' small caps: a card's name, a figure's label — small and barely tracked. */
+export const LABEL = {
+  fontSize: 9.5,
+  lineHeight: 12,
+  fontWeight: '600',
+  letterSpacing: 0.4,
+  textTransform: 'uppercase',
+} as const;
+
+/** The axis' mono figures, and Cascadia's advance in ems, to size a label before it is drawn. */
+const TICK = 9;
+const ADVANCE = 0.59;
+/** Between columns, and the gutter at the right that holds the scale. */
+const GAP = 4;
+const AXIS = 40;
+const tickWidth = (labels: readonly string[]) =>
+  Math.max(0, ...labels.map((text) => text.length)) * TICK * ADVANCE + 2;
+
 /**
  * Lines over time, on one axis. A touch anywhere on the plot moves a crosshair to the nearest
  * moment and the readout above names every series there; let go and it rests on the latest.
@@ -47,7 +66,7 @@ export function LineChart({
   formatX,
   formatAxis = formatY,
   reference,
-  height = 112,
+  height = 80,
   area = false,
 }: {
   series: readonly Series[];
@@ -55,7 +74,8 @@ export function LineChart({
   formatX: (x: number) => string;
   /** The scale's labels, when the readout's format is too wide for the gutter. */
   formatAxis?: (value: number) => string;
-  reference?: { value: number; label: string };
+  /** A level to read the line against (an average), as a dashed rule; the card names it. */
+  reference?: { value: number };
   height?: number;
   /** A soft fill under a single line, for a figure that accumulates. */
   area?: boolean;
@@ -78,8 +98,9 @@ export function LineChart({
   const plotWidth = Math.max(0, width - 44);
   const top = 6;
   const plotHeight = height - top - 4;
+  // Inset, so the first and last dots are drawn whole.
   const toX = (x: number) =>
-    maxX === minX ? plotWidth / 2 : ((x - minX) / (maxX - minX)) * plotWidth;
+    maxX === minX ? plotWidth / 2 : 4 + ((x - minX) / (maxX - minX)) * (plotWidth - 8);
   const toY = (y: number) => top + (1 - (y - minY) / (maxY - minY)) * plotHeight;
   const ticks = [maxY - pad, minY + pad];
   const path = (points: readonly { x: number; y: number }[]) =>
@@ -105,9 +126,14 @@ export function LineChart({
     );
   };
   const only = series.length === 1 ? series[0]! : null;
+  // A label under every moment that has room for one; each moment a dot while they are few.
+  const moments = [...new Set(xs)].sort((a, b) => a - b);
+  const xWidth = tickWidth(moments.map((x) => formatX(x)));
+  const xTicks = plotWidth > 0 ? fitLabels(moments.map(toX), xWidth, width) : [];
+  const dots = moments.length <= 24;
 
   return (
-    <View style={{ gap: spacing.sm }}>
+    <View style={{ gap: 6 }}>
       <View style={styles.readout}>
         <Text style={[figure, styles.axisText, { color: theme.mutedForeground }]}>
           {formatX(at).toUpperCase()}
@@ -201,6 +227,21 @@ export function LineChart({
                 strokeLinecap="round"
               />
             ))}
+            {dots
+              ? series.flatMap((line) =>
+                  line.points.map((point) => (
+                    <Circle
+                      key={`${line.key}-${point.x}`}
+                      cx={toX(point.x)}
+                      cy={toY(point.y)}
+                      r={2.5}
+                      fill={theme.card}
+                      stroke={line.color}
+                      strokeWidth={1.5}
+                    />
+                  )),
+                )
+              : null}
             {reading.map(({ line, point }) =>
               point ? (
                 <Circle
@@ -233,18 +274,27 @@ export function LineChart({
           : null}
       </View>
 
-      <View style={styles.xAxis}>
-        <Text style={[figure, styles.axisText, { color: theme.mutedForeground }]}>
-          {formatX(minX).toUpperCase()}
-        </Text>
-        {reference ? (
-          <Text style={[figure, styles.axisText, { color: theme.mutedForeground }]}>
-            ┄ {reference.label}
+      <View style={styles.ticks}>
+        {xTicks.map(({ index, left }) => (
+          <Text
+            key={moments[index]}
+            numberOfLines={1}
+            style={[
+              figure,
+              styles.tick,
+              {
+                left,
+                width: xWidth,
+                color:
+                  cursor !== null && moments[index] === at
+                    ? theme.foreground
+                    : theme.mutedForeground,
+              },
+            ]}
+          >
+            {formatX(moments[index]!).toUpperCase()}
           </Text>
-        ) : null}
-        <Text style={[figure, styles.axisText, { color: theme.mutedForeground, marginRight: 44 }]}>
-          {formatX(maxX).toUpperCase()}
-        </Text>
+        ))}
       </View>
     </View>
   );
@@ -277,7 +327,7 @@ export function ColumnChart({
   trailing,
   legend = true,
   large = true,
-  height = 112,
+  height = 88,
 }: {
   buckets: readonly ColumnBucket[];
   series: readonly { key: string; label: string; color: string }[];
@@ -324,8 +374,18 @@ export function ColumnChart({
       0,
     ) || 1;
   const shown = chosen === null ? null : buckets[chosen]!;
-  // Every label when they fit; past eight, a few, or they run into a smear.
-  const every = buckets.length > 8 ? Math.ceil(buckets.length / 6) : 1;
+  // Every label that has room under its column, counted back from the latest.
+  const [span, setSpan] = useState(0);
+  const step = buckets.length > 0 ? (span - GAP * (buckets.length - 1)) / buckets.length : 0;
+  const labelWidth = tickWidth(buckets.map((bucket) => bucket.label));
+  const ticks =
+    span > 0
+      ? fitLabels(
+          buckets.map((_, index) => index * (step + GAP) + step / 2),
+          labelWidth,
+          span,
+        )
+      : [];
   const headline =
     mode === 'group' && shown
       ? (shown.values[series[0]!.key] ?? 0)
@@ -334,13 +394,10 @@ export function ColumnChart({
         : (total ?? totals.reduce((sum, value) => sum + value, 0));
 
   return (
-    <View style={{ gap: spacing.md }}>
+    <View style={{ gap: spacing.sm }}>
       <View style={{ gap: 2 }}>
         <View style={styles.headRow}>
-          <Text
-            numberOfLines={1}
-            style={[typeScale.overline, { flex: 1, color: theme.mutedForeground }]}
-          >
+          <Text numberOfLines={1} style={[LABEL, { flex: 1, color: theme.mutedForeground }]}>
             {shown ? shown.long : label}
           </Text>
           {trailing}
@@ -396,6 +453,7 @@ export function ColumnChart({
           </View>
         ))}
         <View
+          onLayout={(event) => setSpan(event.nativeEvent.layout.width - AXIS)}
           style={[
             styles.columns,
             {
@@ -476,20 +534,21 @@ export function ColumnChart({
           })}
         </View>
         <View style={styles.ticks}>
-          {buckets.map((bucket, index) => (
+          {ticks.map(({ index, left }) => (
             <Text
-              key={bucket.key}
+              key={buckets[index]!.key}
               numberOfLines={1}
               style={[
                 figure,
                 styles.tick,
                 {
+                  left,
+                  width: labelWidth,
                   color: chosen === index ? theme.foreground : theme.mutedForeground,
-                  opacity: index % every === 0 || chosen === index ? 1 : 0,
                 },
               ]}
             >
-              {bucket.label}
+              {buckets[index]!.label}
             </Text>
           ))}
         </View>
@@ -731,8 +790,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 22 },
-  headline: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -1 },
-  headlineSmall: { fontSize: 20, lineHeight: 25, fontWeight: '700', letterSpacing: -0.6 },
+  headline: { fontSize: 26, lineHeight: 31, fontWeight: '700', letterSpacing: -0.8 },
+  headlineSmall: { fontSize: 18, lineHeight: 23, fontWeight: '700', letterSpacing: -0.5 },
   swatch: { width: 8, height: 8, borderRadius: 2.5 },
   readout: {
     flexDirection: 'row',
@@ -743,12 +802,11 @@ const styles = StyleSheet.create({
   },
   readoutItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   readoutValue: { fontSize: 12, fontWeight: '700' },
-  axisText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.4 },
-  yLabel: { position: 'absolute', right: 0, width: 40, fontSize: 9, textAlign: 'right' },
-  xAxis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -4 },
-  columns: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, paddingRight: 40 },
+  axisText: { fontSize: TICK, fontWeight: '600' },
+  yLabel: { position: 'absolute', right: 0, width: 40, fontSize: TICK, textAlign: 'right' },
+  columns: { flexDirection: 'row', alignItems: 'flex-end', gap: GAP, paddingRight: AXIS },
   column: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'flex-end' },
-  ticks: { flexDirection: 'row', gap: 4, paddingRight: 40, marginTop: 5 },
+  ticks: { height: 12, marginTop: 5 },
   gridRow: {
     position: 'absolute',
     left: 0,
@@ -768,7 +826,14 @@ const styles = StyleSheet.create({
     transformOrigin: 'bottom',
   },
   quiet: { width: '100%', height: 2, borderRadius: 1, alignSelf: 'flex-end' },
-  tick: { flex: 1, fontSize: 9, fontWeight: '600', textAlign: 'center' },
+  tick: {
+    position: 'absolute',
+    top: 0,
+    fontSize: TICK,
+    lineHeight: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   rankLabel: { flex: 1, fontSize: 13 },
   rankGrid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: spacing.lg, rowGap: 11 },
   rankCell: { flexBasis: '45%', flexGrow: 1, minWidth: 0 },

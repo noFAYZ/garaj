@@ -58,6 +58,56 @@ describe('readEntryDraft', () => {
   });
 });
 
+describe('readEntryDraft — parts', () => {
+  it('keeps each part in its position, in the line contract', () => {
+    const draft = readEntryDraft(
+      {
+        total: 108,
+        parts: [
+          {
+            position: 'ENGINE_OIL',
+            brand: 'Castrol',
+            product: 'Edge',
+            grade: '5W-30',
+            quantity: 4.2,
+            unit: 'l',
+          },
+          {
+            position: 'OIL_FILTER',
+            brand: 'Bosch',
+            part_number: 'P3300',
+            quantity: 1,
+            unit: 'PIECE',
+          },
+          // Made up, nameless, or not a part: left out rather than guessed at.
+          { position: 'GLOVEBOX', brand: 'Acme' },
+          { position: 'AIR_FILTER' },
+          'labour',
+        ],
+      },
+      'service',
+      today,
+    );
+    expect(draft.parts).toEqual([
+      {
+        position: 'ENGINE_OIL',
+        brand: 'Castrol',
+        name: 'Edge',
+        spec: '5W-30',
+        quantity: 4.2,
+        unit: 'LITER',
+      },
+      { position: 'OIL_FILTER', brand: 'Bosch', partNumber: 'P3300', quantity: 1, unit: 'PIECE' },
+    ]);
+  });
+
+  it('reads parts only for a service, and says nothing when there are none', () => {
+    const parts = [{ position: 'BATTERY', brand: 'Varta' }];
+    expect(readEntryDraft({ litres: 40, parts }, 'fuel', today).parts).toBeUndefined();
+    expect(readEntryDraft({ total: 50, parts: [] }, 'service', today).parts).toBeUndefined();
+  });
+});
+
 describe('draftEntry', () => {
   it('forces the one call, with the vehicle’s currency and unit in the brief', async () => {
     let seen: Parameters<AiProviderPort['generate']>[0] | undefined;

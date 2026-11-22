@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, type Href } from 'expo-router';
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   Animated,
-  Easing,
   Platform,
   RefreshControl,
   ScrollView,
@@ -14,50 +13,61 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, {
-  Circle,
-  Defs,
-  Ellipse,
-  G,
-  Line,
-  LinearGradient,
-  Path,
-  Polygon,
-  RadialGradient,
-  Rect,
-  Stop,
-} from 'react-native-svg';
+import Svg, { Line } from 'react-native-svg';
 import type { Dashboard, Garage, Vehicle } from '@vehicle-os/contracts';
 import type { DocumentType } from '@vehicle-os/domain';
 import { dashboardQuery, garagesQuery, vehiclesQuery } from '@vehicle-os/api-client/react';
 import { dueGauge, groupByMonth, spanOfDays } from '@vehicle-os/ui';
 import { BrandLogo } from '@/components/brand-logo';
+import {
+  DashAction,
+  DashCard,
+  DashCell,
+  DashCellSkeleton,
+  DashReading,
+  DashReadings,
+  DashRow,
+  DashRows,
+  DashTag,
+  DashValue,
+  DASH_SHAPE,
+} from '@/components/dash';
 import { useDockSpace } from '@/components/dock';
 import { NotificationBell } from '@/components/notification-bell';
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { bayCard, EmptyBay, Showroom, ShowroomSkeleton, type BayFlag } from '@/components/showroom';
-import { LedgerMonth, LedgerRow } from '@/components/timeline';
+import { LedgerCard, LedgerMonth, LedgerRow } from '@/components/timeline';
 import { useSpent, vehicleIcon } from '@/components/vehicle-card';
+import { openAdd, type AddRequest } from '@/lib/add-request';
+import { markSetupOffered, wasSetupOffered } from '@/lib/onboarding';
 import { api } from '@/lib/api';
 import { jobEmoji } from '@/lib/emoji';
 import { ledgerDate } from '@/lib/ledger';
-import { DATE_LOCALE, formatDistance, formatMoney, humanise, TWELVE_HOUR } from '@/lib/format';
-import { Glyph, SectionHeading } from '@/lib/instrument';
+import {
+  compactMoney,
+  DATE_LOCALE,
+  formatDistance,
+  formatMoney,
+  humanise,
+  pad,
+  TWELVE_HOUR,
+} from '@/lib/format';
+import { SectionHeading } from '@/lib/instrument';
 import {
   ease,
   Gauge,
   haptic,
   PressableScale,
   Rise,
+  useNow,
   useOnScreen,
   useReduceMotion,
   useScrollY,
 } from '@/lib/motion';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
-import { Button, CompactHeader, Empty, Face, Skeleton } from '@/lib/ui';
+import { figure, lift, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { Button, Empty, Face, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
-const pad = (value: number) => String(value).padStart(2, '0');
 const PAGE = spacing.lg;
 const DAY = new Intl.DateTimeFormat(DATE_LOCALE, {
   weekday: 'short',
@@ -79,16 +89,6 @@ function salutationFor(hour: number) {
   return 'Good evening';
 }
 
-/** The time, kept current to the minute: the greeting and its clock read from it. */
-function useNow(every = 30_000) {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), every);
-    return () => clearInterval(timer);
-  }, [every]);
-  return now;
-}
-
 /**
  * The garage right now (PRD §25), opened like one: the dash, where the cluster greets the person,
  * lights a telltale for whatever is waiting and reads it out; their vehicles, each in its own lit
@@ -104,8 +104,6 @@ export default function GarageScreen() {
   const insets = useSafeAreaInsets();
   const dockSpace = useDockSpace();
   const [refreshing, setRefreshing] = useState(false);
-  // Where the hero starts and ends on the page: the road under it sinks into the page by its end.
-  const [hero, setHero] = useState<{ y: number; end: number }>();
   // The rev's last thousand and whether it is refreshing, read by the scroll listener.
   const engine = useRef({ rpm: 0, refreshing: false });
   const { y, onScroll } = useScrollY(
@@ -138,6 +136,14 @@ export default function GarageScreen() {
   const attention = attentionByGarage(data?.attention, vehicles.data?.data);
   const parked = !vehicles.isPending && vehicleList.length > 0;
 
+  // An account with no garage yet is a first run: the setup opens by itself, once a session.
+  const noGarage = Boolean(data && data.summary.garages === 0);
+  useEffect(() => {
+    if (!noGarage || wasSetupOffered()) return;
+    markSetupOffered();
+    router.push('/onboarding');
+  }, [noGarage, router]);
+
   const refresh = () => {
     engine.current.refreshing = true;
     // On iOS the needle has just hit the stop: the limiter, felt.
@@ -152,7 +158,7 @@ export default function GarageScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <Animated.ScrollView
         onScroll={onScroll}
         scrollEventThrottle={16}
@@ -171,7 +177,6 @@ export default function GarageScreen() {
           />
         }
       >
-        <RoadAhead y={y} top={insets.top} end={hero?.end} />
         {REV ? <RevMeter y={y} refreshing={refreshing} top={insets.top} /> : null}
 
         {/*
@@ -217,32 +222,19 @@ export default function GarageScreen() {
               description="Start with a garage. It holds your vehicles and the people you share them with."
               action={
                 <Button
-                  label="Create your first garage"
-                  icon="add"
+                  label="Set up my garage"
+                  icon="key"
                   variant="primary"
-                  onPress={() => router.push('/add/garage')}
+                  onPress={() => router.push('/onboarding')}
                 />
               }
             />
           </Rise>
         ) : (
           <>
-            <View
-              onLayout={(event) => {
-                const { y: at, height } = event.nativeEvent.layout;
-                setHero({ y: Math.round(at), end: Math.round(at + height) });
-              }}
-              // Never so short that the road has no room below the horizon: with nothing waiting
-              // the hero is a line or two, and the scenery takes the space instead.
-              style={hero ? { minHeight: insets.top + HORIZON_AT + ROAD_MIN - hero.y } : null}
-            >
-              <Rise index={1} style={styles.heroGap}>
-                <Spotlight
-                  items={items}
-                  briefing={items.length === 0 ? data?.briefing : undefined}
-                />
-              </Rise>
-            </View>
+            <Rise index={1} style={styles.heroGap}>
+              <GarageDash data={data} vehicles={vehicleList} flags={flags} items={items} />
+            </Rise>
 
             <Rise index={2}>
               {vehicles.isPending ? (
@@ -273,7 +265,7 @@ export default function GarageScreen() {
               >
                 {garages.isPending
                   ? [0, 1].map((key) => (
-                      <Skeleton key={key} width={GARAGE} height={128} radius={radius.xxl} />
+                      <Skeleton key={key} width={GARAGE} height={128} style={leaf('md')} />
                     ))
                   : garageList.map((garage, index) => (
                       <Rise key={garage.id} index={index}>
@@ -299,695 +291,16 @@ export default function GarageScreen() {
           </>
         )}
       </Animated.ScrollView>
-      <CompactHeader title="Garage" y={y} />
     </View>
   );
 }
 
-/*
- * The sun comes up and the road draws in once a session, the first time the garage opens, as the
- * bays' door rolls up. ponytail: a module flag, so a remount (a sign-out and back) does not replay it.
- */
-let driven = false;
-
 type Flag = 'late' | 'soon';
 type Kind = 'service' | 'papers' | 'recalls';
-type Point = { x: number; y: number };
-
-/** The lanes, by where their feet land either side of the vanishing point, in screen widths. */
-const LANES = [
-  { k: -1.75, light: 'tail', weight: 2.6 },
-  { k: -1.28, light: 'tail', weight: 1.9 },
-  { k: -0.9, light: 'tail', weight: 1.3 },
-  { k: -0.38, light: 'head', weight: 1.3 },
-  { k: 0.06, light: 'head', weight: 1.9 },
-  { k: 0.56, light: 'head', weight: 2.6 },
-] as const;
-/** The central reservation between the carriageways, and the road's two edges. */
-const DIVIDER = -0.64;
-const EDGES = [-2.4, 1.1] as const;
-/** The vanishing point, across the screen — where the sun sits on the horizon. */
-const VP_X = 0.76;
-/** Below the safe area: the horizon, in the gap between the greeting and the card, the sun on it. */
-const HORIZON_AT = 96;
-/** The last stretch of road, over which it sinks into the page. */
-const SINK = 130;
-/** Where the road ends until the hero below it has been measured, below the safe area. */
-const ROAD_END = 300;
-/** The least road there is below the horizon; a hero with less to say grows to show it. */
-const ROAD_MIN = 84;
-const SUN = 30;
-
-/** The hills on the horizon, far then near: across as a share of the screen, height above it. */
-const HILLS = [
-  [
-    [0.42, 0],
-    [0.5, 8],
-    [0.57, 5],
-    [0.64, 16],
-    [0.71, 10],
-    [0.79, 21],
-    [0.87, 12],
-    [0.95, 19],
-    [1.04, 11],
-  ],
-  [
-    [0.55, 0],
-    [0.62, 5],
-    [0.69, 3],
-    [0.76, 9],
-    [0.84, 6],
-    [0.92, 12],
-    [1.04, 5],
-  ],
-] as const;
-/** The lights along the central reservation, by how deep into the picture each stands. */
-const LAMP_DEPTHS = [1.45, 1.85, 2.4, 3.1, 4, 5.3, 7, 9.4, 12.5] as const;
-/** City lights at the horizon by night, out of focus: across, up from the horizon, radius, colour. */
-const BOKEH = [
-  [0.53, 24, 3, 'head'],
-  [0.6, 33, 4, 'head'],
-  [0.67, 41, 3, 'tail'],
-  [0.86, 36, 5, 'head'],
-  [0.92, 46, 3, 'tail'],
-  [0.97, 30, 6, 'head'],
-] as const;
-/** A few stars by night, across and down as shares of the sky. */
-const STARS = [
-  [0.5, 0.38],
-  [0.6, 0.58],
-  [0.67, 0.3],
-  [0.82, 0.46],
-  [0.9, 0.28],
-  [0.95, 0.62],
-  [0.57, 0.76],
-  [0.73, 0.68],
-] as const;
-/** Cloud bands by day: across, up from the horizon, length as a share of the screen, thickness. */
-const CLOUDS = [
-  [0.46, 58, 0.2, 3],
-  [0.58, 40, 0.3, 4],
-  [0.74, 66, 0.18, 3],
-] as const;
-/** The traffic: on which lane, which way, and how often. */
-const CARS = [
-  { lane: 0, away: true, duration: 3600, gap: 900 },
-  { lane: 1, away: true, duration: 4400, gap: 2600 },
-  { lane: 4, away: false, duration: 3200, gap: 1700 },
-  { lane: 5, away: false, duration: 3900, gap: 3400 },
-] as const;
-const CAR_W = 58;
-const CAR_H = 12;
-
-/** A smooth line through points: each corner rounded off by a curve to the next midpoint. */
-function smooth(points: readonly Point[]): string {
-  const first = points[0]!;
-  let d = `M ${first.x} ${first.y}`;
-  for (let i = 1; i < points.length - 1; i++) {
-    const p = points[i]!;
-    const q = points[i + 1]!;
-    d += ` Q ${p.x} ${p.y} ${(p.x + q.x) / 2} ${(p.y + q.y) / 2}`;
-  }
-  const last = points[points.length - 1]!;
-  return `${d} L ${last.x} ${last.y}`;
-}
-
-/**
- * The page's own picture, under the top bar and the greeting: a drive into the sunset. The sun
- * sits on the horizon level with the name, behind two ranges of hills; a highway runs off to it,
- * lights along its central reservation shrinking toward the sun, its lanes long-exposure light
- * trails — taillights going away, headlights coming — and now and then a car's lights travel them.
- * It is painted straight onto the page and sinks into it where the hero ends, so it has no edge:
- * by night a red sun goes down behind dark hills and the trails glow, under stars; by day the sun
- * is peach on sand-coloured hills, the trails red and copper, with a few bands of cloud.
- *
- * The first time a session, the sun rises from behind the horizon and the road opens out toward
- * you; the sun's glow breathes; the traffic stops under reduce motion; and as the page scrolls the
- * picture rises a little slower than it and fades.
- */
-function RoadAhead({
-  y,
-  top,
-  end,
-}: {
-  y: Animated.Value;
-  top: number;
-  /** Where the hero's last line sits on the page: the road has gone by there. */
-  end: number | undefined;
-}) {
-  const theme = useTheme();
-  const reduce = useReduceMotion();
-  // The glow and the traffic only while the garage is what is on screen.
-  const onScreen = useOnScreen();
-  const { width } = useWindowDimensions();
-  const [lit] = useState(() => new Animated.Value(driven || reduce ? 1 : 0));
-  const [breath] = useState(() => new Animated.Value(1));
-  const night = theme.dark;
-  const height = end ?? top + ROAD_END;
-  const ground = height + 60;
-  const vp = { x: width * VP_X, y: top + HORIZON_AT };
-  // A short hero — nothing waiting — leaves a short road: it sinks over most of what there is.
-  const sink = Math.min(SINK, (height - vp.y) * 0.75);
-  const paint = night ? '#ffffff' : theme.borderStrong;
-  const tone = night
-    ? {
-        tail: '#ff5a43',
-        head: '#ffe5c0',
-        sun: ['#ffcb85', '#e2532a'],
-        glow: '#ff8f4d',
-        hills: ['#2a1c16', '#1b1310'],
-        road: '#1a1411',
-        lamp: '#ffd7a3',
-        pole: '#4a3a31',
-      }
-    : {
-        tail: theme.destructive,
-        head: theme.primary,
-        sun: ['#ffe3ba', '#f0874a'],
-        glow: '#ffac6b',
-        hills: ['#ead5bf', '#dfc3a8'],
-        road: '#e7dccf',
-        lamp: '#c96f3b',
-        pole: '#c8b29d',
-      };
-  const foot = (k: number): Point => ({ x: vp.x + k * width, y: ground });
-  // A point `s` of the way from the vanishing point (0) to a foot (1).
-  const along = (to: Point, s: number): Point => ({
-    x: vp.x + (to.x - vp.x) * s,
-    y: vp.y + (to.y - vp.y) * s,
-  });
-  // How much of the road is left at a height on the page: 1 until it starts to sink, 0 at its end.
-  const left = (at: number) => Math.min(1, Math.max(0, (height - at) / sink));
-  // Every lane shares its horizon and its ground, so one set of stops fades them all into the page.
-  const sAt = (at: number) => (at - vp.y) / (ground - vp.y);
-  const [sinks, gone] = [sAt(height - sink), sAt(height)];
-  const divider = foot(DIVIDER);
-  const [leftEdge, rightEdge] = [foot(EDGES[0]), foot(EDGES[1])];
-
-  useEffect(() => {
-    if (driven || reduce) return;
-    const draw = Animated.timing(lit, {
-      toValue: 1,
-      duration: 1500,
-      delay: 120,
-      easing: ease.out,
-      useNativeDriver: true,
-    });
-    draw.start(({ finished }) => {
-      if (finished) driven = true;
-    });
-    return () => draw.stop();
-  }, [lit, reduce]);
-
-  useEffect(() => {
-    if (reduce || !onScreen) return;
-    const to = (toValue: number) =>
-      Animated.timing(breath, {
-        toValue,
-        duration: 2600,
-        easing: ease.inOut,
-        useNativeDriver: true,
-      });
-    const loop = Animated.loop(Animated.sequence([to(0.7), to(1)]));
-    loop.start();
-    return () => loop.stop();
-  }, [breath, reduce, onScreen]);
-
-  /** A stroke's gradient along a lane: out of the horizon, full where the road is near, gone into the page. */
-  const fading = (id: string, to: Point, color: string, strongest: number) => (
-    <LinearGradient
-      key={id}
-      id={id}
-      gradientUnits="userSpaceOnUse"
-      x1={vp.x}
-      y1={vp.y}
-      x2={to.x}
-      y2={to.y}
-    >
-      <Stop offset="0" stopColor={color} stopOpacity={0} />
-      <Stop offset="0.2" stopColor={color} stopOpacity={strongest * 0.3} />
-      <Stop offset={sinks} stopColor={color} stopOpacity={strongest} />
-      <Stop offset={gone} stopColor={color} stopOpacity={0} />
-    </LinearGradient>
-  );
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={[
-        styles.road,
-        {
-          height,
-          // It lags the page a little and is gone before the lag could carry it under the bays.
-          opacity: y.interpolate({
-            inputRange: [0, 260],
-            outputRange: [1, 0],
-            extrapolate: 'clamp',
-          }),
-          transform: [
-            {
-              translateY: y.interpolate({
-                inputRange: [0, 300],
-                outputRange: [0, 75],
-                extrapolate: 'clamp',
-              }),
-            },
-          ],
-        },
-      ]}
-    >
-      {/* The sky: the light from the horizon, and stars by night or cloud by day. */}
-      <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
-        <Defs>
-          <RadialGradient
-            id="rd-sky"
-            gradientUnits="userSpaceOnUse"
-            cx={vp.x}
-            cy={vp.y}
-            fx={vp.x}
-            fy={vp.y}
-            rx={width * 0.8}
-            ry={HORIZON_AT}
-          >
-            <Stop offset="0" stopColor={theme.primary} stopOpacity={night ? 0.42 : 0.22} />
-            <Stop offset="0.5" stopColor={theme.primary} stopOpacity={night ? 0.1 : 0.06} />
-            <Stop offset="1" stopColor={theme.primary} stopOpacity={0} />
-          </RadialGradient>
-          <RadialGradient id="rd-tail">
-            <Stop offset="0" stopColor={tone.tail} stopOpacity={0.9} />
-            <Stop offset="1" stopColor={tone.tail} stopOpacity={0} />
-          </RadialGradient>
-          <RadialGradient id="rd-head">
-            <Stop offset="0" stopColor={tone.head} stopOpacity={0.9} />
-            <Stop offset="1" stopColor={tone.head} stopOpacity={0} />
-          </RadialGradient>
-          <LinearGradient id="rd-cloud" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0" stopColor="#ffffff" stopOpacity={0} />
-            <Stop offset="0.5" stopColor="#ffffff" stopOpacity={0.85} />
-            <Stop offset="1" stopColor="#ffffff" stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Rect width={width} height={height} fill="url(#rd-sky)" />
-        {night
-          ? STARS.map(([across, down], index) => (
-              <Circle
-                key={index}
-                cx={across * width}
-                cy={top + down * (vp.y - top)}
-                r={0.8}
-                fill="#ffffff"
-                opacity={0.5}
-              />
-            ))
-          : CLOUDS.map(([across, up, long, thick], index) => (
-              <Rect
-                key={index}
-                x={across * width}
-                y={vp.y - up}
-                width={long * width}
-                height={thick}
-                rx={thick / 2}
-                fill="url(#rd-cloud)"
-              />
-            ))}
-        {night
-          ? BOKEH.map(([across, up, r, light], index) => (
-              <Circle
-                key={index}
-                cx={across * width}
-                cy={vp.y - up}
-                r={r}
-                fill={`url(#rd-${light})`}
-                opacity={0.5}
-              />
-            ))
-          : null}
-      </Svg>
-
-      {/* The sun's own glow, breathing, and coming up with it. */}
-      <Animated.View style={[StyleSheet.absoluteFill, { opacity: Animated.multiply(lit, breath) }]}>
-        <Svg width={width} height={height}>
-          <Defs>
-            <RadialGradient
-              id="rd-glow"
-              gradientUnits="userSpaceOnUse"
-              cx={vp.x}
-              cy={vp.y}
-              fx={vp.x}
-              fy={vp.y}
-              rx={width * 0.42}
-              ry={62}
-            >
-              <Stop offset="0" stopColor={tone.glow} stopOpacity={night ? 0.55 : 0.42} />
-              <Stop offset="1" stopColor={tone.glow} stopOpacity={0} />
-            </RadialGradient>
-          </Defs>
-          <Rect width={width} height={height} fill="url(#rd-glow)" />
-        </Svg>
-      </Animated.View>
-
-      {/* The sun, rising from behind the horizon: the sky above it clips it at the horizon. */}
-      <View style={[styles.sky, { height: vp.y + 0.5 }]}>
-        <Animated.View
-          style={[
-            styles.sun,
-            {
-              left: vp.x - SUN * 2,
-              top: vp.y - SUN * 2,
-              transform: [
-                {
-                  translateY: lit.interpolate({ inputRange: [0, 1], outputRange: [SUN * 1.7, 0] }),
-                },
-              ],
-            },
-          ]}
-        >
-          <Svg width={SUN * 4} height={SUN * 4}>
-            <Defs>
-              <RadialGradient id="rd-halo">
-                <Stop offset="0.45" stopColor={tone.sun[1]} stopOpacity={night ? 0.5 : 0.35} />
-                <Stop offset="1" stopColor={tone.sun[1]} stopOpacity={0} />
-              </RadialGradient>
-              <LinearGradient id="rd-disc" x1="0" y1="0" x2="0" y2="1">
-                <Stop offset="0" stopColor={tone.sun[0]} />
-                <Stop offset="1" stopColor={tone.sun[1]} />
-              </LinearGradient>
-            </Defs>
-            <Circle cx={SUN * 2} cy={SUN * 2} r={SUN * 2} fill="url(#rd-halo)" />
-            <Circle cx={SUN * 2} cy={SUN * 2} r={SUN} fill="url(#rd-disc)" />
-          </Svg>
-        </Animated.View>
-      </View>
-
-      {/* The hills the sun goes down behind, each melting in from the left. */}
-      <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
-        <Defs>
-          {HILLS.map((range, index) => (
-            <LinearGradient
-              key={index}
-              id={`rd-hill-${index}`}
-              gradientUnits="userSpaceOnUse"
-              x1={range[0][0] * width}
-              y1={0}
-              x2={(range[0][0] + 0.12) * width}
-              y2={0}
-            >
-              <Stop offset="0" stopColor={tone.hills[index]} stopOpacity={0} />
-              <Stop offset="1" stopColor={tone.hills[index]} stopOpacity={1} />
-            </LinearGradient>
-          ))}
-          <LinearGradient id="rd-horizon" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0.3" stopColor={paint} stopOpacity={0} />
-            <Stop offset={VP_X} stopColor={paint} stopOpacity={night ? 0.16 : 0.5} />
-            <Stop offset="1" stopColor={paint} stopOpacity={night ? 0.05 : 0.2} />
-          </LinearGradient>
-        </Defs>
-        {HILLS.map((range, index) => {
-          const points = range.map(([across, up]) => ({ x: across * width, y: vp.y - up }));
-          return (
-            <Path
-              key={index}
-              d={`${smooth(points)} L ${width + 4} ${vp.y} L ${points[0]!.x} ${vp.y} Z`}
-              fill={`url(#rd-hill-${index})`}
-            />
-          );
-        })}
-        <Rect y={vp.y} width={width} height={1} fill="url(#rd-horizon)" />
-      </Svg>
-
-      {/* The road, opening out from the horizon toward you the first time. */}
-      <Animated.View
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            opacity: lit,
-            transformOrigin: `${Math.round(VP_X * 100)}% ${Math.round((vp.y / height) * 100)}%`,
-            transform: [{ scale: lit.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }],
-          },
-        ]}
-      >
-        <Svg width={width} height={height}>
-          <Defs>
-            <LinearGradient
-              id="rd-tarmac"
-              gradientUnits="userSpaceOnUse"
-              x1={0}
-              y1={vp.y}
-              x2={0}
-              y2={height}
-            >
-              <Stop offset="0" stopColor={tone.road} stopOpacity={1} />
-              <Stop
-                offset={(height - sink - vp.y) / (height - vp.y)}
-                stopColor={tone.road}
-                stopOpacity={1}
-              />
-              <Stop offset="1" stopColor={tone.road} stopOpacity={0} />
-            </LinearGradient>
-            <RadialGradient id="rd-lamp">
-              <Stop offset="0" stopColor={tone.lamp} stopOpacity={0.85} />
-              <Stop offset="1" stopColor={tone.lamp} stopOpacity={0} />
-            </RadialGradient>
-            {LANES.map((lane, index) =>
-              fading(`rd-lane-${index}`, foot(lane.k), tone[lane.light], 1),
-            )}
-            {EDGES.map((k, index) =>
-              fading(`rd-edge-${index}`, foot(k), paint, night ? 0.12 : 0.55),
-            )}
-          </Defs>
-          <Polygon
-            points={`${vp.x - 1},${vp.y} ${vp.x + 1},${vp.y} ${rightEdge.x},${rightEdge.y} ${leftEdge.x},${leftEdge.y}`}
-            fill="url(#rd-tarmac)"
-          />
-          {EDGES.map((k, index) => {
-            const end = foot(k);
-            return (
-              <Line
-                key={k}
-                x1={vp.x}
-                y1={vp.y}
-                x2={end.x}
-                y2={end.y}
-                stroke={`url(#rd-edge-${index})`}
-                strokeWidth={1.4}
-              />
-            );
-          })}
-          {/* Each trail twice: a wide faint bloom, then the streak itself. */}
-          {LANES.map((lane, index) => {
-            const end = foot(lane.k);
-            return (
-              <G key={index}>
-                <Line
-                  x1={vp.x}
-                  y1={vp.y}
-                  x2={end.x}
-                  y2={end.y}
-                  stroke={`url(#rd-lane-${index})`}
-                  strokeOpacity={night ? 0.18 : 0.1}
-                  strokeWidth={lane.weight * 5}
-                  strokeLinecap="round"
-                />
-                <Line
-                  x1={vp.x}
-                  y1={vp.y}
-                  x2={end.x}
-                  y2={end.y}
-                  stroke={`url(#rd-lane-${index})`}
-                  strokeWidth={lane.weight}
-                  strokeLinecap="round"
-                />
-              </G>
-            );
-          })}
-          {/* The painted line down the reservation, its dashes shortening into the distance. */}
-          {Array.from({ length: 12 }, (_, index) => {
-            const depth = 1 + index * 0.75;
-            const near = along(divider, 1 / depth);
-            const far = along(divider, 1 / (depth + 0.38));
-            return (
-              <Line
-                key={index}
-                x1={near.x}
-                y1={near.y}
-                x2={far.x}
-                y2={far.y}
-                stroke={paint}
-                strokeOpacity={(night ? 0.28 : 0.6) * left(near.y)}
-                strokeWidth={2.4 / depth}
-              />
-            );
-          })}
-          {/* The lights down the reservation: a pole, a T of arms, a lamp at each end. */}
-          {LAMP_DEPTHS.map((depth) => {
-            const s = 1 / depth;
-            const base = along(divider, s);
-            const head = { x: base.x, y: base.y - 52 * s };
-            const arm = 11 * s;
-            const shown = left(base.y);
-            if (shown === 0) return null;
-            return (
-              <G key={depth} opacity={shown}>
-                <Line
-                  x1={base.x}
-                  y1={base.y}
-                  x2={head.x}
-                  y2={head.y}
-                  stroke={tone.pole}
-                  strokeWidth={Math.max(0.6, 2.2 * s)}
-                />
-                <Line
-                  x1={head.x - arm}
-                  y1={head.y}
-                  x2={head.x + arm}
-                  y2={head.y}
-                  stroke={tone.pole}
-                  strokeWidth={Math.max(0.5, 1.6 * s)}
-                />
-                {night
-                  ? [-arm, arm].map((dx) => (
-                      <Circle
-                        key={dx}
-                        cx={head.x + dx}
-                        cy={head.y + 1.5 * s}
-                        r={14 * s}
-                        fill="url(#rd-lamp)"
-                      />
-                    ))
-                  : null}
-                {[-arm, arm].map((dx) => (
-                  <Circle
-                    key={dx}
-                    cx={head.x + dx}
-                    cy={head.y + 1.5 * s}
-                    r={Math.max(0.7, 2.2 * s)}
-                    fill={tone.lamp}
-                  />
-                ))}
-              </G>
-            );
-          })}
-        </Svg>
-        {reduce
-          ? null
-          : CARS.map((car, index) => (
-              <Car
-                key={index}
-                {...car}
-                running={onScreen}
-                vp={vp}
-                to={foot(LANES[car.lane].k)}
-                light={LANES[car.lane].light}
-                color={tone[LANES[car.lane].light]}
-                gone={gone}
-              />
-            ))}
-      </Animated.View>
-    </Animated.View>
-  );
-}
-
-/**
- * A car's lights on its lane: going away, they shrink toward the horizon and slow as they go;
- * coming, they grow and quicken toward you and sink into the page with the road. Straight lanes,
- * so a native-driven translate is the whole journey.
- */
-function Car({
-  vp,
-  to,
-  light,
-  color,
-  gone,
-  away,
-  duration,
-  gap,
-  running,
-}: {
-  /** Off screen the car waits where it is, and drives on when the garage is back. */
-  running: boolean;
-  vp: Point;
-  to: Point;
-  /** Whose lights: names the gradient, which a colour's `#` cannot. */
-  light: 'tail' | 'head';
-  color: string;
-  /** How far along the lane the road has sunk into the page. */
-  gone: number;
-  away: boolean;
-  duration: number;
-  gap: number;
-}) {
-  const [t] = useState(() => new Animated.Value(0));
-  // `s` along the lane: 0 at the horizon, 1 at its foot; they live where the road shows.
-  const near = gone * 0.85;
-  const [from, end] = away ? [near, 0.04] : [0.04, near];
-  const dx = to.x - vp.x;
-  const dy = to.y - vp.y;
-
-  useEffect(() => {
-    if (!running) return;
-    const drive = Animated.loop(
-      Animated.sequence([
-        Animated.delay(gap),
-        Animated.timing(t, {
-          toValue: 1,
-          duration,
-          easing: away ? Easing.out(Easing.quad) : Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    drive.start();
-    return () => drive.stop();
-  }, [t, gap, duration, away, running]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.car,
-        {
-          left: vp.x - CAR_W / 2,
-          top: vp.y - CAR_H / 2,
-          opacity: away
-            ? t.interpolate({ inputRange: [0, 0.2, 0.75, 1], outputRange: [0, 1, 0.8, 0] })
-            : t.interpolate({ inputRange: [0, 0.35, 0.75, 1], outputRange: [0, 1, 1, 0] }),
-          transform: [
-            {
-              translateX: t.interpolate({ inputRange: [0, 1], outputRange: [dx * from, dx * end] }),
-            },
-            {
-              translateY: t.interpolate({ inputRange: [0, 1], outputRange: [dy * from, dy * end] }),
-            },
-            { rotate: `${(Math.atan2(dy, dx) * 180) / Math.PI}deg` },
-            { scale: t.interpolate({ inputRange: [0, 1], outputRange: [from, end] }) },
-          ],
-        },
-      ]}
-    >
-      <Svg width={CAR_W} height={CAR_H}>
-        <Defs>
-          <RadialGradient id={`rd-car-${light}`}>
-            <Stop offset="0" stopColor="#ffffff" stopOpacity={1} />
-            <Stop offset="0.35" stopColor={color} stopOpacity={0.95} />
-            <Stop offset="1" stopColor={color} stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        <Ellipse
-          cx={CAR_W / 2}
-          cy={CAR_H / 2}
-          rx={CAR_W / 2}
-          ry={CAR_H / 2}
-          fill={`url(#rd-car-${light})`}
-        />
-      </Svg>
-    </Animated.View>
-  );
-}
 
 /**
  * Who and when, in one line under a quiet stamp: the day and the time over "Good afternoon, Alex" —
- * the greeting muted, the name in the page's ink. The road's horizon runs just below it.
+ * the greeting muted, the name in the page's ink.
  */
 function Greeting({ name }: { name: string }) {
   const theme = useTheme();
@@ -1029,298 +342,293 @@ function Greeting({ name }: { name: string }) {
 }
 
 /**
- * Up next: the most pressing thing, on one solid card in a single row — its glyph on a quiet tile
- * with a dot of its tone on the corner, what it is, when it is due said in that tone and whose,
- * and the one thing to do about it (log the service, renew the paper, check the recall). A service
- * wears how far through its interval it is as the card's own bottom edge, filling amber as it
- * nears and red once past.
- *
- * Above it, a label and the count with the way to the next; under it, the next cards' edges. It
- * turns only when asked — a card with a button on it must not change under the thumb — and the
- * next rises into place. The card itself opens the vehicle. With nothing waiting, it says so and
- * reads the garage's briefing, with the way to plan ahead.
+ * The garage at a glance, as the vehicle hero's dash is drawn: one raised card, three readings along
+ * its top — the fleet first and largest, straight on the card with no tile, its count beside each
+ * vehicle's mark tinted by what it is waiting on; then on tiles what it is worth and what running it
+ * has cost, this month's share beside the word — and
+ * under them what needs the person, most pressing first: its glyph, what and whose, how due in its
+ * tone, and the one thing to do about it. Three show; the rest wait behind "more". With nothing
+ * waiting, one row says so and offers to plan a reminder.
  */
-function Spotlight({
+function GarageDash({
+  data,
+  vehicles,
+  flags,
   items,
-  briefing,
 }: {
+  data: Dashboard | undefined;
+  vehicles: readonly Vehicle[];
+  flags: ReadonlyMap<string, BayFlag>;
   items: readonly Item[];
-  /** The dashboard's sentences when nothing is waiting; `undefined` while it loads. */
-  briefing: readonly string[] | undefined;
 }) {
   const theme = useTheme();
   const router = useRouter();
-  const reduce = useReduceMotion();
   const narrow = useWindowDimensions().width < 360;
-  // Where the deck is: it only counts up, and is read modulo what there is to read.
-  const [at, setAt] = useState(0);
-  const [shown, setShown] = useState(0);
-  // The face: -1 leaving upward, 0 in place, 1 waiting below to rise in.
-  const [swap] = useState(() => new Animated.Value(0));
-  const arriving = useRef(false);
-  const lines = items.length === 0 && briefing ? briefing : [];
-  const count = items.length > 0 ? items.length : lines.length;
+  const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    if (at === shown) return;
-    if (reduce || count === 0) {
-      setShown(at);
-      return;
-    }
-    const leave = Animated.timing(swap, {
-      toValue: -1,
-      duration: 150,
-      easing: ease.in,
-      useNativeDriver: true,
-    });
-    leave.start(({ finished }) => {
-      if (!finished) return;
-      swap.setValue(1);
-      arriving.current = true;
-      setShown(at);
-    });
-    return () => leave.stop();
-    // Only a new place starts a turn; `shown` catches up to it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [at]);
-
-  // The next face comes in once it is the one drawn, so the old one never flashes on its way.
-  useEffect(() => {
-    if (!arriving.current) return;
-    arriving.current = false;
-    Animated.spring(swap, { toValue: 0, useNativeDriver: true, speed: 15, bounciness: 5 }).start();
-  }, [shown, swap]);
-
-  const place = count > 0 ? shown % count : 0;
-  const item = items[place];
-
-  /*
-   * A refetch can reorder the list under the card — a service logged, a paper renewed. The card
-   * stays on the thing it was showing wherever that has moved, and only when it is gone does the
-   * next one take its place.
-   */
-  const showing = useRef<string | null>(null);
-  useEffect(() => {
-    const key = showing.current;
-    const index = key ? items.findIndex((candidate) => candidate.key === key) : -1;
-    if (index >= 0 && items.length > 0 && index !== shown % items.length) {
-      setAt(index);
-      setShown(index);
-    }
-    // Only a new list moves the card; a turn moves it by itself.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items]);
-  useEffect(() => {
-    showing.current = item?.key ?? null;
-  }, [item]);
-  const clear = !item && briefing !== undefined;
-  // The cards under the one in front: as many as there are, up to two.
-  const depth = Math.min(Math.max(count - 1, 0), 2);
-  const face = {
-    opacity: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 1, 0] }),
-    transform: [
-      { translateY: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [-8, 0, 12] }) },
-    ],
-  };
-  const pop = {
-    transform: [
-      { scale: swap.interpolate({ inputRange: [-1, 0, 1], outputRange: [0.8, 1, 0.5] }) },
-    ],
-  };
-
-  let card: ReactNode;
-  if (item) {
-    const tone = item.tone === 'late' ? theme.destructive : theme.warning;
-    const act = actionFor(item);
-    card = (
-      <View style={[styles.spot, bayCard(theme)]}>
-        <PressableScale
-          onPress={() => router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })}
-          accessibilityRole="button"
-          accessibilityLabel={`${item.title}, ${item.vehicle}, ${item.due}`}
-          accessibilityHint={`Opens ${item.vehicle}`}
-          scaleTo={0.985}
-          style={styles.spotMain}
-        >
-          {/* The glyph alone, as the logbook wears it: the art says the kind, the pill the tone. */}
-          <Animated.View style={[styles.spotGlyph, pop]}>
-            <Glyph size={30}>{item.emoji}</Glyph>
-          </Animated.View>
-          <Animated.View style={[styles.spotText, face]}>
-            <Text numberOfLines={1} style={[styles.spotTitle, { color: theme.foreground }]}>
-              {item.title}
-            </Text>
-            {/*
-             * When, as a status in its colour, then whose: a narrow card cuts the vehicle's name,
-             * never how late it is.
-             */}
-            <View style={styles.spotMeta}>
-              <View style={[styles.spotStatus, { backgroundColor: `${tone}1F` }]}>
-                <Text numberOfLines={1} style={[styles.spotStatusText, { color: tone }]}>
-                  {item.due}
-                </Text>
+  if (!data) {
+    return (
+      <View style={[DASH_SHAPE, lift(theme, 'low')]}>
+        <DashCard>
+          <DashReadings>
+            <View style={styles.fleetSlot}>
+              <View style={styles.fleet}>
+                <Skeleton width={22} height={26} radius={6} />
+                <View style={styles.fleetSide}>
+                  <Skeleton width={44} height={14} />
+                  <Skeleton width={40} height={8} />
+                </View>
               </View>
-              {/* A small phone has room for the status only; the card still opens the vehicle. */}
-              {narrow ? null : (
-                <Text
-                  numberOfLines={1}
-                  style={[styles.spotLine, styles.spotWho, { color: theme.mutedForeground }]}
-                >
-                  {item.vehicle}
-                </Text>
-              )}
             </View>
-          </Animated.View>
-        </PressableScale>
-        <PressableScale
-          onPress={() => {
-            haptic.selection();
-            router.push(act.href);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={`${act.label}: ${item.title}`}
-          hitSlop={8}
-          scaleTo={0.92}
-          style={[
-            styles.spotAct,
-            narrow ? styles.spotActRound : null,
-            { backgroundColor: theme.primary },
-          ]}
-        >
-          <Ionicons name={act.icon} size={narrow ? 16 : 13} color={theme.primaryForeground} />
-          {/* A small phone keeps the key and gives its word to the status beside it. */}
-          {narrow ? null : (
-            <Text style={[styles.spotActText, { color: theme.primaryForeground }]}>
-              {act.label}
-            </Text>
-          )}
-        </PressableScale>
-      </View>
-    );
-  } else if (clear) {
-    const line = lines[place] ?? 'Every service, paper and recall is in hand.';
-    card = (
-      <View style={[styles.spot, bayCard(theme)]}>
-        <View style={styles.spotMain} accessible accessibilityLabel={`All clear. ${line}`}>
-          <View style={styles.spotGlyph}>
-            <Ionicons name="checkmark-circle" size={30} color={theme.success} />
-          </View>
-          <Animated.View style={[styles.spotText, face]}>
-            {/* The label above already says all clear; the card says what that means. */}
-            <Text style={[styles.spotTitle, { color: theme.foreground }]}>Nothing needs you</Text>
-            {/* Two lines kept, so a short sentence and a long one leave the page where it was. */}
-            <Text
-              numberOfLines={2}
-              style={[styles.spotLine, styles.spotBrief, { color: theme.mutedForeground }]}
-            >
-              {line}
-            </Text>
-          </Animated.View>
-        </View>
-        <PressableScale
-          onPress={() => {
-            haptic.selection();
-            router.push('/add/planned');
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Plan a reminder"
-          hitSlop={8}
-          scaleTo={0.92}
-          style={[styles.spotAct, { backgroundColor: theme.muted }]}
-        >
-          <Ionicons name="add" size={14} color={theme.foreground} />
-          <Text style={[styles.spotActText, { color: theme.foreground }]}>Plan</Text>
-        </PressableScale>
-      </View>
-    );
-  } else {
-    card = (
-      <View style={[styles.spot, bayCard(theme)]}>
-        <View style={styles.spotMain}>
-          <Skeleton width={30} height={30} radius={15} />
-          <View style={[styles.spotText, { gap: 8 }]}>
-            <Skeleton width="62%" height={13} />
-            <Skeleton width="44%" height={10} />
-          </View>
-        </View>
-        <Skeleton width={68} height={34} radius={999} />
+            <DashCellSkeleton label="Worth" />
+            <DashCellSkeleton label="Spent" />
+          </DashReadings>
+          <DashRows>
+            <View style={styles.rowSkeleton}>
+              <Skeleton width={18} height={18} radius={9} />
+              <Skeleton width="48%" height={12} />
+            </View>
+          </DashRows>
+        </DashCard>
       </View>
     );
   }
 
-  return (
-    <View>
-      {/* What this is, and how much more there is — the way to the next beside the count. */}
-      <View style={styles.spotBar}>
-        <View style={styles.spotLabel}>
-          <View
-            style={[
-              styles.spotLabelDot,
-              { backgroundColor: clear ? theme.success : item ? theme.primary : theme.border },
-            ]}
-          />
-          <Text style={[styles.spotLabelText, { color: theme.mutedForeground }]}>
-            {clear ? 'ALL CLEAR' : 'UP NEXT'}
-          </Text>
-        </View>
-        {count > 1 ? (
-          <PressableScale
-            onPress={() => {
-              haptic.selection();
-              setAt((value) => value + 1);
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Next, ${place + 1} of ${count}`}
-            hitSlop={10}
-            scaleTo={0.92}
-            style={[styles.spotPager, { backgroundColor: theme.muted }]}
-          >
-            <Text style={[figure, styles.spotCount, { color: theme.foreground }]}>
-              {place + 1}
-              <Text style={[figure, styles.spotCount, { color: theme.mutedForeground }]}>
-                /{count}
-              </Text>
-            </Text>
-            <Ionicons name="chevron-forward" size={13} color={theme.foreground} />
-          </PressableScale>
-        ) : null}
-      </View>
+  // In the currency most of it is in: a second currency is left out, never added in wrongly.
+  const spend = Object.values(data.vehicleSpend);
+  const counts = new Map<string, number>();
+  for (const money of spend) counts.set(money.currency, (counts.get(money.currency) ?? 0) + 1);
+  const currency = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const total = spend
+    .filter((money) => money.currency === currency)
+    .reduce((sum, money) => sum + money.amountMinor, 0);
+  const worth = data.summary.totalValue;
+  const month = data.summary.spentThisMonth;
+  const waiting = vehicles.filter((vehicle) => flags.has(vehicle.id)).length;
+  const toneOf = (vehicle: Vehicle) => {
+    const flag = flags.get(vehicle.id);
+    return flag?.late ? theme.destructive : flag?.soon ? theme.warning : theme.primary;
+  };
+  const shown = open ? items : items.slice(0, NEXT_SHOWN);
+  const hidden = items.length - NEXT_SHOWN;
+  const plural = vehicles.length === 1 ? 'vehicle' : 'vehicles';
 
-      <View style={{ marginBottom: depth * DECK_STEP }}>
-        {/* The deck under the card in front: each a step lower and narrower. */}
-        {Array.from({ length: depth }, (_, i) => depth - i).map((level) => (
-          <View
-            key={level}
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={[
-              styles.deckEdge,
-              {
-                backgroundColor: level === 1 ? theme.card : theme.muted,
-                borderColor: theme.hairline,
-                left: 16 + level * 12,
-                right: 16 + level * 12,
-                bottom: -level * DECK_STEP,
-              },
-            ]}
-          />
-        ))}
-        {card}
-      </View>
+  return (
+    // The lift on a wrapper: a shadow on the view that clips its corners is clipped with them.
+    <View style={[DASH_SHAPE, lift(theme, 'low')]}>
+      <DashCard>
+        <DashReadings>
+          {/*
+           * The fleet, the dash's lead: no tile, a figure a size up from the rest, and each vehicle's
+           * mark bare in the colour of what it waits on — the copper of the garage when nothing.
+           */}
+          <Rise index={2} style={styles.fleetSlot}>
+            <PressableScale
+              onPress={() => {
+                haptic.selection();
+                router.push('/vehicles');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`${vehicles.length} ${plural}${waiting ? `, ${waiting} due` : ''}`}
+              accessibilityHint="Opens Vehicles"
+              scaleTo={0.96}
+              style={styles.fleet}
+            >
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
+                style={[figure, styles.fleetCount, { color: theme.foreground }]}
+              >
+                {vehicles.length}
+              </Text>
+              <View style={styles.fleetSide}>
+                <FleetMarks vehicles={vehicles} toneOf={toneOf} max={narrow ? 2 : 3} />
+                <Text
+                  numberOfLines={1}
+                  style={[styles.fleetWord, { color: theme.mutedForeground }]}
+                >
+                  {plural.toUpperCase()}
+                </Text>
+              </View>
+            </PressableScale>
+          </Rise>
+          <DashCell
+            icon="pricetag-outline"
+            label="Worth"
+            said={`Worth ${worth ? compactMoney(worth.amountMinor, worth.currency) : 'not known'}`}
+            index={3}
+            narrow={narrow}
+          >
+            <DashReading>
+              {worth ? (
+                <DashValue
+                  narrow={narrow}
+                  count={{
+                    value: worth.amountMinor,
+                    format: (amount) => compactMoney(amount, worth.currency),
+                  }}
+                />
+              ) : (
+                <DashValue muted narrow={narrow}>
+                  —
+                </DashValue>
+              )}
+            </DashReading>
+          </DashCell>
+          <DashCell
+            icon="wallet-outline"
+            label="Spent"
+            said={`Spent ${currency ? compactMoney(total, currency) : 'nothing'} to run${month && month.amountMinor > 0 ? `, ${compactMoney(month.amountMinor, month.currency)} of it this month` : ''}`}
+            aside={
+              month && month.amountMinor > 0 && !narrow ? (
+                <DashTag color={theme.primary} wash={theme.primarySoft}>
+                  +{compactMoney(month.amountMinor, month.currency)}
+                </DashTag>
+              ) : null
+            }
+            index={4}
+            narrow={narrow}
+          >
+            <DashReading>
+              {currency ? (
+                <DashValue
+                  narrow={narrow}
+                  count={{ value: total, format: (amount) => compactMoney(amount, currency) }}
+                />
+              ) : (
+                <DashValue muted narrow={narrow}>
+                  —
+                </DashValue>
+              )}
+            </DashReading>
+          </DashCell>
+        </DashReadings>
+
+        <DashRows>
+          {items.length === 0 ? (
+            <DashRow
+              emoji={<Ionicons name="checkmark-circle" size={18} color={theme.primary} />}
+              title="Nothing needs you"
+              whose={data.briefing[0] ?? 'Every service, paper and recall is in hand.'}
+              tone="neutral"
+              accessibilityLabel={`All clear. ${data.briefing[0] ?? 'Every service, paper and recall is in hand.'}`}
+              trailing={
+                <DashAction
+                  icon="add"
+                  label="Plan a reminder"
+                  quiet
+                  onPress={() => openAdd({ mode: 'planned' })}
+                />
+              }
+            />
+          ) : (
+            shown.map((item, place) => {
+              const act = actionFor(item);
+              return (
+                <DashRow
+                  key={item.key}
+                  emoji={item.emoji}
+                  title={item.title}
+                  whose={item.vehicle}
+                  status={item.short}
+                  tone={item.tone === 'late' ? 'destructive' : 'warning'}
+                  onPress={() =>
+                    router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
+                  }
+                  accessibilityLabel={`${item.title}, ${item.vehicle}, ${item.due}`}
+                  accessibilityHint={`Opens ${item.vehicle}`}
+                  index={5 + Math.min(place, NEXT_SHOWN)}
+                  divided={place > 0}
+                  trailing={
+                    <DashAction
+                      icon={act.icon}
+                      label={`${act.label}: ${item.title}`}
+                      onPress={() => {
+                        if ('add' in act) openAdd(act.add);
+                        else router.push(act.href);
+                      }}
+                    />
+                  }
+                />
+              );
+            })
+          )}
+          {hidden > 0 ? (
+            <PressableScale
+              onPress={() => {
+                haptic.selection();
+                setOpen((was) => !was);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={open ? 'Show fewer' : `Show ${hidden} more`}
+              scaleTo={0.97}
+              style={styles.more}
+            >
+              <View style={[styles.moreRule, { backgroundColor: theme.border }]} />
+              <Text style={[styles.moreText, { color: theme.mutedForeground }]}>
+                {open ? 'Show fewer' : `${hidden} more`}
+              </Text>
+              <Ionicons
+                name={open ? 'chevron-up' : 'chevron-down'}
+                size={12}
+                color={theme.mutedForeground}
+              />
+            </PressableScale>
+          ) : null}
+        </DashRows>
+      </DashCard>
     </View>
   );
 }
 
-/** How far each card under the one in front shows below it. */
-const DECK_STEP = 6;
+/**
+ * The fleet beside its count: each vehicle's mark, bare, in the colour of what it waits on — late
+ * red, soon amber, copper when nothing — and the rest a count.
+ */
+function FleetMarks({
+  vehicles,
+  toneOf,
+  max,
+}: {
+  vehicles: readonly Vehicle[];
+  toneOf: (vehicle: Vehicle) => string;
+  max: number;
+}) {
+  const theme = useTheme();
+  const shown = vehicles.slice(0, max);
+  const more = vehicles.length - shown.length;
+  return (
+    <View
+      style={styles.marks}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {shown.map((vehicle) => (
+        <Ionicons
+          key={vehicle.id}
+          name={vehicleIcon(vehicle.vehicleType).replace('-outline', '') as IoniconName}
+          size={15}
+          color={toneOf(vehicle)}
+        />
+      ))}
+      {more > 0 ? (
+        <Text style={[figure, styles.marksMore, { color: theme.mutedForeground }]}>+{more}</Text>
+      ) : null}
+    </View>
+  );
+}
 
-/** The one thing to do about an item, where it is done. */
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
+
+/** What needs the person, shown before the rest wait behind "more". */
+const NEXT_SHOWN = 3;
+
+/** The one thing to do about an item, where it is done: a screen, or the + drawer's form. */
 function actionFor(item: Item): {
   label: string;
   icon: ComponentProps<typeof Ionicons>['name'];
-  href: Href;
-} {
+} & ({ href: Href } | { add: AddRequest }) {
   if (item.kind === 'papers') {
     return {
       label: 'Renew',
@@ -1337,13 +645,14 @@ function actionFor(item: Item): {
   if (item.kind === 'recalls') {
     return { label: 'Check', icon: 'shield-checkmark', href: '/notifications' };
   }
-  // The service's own name on the line, so the form offers this schedule first.
+  // The schedule itself, so the drawer's form opens on completing it.
   return {
     label: 'Log',
     icon: 'checkmark',
-    href: {
-      pathname: '/add/done',
-      params: { vehicleId: item.vehicleId, kind: 'MAINTENANCE', line: item.title },
+    add: {
+      vehicleId: item.vehicleId,
+      kind: 'MAINTENANCE',
+      ...(item.planId ? { planId: item.planId } : {}),
     },
   };
 }
@@ -1391,11 +700,15 @@ interface Item {
   vehicle: string;
   /** When, in words: "Overdue by 3 months", "Expires in 4 days". */
   due: string;
+  /** The same, in a chip's few characters: "4 mo late", "In 12 d", "Expired", "Recall". */
+  short: string;
   vehicleId: string;
   /** The job's glyph, in the web's own artwork. */
   emoji: string;
   /** A paper's kind, so renewing it opens on the same one. */
   documentType?: DocumentType;
+  /** A service's schedule, so logging it completes that one. */
+  planId?: string;
 }
 
 /** A schedule's due in words, as the web's `readDue` says it. */
@@ -1406,6 +719,27 @@ function dueLine(plan: Dashboard['attention']['maintenance'][number]['plan'], un
     ? formatDistance(Math.abs(gauge.remaining), unit)
     : spanOfDays(Math.abs(gauge.remaining));
   return gauge.remaining < 0 ? `Overdue by ${amount}` : `Due in ${amount}`;
+}
+
+/** A span in the fewest characters a stub has room for: 12 d, 4 mo, 2 yr. */
+function shortSpan(days: number): string {
+  if (days < 60) return `${days} d`;
+  if (days < 730) return `${Math.round(days / 30.44)} mo`;
+  return `${Math.round(days / 365.25)} yr`;
+}
+
+/** How due a schedule is, as its chip says it: "580 km late", "In 12 d". */
+function shortDue(
+  plan: Dashboard['attention']['maintenance'][number]['plan'],
+  unit: string | null,
+) {
+  const gauge = dueGauge(plan);
+  if (!gauge) return plan.status === 'OVERDUE' ? 'Overdue' : 'Due soon';
+  const amount = gauge.byDistance
+    ? formatDistance(Math.abs(gauge.remaining), unit)
+    : shortSpan(Math.abs(gauge.remaining));
+  if (gauge.remaining === 0) return 'Due now';
+  return gauge.remaining < 0 ? `${amount} late` : `In ${amount}`;
 }
 
 /** A paper's glyph: the notification's own for the kinds it names, a note for the rest. */
@@ -1442,8 +776,10 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
       title: due.plan.title,
       vehicle: due.vehicleName,
       due: dueLine(due.plan, due.odometerUnit),
+      short: shortDue(due.plan, due.odometerUnit),
       vehicleId: due.vehicleId,
       emoji: jobEmoji(due.plan.title),
+      planId: due.plan.id,
     });
   }
   for (const paper of attention.documents) {
@@ -1461,6 +797,7 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
           : days === 0
             ? 'Expires today'
             : `Expires in ${spanOfDays(days)}`,
+      short: days < 0 ? 'Expired' : days === 0 ? 'Today' : `In ${shortSpan(days)}`,
       vehicleId: paper.vehicleId,
       emoji: PAPER[paper.document.documentType] ?? '📝',
       documentType: paper.document.documentType,
@@ -1475,6 +812,7 @@ function itemsFrom(attention: Dashboard['attention']): Item[] {
       title: readable(recall.component || recall.campaign),
       vehicle: recall.vehicleName,
       due: 'May be under recall',
+      short: 'Recall',
       vehicleId: recall.vehicleId,
       emoji: '⚠️',
     });
@@ -1831,40 +1169,43 @@ function RecentActivity({ data }: { data: Dashboard }) {
       <SectionHeading title="Recent activity" />
       <View>
         {months.map((group) => (
-          <View key={group.key}>
+          <View key={group.key} style={styles.activityMonth}>
             <LedgerMonth group={group} />
-            {group.items.map((item, place) => {
-              const kind = humanise(item.eventType);
-              const titled =
-                item.title.trim() !== '' && item.title.trim().toLowerCase() !== kind.toLowerCase();
-              const when = ledgerDate(item.occurredAt);
-              return (
-                <LedgerRow
-                  key={item.id}
-                  eventType={item.eventType}
-                  title={titled ? item.title : kind}
-                  occurredAt={item.occurredAt}
-                  previousAt={place > 0 ? group.items[place - 1]!.occurredAt : undefined}
-                  nextAt={group.items[place + 1]?.occurredAt}
-                  // On this page every entry can be a different vehicle, so it is named.
-                  meta={[item.vehicleName]}
-                  cost={item.cost}
-                  onPress={() =>
-                    router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
-                  }
-                  accessibilityLabel={[
-                    when,
-                    `${kind}: ${item.title}`,
-                    item.vehicleName,
-                    item.cost ? formatMoney(item.cost) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(', ')}
-                  accessibilityHint={`Opens ${item.vehicleName}`}
-                  index={row++}
-                />
-              );
-            })}
+            <LedgerCard>
+              {group.items.map((item, place) => {
+                const kind = humanise(item.eventType);
+                const titled =
+                  item.title.trim() !== '' &&
+                  item.title.trim().toLowerCase() !== kind.toLowerCase();
+                const when = ledgerDate(item.occurredAt);
+                return (
+                  <LedgerRow
+                    key={item.id}
+                    eventType={item.eventType}
+                    title={titled ? item.title : kind}
+                    occurredAt={item.occurredAt}
+                    previousAt={place > 0 ? group.items[place - 1]!.occurredAt : undefined}
+                    nextAt={group.items[place + 1]?.occurredAt}
+                    // On this page every entry can be a different vehicle, so it is named.
+                    meta={[item.vehicleName]}
+                    cost={item.cost}
+                    onPress={() =>
+                      router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
+                    }
+                    accessibilityLabel={[
+                      when,
+                      `${kind}: ${item.title}`,
+                      item.vehicleName,
+                      item.cost ? formatMoney(item.cost) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                    accessibilityHint={`Opens ${item.vehicleName}`}
+                    index={row++}
+                  />
+                );
+              })}
+            </LedgerCard>
           </View>
         ))}
       </View>
@@ -1888,108 +1229,59 @@ const styles = StyleSheet.create({
   whenDot: { width: 3, height: 3, borderRadius: 2 },
   hello: { fontSize: 22, lineHeight: 27, fontWeight: '700', letterSpacing: -0.6 },
 
-  road: { position: 'absolute', top: 0, left: 0, right: 0 },
-  sky: { position: 'absolute', top: 0, left: 0, right: 0, overflow: 'hidden' },
-  sun: { position: 'absolute', width: SUN * 4, height: SUN * 4 },
-  car: { position: 'absolute', width: CAR_W, height: CAR_H },
   day: { fontSize: 10.5, lineHeight: 14, fontWeight: '600', letterSpacing: 1 },
   clock: { flexDirection: 'row' },
-  readouts: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
-    alignSelf: 'flex-start',
-    paddingBottom: 7,
-    marginBottom: 9,
-  },
-  readout: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  readoutCount: { fontSize: 18, lineHeight: 22, fontWeight: '700', letterSpacing: -0.4 },
-  readoutLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
-  readoutLine: { position: 'absolute', bottom: 0, height: 2, borderRadius: 1 },
-  heroGap: { paddingTop: 12 },
-  spotBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 26,
-    marginBottom: 8,
-  },
-  spotLabel: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  spotLabelDot: { width: 6, height: 6, borderRadius: 3 },
-  spotLabelText: { fontSize: 10.5, lineHeight: 14, fontWeight: '700', letterSpacing: 1.2 },
-  spotPager: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    height: 26,
-    paddingLeft: 10,
-    paddingRight: 7,
-    borderRadius: radius.pill,
-  },
-  spotCount: { fontSize: 11.5, lineHeight: 15, fontWeight: '600' },
-  // A capsule: the ends are half its height, the key inside them nearly concentric.
-  spot: {
+  heroGap: { paddingTop: 18 },
+  rowSkeleton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    paddingVertical: 14,
-    paddingLeft: 18,
-    paddingRight: 18,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
-  spotMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  spotText: { flex: 1, minWidth: 0, gap: 5 },
-  spotTitle: { fontSize: 15.5, lineHeight: 20, fontWeight: '700', letterSpacing: -0.3 },
-  spotLine: { fontSize: 12.5, lineHeight: 17, fontWeight: '500' },
-  spotMeta: { flexDirection: 'row', alignItems: 'center', gap: 7, minWidth: 0 },
-  // Its whole width first; it is cut only if it alone would not fit.
-  spotStatus: {
-    flexShrink: 1,
-    height: 20,
-    justifyContent: 'center',
-    paddingHorizontal: 7,
-    borderRadius: 6,
-  },
-  spotStatusText: { fontSize: 11.5, lineHeight: 14, fontWeight: '700', letterSpacing: -0.1 },
-  // Only what the status leaves: a zero basis, so it never takes room from it.
-  spotWho: { flex: 1, minWidth: 0 },
-  spotBrief: { minHeight: 34 },
-  spotAct: {
+  more: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    height: 34,
-    paddingHorizontal: 14,
-    borderRadius: radius.pill,
+    gap: 4,
+    paddingLeft: 40,
+    paddingRight: 14,
+    paddingTop: 2,
+    paddingBottom: 6,
   },
-  spotActText: { fontSize: 12.5, lineHeight: 16, fontWeight: '700' },
-  spotActRound: { width: 36, height: 36, paddingHorizontal: 0, justifyContent: 'center' },
-  spotGlyph: { width: 34, alignItems: 'center', justifyContent: 'center' },
-  deckEdge: {
-    position: 'absolute',
-    height: DECK_STEP + 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderTopWidth: 0,
-    borderBottomLeftRadius: radius.pill,
-    borderBottomRightRadius: radius.pill,
+  moreRule: { position: 'absolute', top: 0, left: 40, right: 14, height: StyleSheet.hairlineWidth },
+  moreText: { paddingTop: 6, fontSize: 11.5, lineHeight: 15, fontWeight: '600' },
+  // The tiles' share of the row, with no tile of its own: straight on the card.
+  fleetSlot: { flex: 1, minWidth: 0 },
+  fleet: {
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
   },
+  fleetCount: { flexShrink: 1, fontSize: 30, lineHeight: 34, fontWeight: '600', letterSpacing: -1 },
+  fleetSide: { flexShrink: 0, gap: 4 },
+  fleetWord: { fontSize: 7.5, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
+  marks: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  marksMore: { fontSize: 10.5, lineHeight: 14, fontWeight: '600', marginLeft: 1 },
 
   rev: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   revUnit: { fontSize: 8, lineHeight: 10, fontWeight: '600' },
   revWord: { fontSize: 9, lineHeight: 11, marginTop: -6 },
 
   rail: { gap: spacing.md, paddingHorizontal: PAGE, paddingVertical: 2 },
+  activityMonth: { gap: spacing.sm, marginBottom: spacing.md },
   garage: {
     width: GARAGE,
-    borderRadius: radius.xxl,
+    ...leaf('md'),
     padding: 8,
     paddingBottom: 12,
     gap: 10,
   },
   floor: {
     flexDirection: 'row',
-    borderRadius: radius.lg,
+    // The card's leaf less its 8pt bezel, so the floor's corners run with the card's.
+    ...leaf('md', 8),
     overflow: 'hidden',
     paddingHorizontal: 4,
     paddingTop: 6,
@@ -2035,7 +1327,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    borderRadius: radius.xxl,
+    ...leaf('md'),
     borderWidth: 1.5,
     borderStyle: 'dashed',
   },

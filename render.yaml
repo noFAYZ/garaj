@@ -1,0 +1,19 @@
+# Render Blueprint: the backend for the mobile app on Render's free plan.
+#
+# Free web services get no background workers or cron jobs, so the worker runs inside the
+# API's process (the second --import). Settings are not here: paste .env.production into the
+# service's Environment ("Add from .env"). Migrations are not run on deploy; the API's drift
+# check refuses to start if the database is behind, so run `pnpm db:migrate` first.
+# ponytail: one process, 0.1 CPU. Split the worker out (scripts/deploy-gcp.sh) when load matters.
+services:
+  - type: web
+    name: garaj-api
+    runtime: docker
+    plan: free
+    region: ohio # beside Neon's aws us-east-2
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node --import tsx --import /app/workers/worker/src/index.ts src/server.ts
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PORT
+        value: '3001'

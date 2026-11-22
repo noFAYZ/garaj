@@ -7,12 +7,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Notification } from '@vehicle-os/contracts';
 import { notificationsQuery, queryKeys, unreadCountQuery } from '@vehicle-os/api-client/react';
 import { dayBucket, shortAge } from '@vehicle-os/ui';
-import { Group, groupSurface, SettingsHeader, SettingsWash } from '@/components/settings-kit';
+import { Group, groupSurface, SettingsHeader } from '@/components/settings-kit';
 import { api } from '@/lib/api';
 import { jobEmoji, NOTICE } from '@/lib/emoji';
 import { Glyph, Segmented, type Tone } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 const FILTERS = { limit: 50 };
@@ -114,10 +114,9 @@ export default function NotificationsScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       {/* Its own header, as the settings draw theirs: back, the title, and read-all beside it. */}
       <Stack.Screen options={{ headerShown: false }} />
-      <SettingsWash />
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -357,7 +356,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  card: { borderRadius: radius.xl + 2, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  card: { ...leaf('md'), borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
   notice: {
     flexDirection: 'row',
     alignItems: 'center',

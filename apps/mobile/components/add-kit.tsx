@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
   type TextInputProps,
+  type ScrollViewInstance,
 } from 'react-native';
 import type { PickedFile } from '@/lib/file-picker';
 import { Eyebrow, Glyph } from '@/lib/instrument';
@@ -97,7 +98,7 @@ export function Rail({
   inset?: number;
 }) {
   const theme = useTheme();
-  const scroller = useRef<ScrollView>(null);
+  const scroller = useRef<ScrollViewInstance>(null);
   const spots = useRef(new Map<string, { x: number; width: number }>());
   const view = useRef({ x: 0, width: 0 });
   const chosen = items.find((item) => item.selected)?.key;
@@ -121,7 +122,7 @@ export function Rail({
 
   return (
     <View style={{ gap: 6 }}>
-      {label ? <Eyebrow style={{ paddingHorizontal: 2 }}>{label}</Eyebrow> : null}
+      {label ? <Eyebrow style={styles.label}>{label}</Eyebrow> : null}
       <ScrollView
         ref={scroller}
         horizontal
@@ -251,7 +252,8 @@ export function Fact({
   );
 }
 
-const KEY = 54;
+/** The primary key beside it at `md`: a 44pt face on its 2pt lip. */
+const KEY = 46;
 
 /**
  * The photo's key, beside Save and the same height: a camera with the reader's spark until
@@ -365,15 +367,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm + 2,
-    minHeight: 54,
-    borderRadius: radius.xxl,
+    minHeight: 48,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    paddingLeft: spacing.lg,
+    paddingLeft: 14,
     paddingRight: 6,
   },
-  lineInput: { flex: 1, fontSize: 16.5, paddingVertical: 10, paddingHorizontal: 0 },
+  lineInput: { flex: 1, fontSize: 15.5, paddingVertical: 9, paddingHorizontal: 0 },
+  // The form's small caps: small and barely tracked, as Stats sets them.
+  label: { paddingHorizontal: 2, fontSize: 10, lineHeight: 13, letterSpacing: 0.5 },
   chip: {
-    height: 36,
+    height: 34,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
@@ -382,7 +386,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   fact: {
-    height: 32,
+    height: 30,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -401,7 +405,7 @@ const styles = StyleSheet.create({
   key: {
     width: KEY,
     height: KEY,
-    borderRadius: radius.xxl,
+    borderRadius: radius.xl,
     borderWidth: 1.5,
     overflow: 'hidden',
     alignItems: 'center',

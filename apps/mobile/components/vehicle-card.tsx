@@ -13,7 +13,7 @@ import { photoKey, RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
 import { formatMoney, humanise } from '@/lib/format';
 import { ease, PressableScale, useReduceMotion } from '@/lib/motion';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 const TYPE_ICONS: Partial<Record<VehicleType, keyof typeof Ionicons.glyphMap>> = {
@@ -245,7 +245,8 @@ export const VehicleCard = memo(function VehicleCard({
           .filter(Boolean)
           .join(', ')}
         scaleTo={0.985}
-        style={[styles.card, { backgroundColor: theme.card }, rimmed(theme)]}
+        // Flat: `<Link asChild>` hands its child's style through a Slot, which throws on an array.
+        style={StyleSheet.flatten([styles.card, { backgroundColor: theme.card }, rimmed(theme)])}
       >
         <VehicleStage
           photo={photo}
@@ -405,8 +406,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  card: { borderRadius: radius.xxl, padding: spacing.sm, paddingBottom: 10, gap: spacing.md },
-  cardStage: { width: '100%', aspectRatio: 16 / 10, borderRadius: radius.lg },
+  card: { ...leaf('lg'), padding: spacing.sm, paddingBottom: 10, gap: spacing.md },
+  // The card's leaf less its padding: the stage's corners run with the card's.
+  cardStage: { width: '100%', aspectRatio: 16 / 10, ...leaf('lg', spacing.sm) },
   status: {
     position: 'absolute',
     top: spacing.sm,
@@ -430,7 +432,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  figures: { flexDirection: 'row', marginHorizontal: 6, borderRadius: radius.lg },
+  figures: { flexDirection: 'row', marginHorizontal: 6, ...leaf('sm') },
   divider: { width: StyleSheet.hairlineWidth },
   figure: { flex: 1, minWidth: 0, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   figureLine: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 2 },

@@ -2,15 +2,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import {
-  Alert,
   Animated,
-  InteractionManager,
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
-  type ScrollView,
   StyleSheet,
   View,
+  type ScrollViewInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -26,6 +24,7 @@ import {
 import type { MonthlySpend } from '@vehicle-os/contracts';
 import { capabilitiesFor } from '@vehicle-os/domain';
 import { ActivityFeed, nextUp, VehiclePlanned } from '@/components/activity-feed';
+import { VehicleUpkeep } from '@/components/parts-kit';
 import { VehicleDocuments } from '@/components/vehicle-documents';
 import { STATS_MONTHS, VehicleStatistics } from '@/components/vehicle-statistics';
 import type { QuickAction } from '@/components/add-activity';
@@ -38,6 +37,7 @@ import { fileParams, pickPhoto } from '@/lib/file-picker';
 import { haptic, useScrollY } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
 import { spacing, useTheme } from '@/lib/theme';
+import { dialog, FAILED } from '@/lib/dialog';
 
 /** The floating bar's height under the status bar, so a jump inside the feed lands below it. */
 const BAR_CLEARANCE = 60;
@@ -54,7 +54,7 @@ export default function VehicleScreen() {
   const dockSpace = useDockSpace();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const scroller = useRef<ScrollView>(null);
+  const scroller = useRef<ScrollViewInstance>(null);
   const { y, onScroll } = useScrollY();
   const statsY = useRef(0);
   const [tab, setTab] = useState<VehicleTab>('activity');
@@ -120,7 +120,7 @@ export default function VehicleScreen() {
       data
         ? {
             activity: <ActivityFeed vehicle={data} bottom={dockSpace} />,
-            planned: <VehiclePlanned vehicle={data} />,
+            planned: <VehicleUpkeep vehicle={data} reminders={<VehiclePlanned vehicle={data} />} />,
             statistics: (
               <View
                 onLayout={(event) => {
@@ -154,7 +154,7 @@ export default function VehicleScreen() {
     const next = PREBUILD.find((section) => !built.includes(section));
     if (!next) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = requestIdleCallback(() => {
       timer = setTimeout(
         () =>
           startTransition(() => setBuilt((done) => (done.includes(next) ? done : [...done, next]))),
@@ -162,7 +162,7 @@ export default function VehicleScreen() {
       );
     });
     return () => {
-      task.cancel();
+      cancelIdleCallback(task);
       if (timer) clearTimeout(timer);
     };
   }, [data, built]);
@@ -194,7 +194,7 @@ export default function VehicleScreen() {
         router.back();
       })
       .catch((error: unknown) =>
-        Alert.alert('Could not archive the vehicle', (error as Error).message),
+        dialog('Could not archive the vehicle', (error as Error).message, undefined, FAILED),
       );
   };
 
@@ -203,7 +203,7 @@ export default function VehicleScreen() {
    * bar; in the sheet it is a deliberate choice, and the sheet turning into its confirm is the
    * second press.
    */
-  const [menu, setMenu] = useState<'actions' | 'archive' | null>(null);
+  const [menu, setMenu] = useState<'actions' | null>(null);
   const openMenu = () => {
     haptic.selection();
     setMenu('actions');
@@ -217,21 +217,26 @@ export default function VehicleScreen() {
         router.push({ pathname: '/add/photo', params: { vehicleId: id, ...fileParams(file) } });
       }
     } catch (error) {
-      Alert.alert('Could not open photos', (error as Error).message);
+      dialog('Could not open photos', (error as Error).message, undefined, FAILED);
     }
   };
 
   const addPhoto = () =>
-    Alert.alert('Add a photo', undefined, [
-      { text: 'Take a photo', onPress: () => void photoFrom('camera') },
-      { text: 'Choose from library', onPress: () => void photoFrom('library') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    dialog(
+      'Add a photo',
+      undefined,
+      [
+        { text: 'Take a photo', onPress: () => void photoFrom('camera') },
+        { text: 'Choose from library', onPress: () => void photoFrom('library') },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { icon: 'camera-outline' },
+    );
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ flex: 1, backgroundColor: theme.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
     >
       {/*
        * No header of the navigator's: the stage runs up under the status bar and the page's own
@@ -346,20 +351,21 @@ export default function VehicleScreen() {
                     label: 'Archive vehicle',
                     icon: 'archive-outline' as const,
                     destructive: true,
-                    onPress: () => setMenu('archive'),
+                    onPress: () => {
+                      setMenu(null);
+                      dialog(
+                        `Archive ${name}?`,
+                        'Its history and documents are kept. An owner can bring it back.',
+                        [
+                          { text: 'Keep it', style: 'cancel' },
+                          { text: 'Archive', style: 'destructive', onPress: archive },
+                        ],
+                        { icon: 'archive-outline' },
+                      );
+                    },
                   },
                 ]
               : []),
-          ]}
-          onClose={() => setMenu(null)}
-        />
-      ) : menu === 'archive' ? (
-        <MenuSheet
-          title={`Archive ${name}?`}
-          message="Its history and documents are kept. An owner can bring it back."
-          options={[
-            { label: 'Archive', icon: 'archive-outline', destructive: true, onPress: archive },
-            { label: 'Keep it', icon: 'arrow-undo-outline', onPress: () => setMenu('actions') },
           ]}
           onClose={() => setMenu(null)}
         />

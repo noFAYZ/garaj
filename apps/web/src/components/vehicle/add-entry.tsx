@@ -19,7 +19,10 @@ import {
   TRIP_PURPOSES,
   isKnownCurrency,
   minorUnitExponent,
+  seedPartLines,
+  toPartLine,
   type EventType,
+  type PartDraft,
   type TripPurpose,
 } from '@vehicle-os/domain';
 import type { EntryDraft, MaintenancePlan } from '@vehicle-os/contracts';
@@ -57,6 +60,7 @@ import { isImage } from '@/components/onboard-uploads';
 import { FormError, Modal, MODAL_BAR } from '@/components/ui/modal';
 import { Button } from '@/components/ui/primitives';
 import { REMINDER_TONE, ReminderStatus, scheduleEmoji } from '@/components/vehicle/schedule-row';
+import { newLineId, PartLinesField, useVehicleParts } from '@/components/vehicle/parts-panel';
 import { readDue } from '@/lib/due';
 import { eventEmoji } from '@/lib/event-emoji';
 import { formatDate, formatMoney, humanise, toMinorUnits } from '@/lib/format';
@@ -90,6 +94,9 @@ const MODES = [
  * Reminder: the job, as a chip or a line, then once or on a repeat. The line carries across the
  * switch, so starting in the wrong one costs nothing; the dialog holds one size, so it never moves.
  */
+/** The kinds that put something into the vehicle, and so ask what went in. */
+const PART_KINDS = new Set<EventType>(['MAINTENANCE', 'REPAIR', 'PART_INSTALLED', 'MODIFICATION']);
+
 export function AddEntryDialog({
   vehicleId,
   garageId,
@@ -254,6 +261,8 @@ function DoneForm({
   // Files to go up with the entry once it exists: photos to its gallery, papers to its documents.
   const [files, setFiles] = useState<File[]>([]);
   const [scan, setScan] = useState<Scan | null>(null);
+  // What went in, once a line is touched; until then, what the job and the receipt name.
+  const [linesSet, setLines] = useState<PartDraft[] | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -264,6 +273,22 @@ function DoneForm({
   const receipt = scan?.state === 'read' ? scan.draft : null;
   const schedule = schedules.find((item) => item.id === scheduleId) ?? null;
   const kind: EventType = schedule ? 'MAINTENANCE' : (kindSet ?? parsed.kind ?? kinds[0]!);
+  /*
+   * Completing a schedule brings its parts, each the product fitted last time; a read invoice or
+   * label brings what it printed. The phone's form starts its lines the same way.
+   */
+  const fitted = useVehicleParts(vehicleId);
+  const takesParts = schedule !== null || PART_KINDS.has(kind);
+  const readParts = receipt?.parts;
+  const job = schedule?.title ?? null;
+  const seeded = useMemo(
+    () =>
+      fitted.vehicle
+        ? seedPartLines(newLineId, fitted.vehicle, fitted.current, fitted.positions, job, readParts)
+        : [],
+    [fitted.vehicle, fitted.current, fitted.positions, job, readParts],
+  );
+  const lines = takesParts ? (linesSet ?? seeded) : [];
   const today = localDay();
   const day = daySet ?? parsed.day ?? receipt?.date ?? today;
   const odometer =
@@ -368,8 +393,9 @@ function DoneForm({
       });
       if (ticket !== asked.current) return;
       const found = [draft.amount, draft.litres, draft.provider, draft.date, draft.odometer];
+      // A part's label reads nothing but the part: that is a read too.
       setScan(
-        found.some((value) => value !== undefined) || draft.note
+        found.some((value) => value !== undefined) || draft.note || draft.parts?.length
           ? { state: 'read', file, draft }
           : { state: 'nothing', file },
       );
@@ -412,6 +438,8 @@ function DoneForm({
       const note = measure && quantity ? `${quantity} ${quantityIn}` : '';
       // A read still on its way has nothing left to fill: what is on screen is the entry now.
       asked.current += 1;
+      // In the same request as the entry: the two land together or not at all.
+      const parts = lines.length > 0 ? { parts: lines.map(toPartLine) } : {};
 
       if (schedule) {
         /*
@@ -425,6 +453,7 @@ function DoneForm({
           ...(where ? { provider: where } : {}),
           ...reading,
           ...(amount !== undefined ? { laborCostAmountMinor: amount, costCurrency } : {}),
+          ...parts,
         });
         return attachFiles(vehicleId, done.record.eventId, files, 'MAINTENANCE');
       }
@@ -440,6 +469,7 @@ function DoneForm({
         currency: costCurrency,
         place: where,
         note,
+        ...parts,
         // A purpose is what makes a trip part of the mileage log; without one it is just a note.
         ...(trip && purpose && distance
           ? {
@@ -493,7 +523,14 @@ function DoneForm({
       : null;
   // Nothing said, typed or attached: there is no entry yet, only its kind.
   const empty =
-    !line.trim() && !odometer && !cost && !quantity && !files.length && !schedule && !title;
+    !line.trim() &&
+    !odometer &&
+    !cost &&
+    !quantity &&
+    !files.length &&
+    !schedule &&
+    !title &&
+    lines.length === 0;
   const action = saved
     ? 'Close'
     : schedule
@@ -786,6 +823,10 @@ function DoneForm({
             />
           ))}
         </div>
+
+        {takesParts ? (
+          <PartLinesField vehicleId={vehicleId} lines={lines} onChange={setLines} />
+        ) : null}
 
         {offered.length > 0 ? (
           <Rail label="Completes a schedule">

@@ -17,6 +17,12 @@ import { config } from 'dotenv';
 const WORKSPACE_MARKER = 'pnpm-workspace.yaml';
 
 export function loadEnvFile(startDir: string = process.cwd()): string | null {
+  // A deployed container gets its settings as one mounted file (scripts/deploy-gcp.sh).
+  const given = process.env.ENV_FILE;
+  if (given) {
+    config({ path: given });
+    return given;
+  }
   let dir = resolve(startDir);
 
   for (;;) {

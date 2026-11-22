@@ -5,6 +5,7 @@ import type { ActivityMode, QuickAction } from '@/components/add-activity';
 import { AddSheet } from '@/components/add-sheet';
 import { Dock, type DockAction, type DockItem } from '@/components/dock';
 import { pressingPapers } from '@/components/vehicle-documents';
+import { useAddRequests, type AddRequest } from '@/lib/add-request';
 import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { haptic } from '@/lib/motion';
@@ -58,6 +59,7 @@ export function VehicleDock({
     file: PickedFile | null;
     quick: QuickAction | null;
     mode?: ActivityMode;
+    request?: AddRequest;
   } | null>(null);
 
   /*
@@ -76,6 +78,11 @@ export function VehicleDock({
    * A press on the hero's odometer opens this sheet on that form. Adjusted during render rather
    * than in an effect, so the sheet is open in the same paint as the press.
    */
+  // A reminder's Log, an empty list's "add": the drawer opens on its form for this vehicle.
+  useAddRequests((request) =>
+    setSheet({ file: null, quick: null, request: { vehicleId, ...request } }),
+  );
+
   const [seenRequest, setSeenRequest] = useState(quickRequest ?? null);
   if ((quickRequest ?? null) !== seenRequest) {
     setSeenRequest(quickRequest ?? null);
@@ -204,6 +211,7 @@ export function VehicleDock({
           initialFile={sheet.file}
           initialQuick={sheet.quick}
           initialMode={sheet.mode ?? null}
+          initialRequest={sheet.request ?? null}
           vehicleId={vehicleId}
           subject={vehicleName}
           onClose={() => {

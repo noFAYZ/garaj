@@ -11,6 +11,7 @@ import {
   TaskPrioritySchema,
   Uuid,
 } from './common';
+import { PartLines } from './parts';
 
 export const DueStatusSchema = Type.Union([
   Type.Literal('OK'),
@@ -159,6 +160,9 @@ export const CompleteMaintenance = Type.Object(
     partsCostAmountMinor: Type.Optional(Type.Integer({ minimum: 0 })),
     laborCostAmountMinor: Type.Optional(Type.Integer({ minimum: 0 })),
     costCurrency: Type.Optional(CurrencyCode),
+
+    /** What went in, saved with the service's entry: the oil, the filter. */
+    parts: Type.Optional(PartLines),
   },
   { additionalProperties: false },
 );

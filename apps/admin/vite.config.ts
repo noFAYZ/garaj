@@ -7,7 +7,7 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 /*
  * `@/` is the web app's source: the admin console is built from the same Garaj components
- * (Modal, SettingsModal, Readings, Field, …) rather than a copy that drifts. The only Next.js
+ * (Modal, SettingsModal, Field, …) rather than a copy that drifts. The only Next.js
  * pieces those reach for are `next/link` and `next/image`, shimmed with plain elements.
  *
  * ponytail: importing across apps. When a third client needs these, move them into

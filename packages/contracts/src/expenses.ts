@@ -7,7 +7,7 @@ import {
   IsoDateTime,
   MoneyOutput,
   Nullable,
-  PaginationQuery,
+  LedgerPaginationQuery,
   Uuid,
 } from './common';
 
@@ -123,7 +123,7 @@ export const UpdateExpense = Type.Object(
 export type UpdateExpense = Static<typeof UpdateExpense>;
 
 export const ListExpensesQuery = Type.Composite([
-  PaginationQuery,
+  LedgerPaginationQuery,
   Type.Object({
     category: Type.Optional(ExpenseCategorySchema),
     from: Type.Optional(IsoDateTime),

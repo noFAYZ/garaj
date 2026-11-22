@@ -81,3 +81,26 @@ export function categoryAfterEdit(current: ExpenseCategory, eventType: EventType
     eventTypeForCategory(current) === eventType || categoryForEventType(eventType) === current;
   return stillDescribes ? current : categoryForEventType(eventType);
 }
+
+/**
+ * What a fill's note says went in. The add forms on web and phone lead a fill's note with its
+ * measured amount — "40 L", "32 kWh", "23 L · full tank" — and the logbook reads it back from
+ * there, so the expense mirrored from the entry takes the same figure. Without it a fill is
+ * only money, and fuel price, consumption and the refuels chart have nothing to count.
+ *
+ * ponytail: litres and kWh only, the units the forms write; a typed "10 gal" stays in the note
+ * until the forms say which gallon.
+ */
+export function measuredInNote(
+  description: string | null,
+): { quantity: string; unit: 'LITER' | 'KWH'; fullTank: boolean } | null {
+  const match = description ? /^\s*(\d+(?:[.,]\d+)?)\s*(l|kwh)\b/i.exec(description) : null;
+  if (!match) return null;
+  const quantity = match[1]!.replace(',', '.');
+  if (!(Number(quantity) > 0)) return null;
+  return {
+    quantity,
+    unit: match[2]!.toLowerCase() === 'l' ? 'LITER' : 'KWH',
+    fullTank: /\bfull tank\b/i.test(description!),
+  };
+}

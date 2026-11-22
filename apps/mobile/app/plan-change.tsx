@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,12 +11,21 @@ import {
   PLAN_NAMES,
   PLAN_RANK,
 } from '@vehicle-os/domain';
-import { api } from '@/lib/api';
 import { Eyebrow } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
-import { LimitLedger, PassChip } from '@/lib/plan-kit';
+import { LimitLedger, PlanBadge } from '@/lib/plan-kit';
+import {
+  buy,
+  isCancelled,
+  loadOffers,
+  openStoreManagement,
+  storeAvailable,
+  storeBilled,
+  storeName,
+} from '@/lib/store';
 import { usePlan } from '@/lib/upgrade';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { useProfile } from '@/lib/vehicle-units';
+import { figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Empty } from '@/lib/ui';
 
 const longDate = (iso: string) =>
@@ -27,6 +36,9 @@ const longDate = (iso: string) =>
  * every ceiling old → new with any the account is already over flagged in place, and the features
  * that stop. The second press is the button pinned at the bottom; the first was the row that
  * opened this. Nothing is deleted either way, and it says so.
+ *
+ * The plan is the store's, so the store makes the change: cancelling is done on its own page
+ * (only it can stop a renewal), and a smaller tier is bought to take over when this period ends.
  */
 export default function PlanChangeScreen() {
   const theme = useTheme();
@@ -36,11 +48,38 @@ export default function PlanChangeScreen() {
   const params = useLocalSearchParams<{ to?: string }>();
   const to = params.to === 'PLUS' ? 'PLUS' : 'FREE';
   const { data } = usePlan();
+  const userId = useProfile().data?.id;
+  const offers = useQuery({
+    queryKey: ['store', 'offers', userId],
+    queryFn: () => loadOffers(userId!),
+    enabled: Boolean(userId) && storeAvailable() && to !== 'FREE',
+    staleTime: 10 * 60_000,
+  });
+  const store = storeName(data?.store);
+  const inStore = storeBilled(data);
+  // The smaller tier, paid the way the plan is now where the store sells it so.
+  const target =
+    (offers.data ?? []).find((offer) => offer.tier === to && offer.cadence === 'monthly') ??
+    (offers.data ?? []).find((offer) => offer.tier === to && offer.cadence !== 'lifetime') ??
+    null;
 
   const change = useMutation({
-    mutationFn: () => api.billing.downgrade(to),
-    onSuccess: async () => {
-      haptic.success();
+    mutationFn: async () => {
+      if (to === 'FREE') {
+        await openStoreManagement(data);
+        return false;
+      }
+      if (!target || !userId) throw new Error(`${store} isn't selling that plan right now.`);
+      try {
+        await buy(userId, target, 'at-renewal');
+      } catch (error) {
+        if (isCancelled(error)) return false;
+        throw error;
+      }
+      return true;
+    },
+    onSuccess: async (changed) => {
+      if (changed) haptic.success();
       await queryClient.invalidateQueries({ queryKey: queryKeys.plan() });
       router.back();
     },
@@ -59,7 +98,7 @@ export default function PlanChangeScreen() {
     </PressableScale>
   );
 
-  if (!data || PLAN_RANK[to] >= PLAN_RANK[data.plan]) {
+  if (!data || PLAN_RANK[to] >= PLAN_RANK[data.plan] || !inStore) {
     return (
       <View
         style={[
@@ -68,7 +107,12 @@ export default function PlanChangeScreen() {
         ]}
       >
         <View style={{ paddingHorizontal: spacing.md }}>{close}</View>
-        {data ? (
+        {data && !inStore && data.plan !== 'FREE' ? (
+          <Empty
+            title="Changed where it was bought"
+            description={`Your ${PLAN_NAMES[data.plan]} plan is billed through the Garaj website. Change it there.`}
+          />
+        ) : data ? (
           <Empty title="Nothing to change" description={`You are on ${PLAN_NAMES[data.plan]}.`} />
         ) : (
           <ActivityIndicator color={theme.mutedForeground} style={{ marginTop: spacing.xl }} />
@@ -85,7 +129,7 @@ export default function PlanChangeScreen() {
   );
 
   return (
-    <View style={[styles.screen, { backgroundColor: theme.background }]}>
+    <View style={[styles.screen, { backgroundColor: 'transparent' }]}>
       <ScrollView
         contentContainerStyle={[styles.page, { paddingTop: insets.top + spacing.sm }]}
         showsVerticalScrollIndicator={false}
@@ -98,8 +142,8 @@ export default function PlanChangeScreen() {
           </Text>
           <Text style={[typeScale.body, { color: theme.mutedForeground }]}>
             {cancel
-              ? `You keep ${PLAN_NAMES[from]} until ${until ?? 'the end of the period'}. Then it moves to Free, and nothing is charged again.`
-              : `Switches now. What is left of ${PLAN_NAMES[from]} is credited to your next bill.`}
+              ? `Cancelled in ${store}. You keep ${PLAN_NAMES[from]} until ${until ?? 'the end of the period'}. Then it moves to Free, and nothing is charged again.`
+              : `Switches when this period ends${until ? `, on ${until}` : ''}. Until then you keep ${PLAN_NAMES[from]}; ${store} bills ${PLAN_NAMES[to]} from then on.`}
           </Text>
         </Rise>
 
@@ -107,9 +151,9 @@ export default function PlanChangeScreen() {
           <View
             style={[styles.strip, { backgroundColor: theme.card }]}
             accessible
-            accessibilityLabel={`${PLAN_NAMES[from]} to ${PLAN_NAMES[to]}, ${cancel ? `on ${until ?? 'the period end'}` : 'now'}`}
+            accessibilityLabel={`${PLAN_NAMES[from]} to ${PLAN_NAMES[to]}, on ${until ?? 'the period end'}`}
           >
-            <PassChip tier={from} />
+            <PlanBadge tier={from} size="lg" />
             <View style={styles.when}>
               <Ionicons name="arrow-forward" size={16} color={theme.mutedForeground} />
               <Text
@@ -119,14 +163,10 @@ export default function PlanChangeScreen() {
                   { color: theme.mutedForeground, textTransform: 'uppercase' },
                 ]}
               >
-                {cancel
-                  ? data.currentPeriodEnd
-                    ? shortDay(data.currentPeriodEnd)
-                    : 'later'
-                  : 'now'}
+                {data.currentPeriodEnd ? shortDay(data.currentPeriodEnd) : 'later'}
               </Text>
             </View>
-            <PassChip tier={to} />
+            <PlanBadge tier={to} size="lg" />
           </View>
         </Rise>
 
@@ -137,9 +177,7 @@ export default function PlanChangeScreen() {
 
         {lost.length > 0 ? (
           <Rise index={3} style={{ gap: spacing.sm }}>
-            <Eyebrow>
-              {cancel ? `Stops ${until ? `on ${until}` : 'at the period end'}` : 'Stops now'}
-            </Eyebrow>
+            <Eyebrow>{`Stops ${until ? `on ${until}` : 'at the period end'}`}</Eyebrow>
             <View style={styles.chips}>
               {lost.map((entitlement) => (
                 <View key={entitlement} style={[styles.chip, { backgroundColor: theme.card }]}>
@@ -182,9 +220,9 @@ export default function PlanChangeScreen() {
             haptic.selection();
             change.mutate();
           }}
-          disabled={change.isPending}
+          disabled={change.isPending || (!cancel && !target)}
           accessibilityRole="button"
-          accessibilityLabel={cancel ? 'Cancel plan' : `Switch to ${PLAN_NAMES[to]}`}
+          accessibilityLabel={cancel ? `Cancel in ${store}` : `Switch to ${PLAN_NAMES[to]}`}
           accessibilityState={{ busy: change.isPending }}
           scaleTo={0.98}
           style={[
@@ -211,7 +249,7 @@ export default function PlanChangeScreen() {
                 { color: cancel ? theme.destructiveForeground : theme.primaryForeground },
               ]}
             >
-              {cancel ? 'Cancel plan' : `Switch to ${PLAN_NAMES[to]}`}
+              {cancel ? `Cancel in ${store}` : `Switch to ${PLAN_NAMES[to]}`}
             </Text>
           )}
         </PressableScale>
@@ -248,7 +286,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.md,
-    borderRadius: radius.xl + 4,
+    ...leaf('md'),
     paddingVertical: spacing.lg + 2,
     paddingHorizontal: spacing.md,
   },

@@ -46,6 +46,7 @@ import { DateField } from '@/components/ui/date-picker';
 import {
   CHART,
   ColumnChart,
+  LABEL,
   Ladder,
   LineChart,
   RankBars,
@@ -188,9 +189,7 @@ function Card({
     <section className={cn('flex min-w-0 flex-col gap-4 rounded-2xl bg-card/50 p-5', className)}>
       {label ? (
         <header className="flex min-h-7 items-center gap-2">
-          <h2 className="min-w-0 flex-1 truncate text-label uppercase text-muted-foreground">
-            {label}
-          </h2>
+          <h2 className={`min-w-0 flex-1 truncate text-muted-foreground ${LABEL}`}>{label}</h2>
           {trailing}
         </header>
       ) : null}
@@ -235,10 +234,11 @@ function Kpis({
       {shown.map((item) => (
         <div
           key={item.label}
-          className="min-w-0 bg-[color-mix(in_oklab,var(--color-card)_50%,var(--color-background))] px-4 py-3.5 sm:px-5"
+          className="min-w-0 bg-(--color-card-rest) px-4 py-3 sm:px-5"
         >
-          <dt className="truncate text-label uppercase text-muted-foreground">{item.label}</dt>
-          <dd className="mt-1 flex min-w-0 items-baseline gap-1">
+          <dt className={`truncate text-muted-foreground ${LABEL}`}>{item.label}</dt>
+          {/* A long unit wraps under its figure rather than cutting either. */}
+          <dd className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1">
             <span
               className={cn(
                 'truncate font-mono text-lg font-semibold tabular-nums tracking-tight sm:text-xl',
@@ -296,7 +296,7 @@ function Facts({
     <dl className="flex gap-4 border-t border-border/70 pt-4">
       {shown.map((item) => (
         <div key={item.label} className="min-w-0 flex-1">
-          <dt className="truncate text-label uppercase text-muted-foreground">{item.label}</dt>
+          <dt className={`truncate text-muted-foreground ${LABEL}`}>{item.label}</dt>
           <dd className="mt-0.5 truncate font-mono text-sm font-semibold tabular-nums text-foreground">
             {item.value}
           </dd>
@@ -729,7 +729,9 @@ function ValueCard({
 function Folded({ label, count, children }: { label: string; count: number; children: ReactNode }) {
   return (
     <details className="group border-t border-border/70 pt-3">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-label uppercase text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+      <summary
+        className={`flex cursor-pointer list-none items-center gap-2 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden ${LABEL}`}
+      >
         <span className="flex-1">{label}</span>
         <Tag>{String(count).padStart(2, '0')}</Tag>
         <Icon name="chevronRight" size={14} className="transition-transform group-open:rotate-90" />
@@ -1033,18 +1035,23 @@ export function RefuelingTab({ report }: { report: VehicleReport }) {
             const bought = fuel.units.find((entry) => entry.unit === fuelUnit);
             const label = UNIT_LABEL[fuelUnit] ?? fuelUnit;
             const named = units.length > 1 ? ` · ${label}` : '';
+            const fills = bought?.prices.slice(-24) ?? [];
+            const paid = bought?.prices.map((fill) => fill.perUnitMinor) ?? [];
             const trend = Boolean(use && use.points.length >= 2);
-            const prices = Boolean(bought && bought.prices.length >= 2 && bought.pricePerUnitMinor);
+            const prices = Boolean(bought?.pricePerUnitMinor && fills.length >= 2);
+            const refuels = fills.length >= 2;
             const places = Boolean(bought && bought.places.length > 0);
             // Two to a row: the odd card out takes the whole row rather than leaving a hole.
-            const odd = (Number(trend) + Number(prices) + Number(places)) % 2 === 1;
-            const last = places ? 'places' : prices ? 'prices' : 'trend';
+            const odd =
+              (Number(trend) + Number(prices) + Number(refuels) + Number(places)) % 2 === 1;
+            const last = places ? 'places' : refuels ? 'refuels' : prices ? 'prices' : 'trend';
             const span = (card: string) => (odd && card === last ? 'lg:col-span-2' : undefined);
             return [
               use && trend ? (
                 <Card
                   key={`use-${fuelUnit}`}
-                  label={`Consumption${named} · ${rateUnit(fuelUnit)}`}
+                  label={`Fuel efficiency${named}`}
+                  trailing={<Tag>{rateUnit(fuelUnit)}</Tag>}
                   className={span('trend')}
                 >
                   <LineChart
@@ -1056,16 +1063,24 @@ export function RefuelingTab({ report }: { report: VehicleReport }) {
                         points: use.points.slice(-24),
                       },
                     ]}
-                    reference={{ value: use.average, label: `avg ${use.average.toFixed(1)}` }}
+                    reference={{ value: use.average }}
                     formatY={(value) => value.toFixed(1)}
                     formatX={(x) => DAY_MONTH.format(new Date(x))}
+                  />
+                  <Facts
+                    items={[
+                      { label: 'Best', value: use.best.toFixed(1) },
+                      { label: 'Average', value: use.average.toFixed(1) },
+                      { label: 'Worst', value: use.worst.toFixed(1) },
+                    ]}
                   />
                 </Card>
               ) : null,
               bought?.pricePerUnitMinor && prices ? (
                 <Card
                   key={`price-${fuelUnit}`}
-                  label={`Price${named} · ${currency}/${label}`}
+                  label={`Fuel price${named}`}
+                  trailing={<Tag>{`${currency}/${label}`}</Tag>}
                   className={span('prices')}
                 >
                   <LineChart
@@ -1074,14 +1089,39 @@ export function RefuelingTab({ report }: { report: VehicleReport }) {
                         key: 'price',
                         label: `per ${label}`,
                         color: CHART.REFUELING,
-                        points: bought.prices
-                          .map((price) => ({ x: price.at, y: price.perUnitMinor }))
-                          .slice(-24),
+                        points: fills.map((fill) => ({ x: fill.at, y: fill.perUnitMinor })),
                       },
                     ]}
-                    reference={{ value: bought.pricePerUnitMinor, label: 'avg' }}
+                    reference={{ value: bought.pricePerUnitMinor }}
                     formatY={(value) => perUnit(value, currency)}
                     formatX={(x) => DAY_MONTH.format(new Date(x))}
+                  />
+                  <Facts
+                    items={[
+                      { label: 'Low', value: perUnit(Math.min(...paid), currency) },
+                      { label: 'Average', value: perUnit(bought.pricePerUnitMinor, currency) },
+                      { label: 'High', value: perUnit(Math.max(...paid), currency) },
+                    ]}
+                  />
+                </Card>
+              ) : null,
+              // Each fill a column of what went in; hovering reads its day and what it cost.
+              bought && refuels ? (
+                <Card key={`fills-${fuelUnit}`} className={span('refuels')}>
+                  <ColumnChart
+                    large={false}
+                    height={104}
+                    label={`Refuels${named}`}
+                    total={bought.quantity}
+                    buckets={fills.map((fill, index) => ({
+                      key: `${fill.at}-${index}`,
+                      label: DAY_MONTH.format(new Date(fill.at)),
+                      long: `${DAY_MONTH.format(new Date(fill.at))} · ${money(fill.amountMinor, currency)}`,
+                      values: { quantity: fill.quantity },
+                    }))}
+                    series={[{ key: 'quantity', label, color: CHART.REFUELING }]}
+                    format={(value) => `${value.toFixed(1)} ${label}`}
+                    formatAxis={(value) => value.toFixed(0)}
                   />
                 </Card>
               ) : null,
@@ -1104,6 +1144,21 @@ export function RefuelingTab({ report }: { report: VehicleReport }) {
               ) : null,
             ];
           })}
+
+          {/* The charts above need what went in; say what is missing rather than show nothing. */}
+          {fuel.units.length === 0 ? (
+            <Empty
+              icon="fuel"
+              text="Log how much went in to chart price, efficiency and refuels"
+              className="lg:col-span-2"
+            />
+          ) : !efficiency.some((entry) => entry.points.length >= 2) ? (
+            <Empty
+              icon="fuel"
+              text="Log the odometer with each fill to chart efficiency"
+              className="lg:col-span-2"
+            />
+          ) : null}
 
           <Kpis
             className="lg:col-span-2"
@@ -1264,6 +1319,20 @@ export function GroupTab({
               />
             </Card>
           ) : null}
+          {/* Only once a kind holds several bills: otherwise it is By kind again. */}
+          {detail.largest.length > 1 && detail.count > detail.byCategory.length ? (
+            <Card label="Largest" className="lg:col-span-2">
+              <RankBars
+                color={CHART[group]}
+                rows={detail.largest.map((row) => ({
+                  key: row.id,
+                  label: row.description,
+                  value: row.amount.amountMinor,
+                  display: money(row.amount.amountMinor, currency),
+                }))}
+              />
+            </Card>
+          ) : null}
         </>
       )}
 
@@ -1364,6 +1433,10 @@ export function IncomeTab({ report }: { report: VehicleReport }) {
                 label: 'Net',
                 value: money(data.net, currency),
                 tone: data.net >= 0 ? 'success' : 'destructive',
+              },
+              {
+                label: 'Per entry',
+                value: data.averageMinor === null ? '—' : money(data.averageMinor, currency),
               },
               { label: `Per ${unit}`, value: rate(data.total, distance, currency) },
               {

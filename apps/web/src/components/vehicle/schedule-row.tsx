@@ -2,7 +2,7 @@
 
 import { useMutation } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import type { MaintenancePlan, UpdateMaintenancePlan } from '@vehicle-os/contracts';
 import {
   convertDistance,
@@ -11,12 +11,20 @@ import {
   type TaskPriority,
 } from '@vehicle-os/domain';
 import { ApiError } from '@vehicle-os/api-client';
+import {
+  lastFitted,
+  positionsForJob,
+  seedPartLines,
+  toPartLine,
+  type PartDraft,
+} from '@vehicle-os/domain';
+import { newLineId, PartLinesField, useVehicleParts } from '@/components/vehicle/parts-panel';
 import { api } from '@/lib/api';
 import { addMonths, fromDay, toDay, todayDay } from '@/components/ui/calendar-math';
 import { DateField } from '@/components/ui/date-picker';
 import { Switch } from '@/components/motion/switch';
 import { readDue, type GaugeReading } from '@/lib/due';
-import { Emoji, type EmojiName } from '@/components/emoji';
+import { Emoji, scheduleEmoji } from '@/components/emoji';
 import { Icon } from '@/components/icons';
 import { FormError, Modal, ModalActions } from '@/components/ui/modal';
 import { Button, Field } from '@/components/ui/primitives';
@@ -33,27 +41,8 @@ import { useVehicleUnits } from '@/lib/vehicle-units';
  * different jobs and now look it. Matched on the title because that is the only description a
  * schedule has — no match keeps the spanner.
  */
-const JOB_EMOJI: readonly [readonly string[], EmojiName][] = [
-  [['oil'], 'oil'],
-  [['tyre', 'tyres', 'tire', 'tires', 'wheel', 'wheels'], 'tyre'],
-  [['brake', 'brakes'], 'brake'],
-  [['chain', 'belt'], 'chain'],
-  [['battery', 'batteries'], 'battery'],
-  [['filter', 'filters', 'air'], 'filter'],
-  [['coolant', 'antifreeze', 'radiator'], 'coolant'],
-  [['spark', 'plug', 'plugs', 'ignition'], 'spark'],
-  [['inspection', 'inspect', 'mot', 'test'], 'inspection'],
-  [['clean', 'cleaning', 'wash', 'valet'], 'cleaning'],
-  [['insurance'], 'insurance'],
-  [['registration', 'tax'], 'registration'],
-];
-
-/** Whole words only: a schedule called "Brake repair" is brakes, not an air filter. */
-export function scheduleEmoji(title: string): EmojiName {
-  const words = new Set(title.toLowerCase().split(/[^a-z]+/));
-  const match = JOB_EMOJI.find(([keywords]) => keywords.some((word) => words.has(word)));
-  return match?.[1] ?? 'maintenance';
-}
+// Moved beside the artwork, so the parts screens use it without importing this row.
+export { scheduleEmoji };
 
 /**
  * A reminder on the rail: a small upright tile — its glyph, what it is, when — with done on its
@@ -172,6 +161,12 @@ export function ScheduleRow({
   const reading = readDue(schedule, odometerUnit);
   const tone = TONE[schedule.status];
   const overdue = schedule.status === 'OVERDUE';
+  // What the job put in last time — what to buy before doing it again.
+  const parts = useVehicleParts(vehicleId);
+  const last = lastFitted(
+    parts.current,
+    positionsForJob(schedule.title).filter((position) => parts.positions.includes(position)),
+  );
 
   const sheets = (
     <>
@@ -287,7 +282,7 @@ export function ScheduleRow({
                 strokeLinecap="round"
                 pathLength={100}
                 strokeDasharray={`${used} 100`}
-                className={cn('transition-[stroke-dasharray] duration-700 ease-out', tone.ring)}
+                className={cn('transition-[stroke-dasharray] duration-300 ease-out', tone.ring)}
               />
             ) : null}
           </svg>
@@ -356,6 +351,12 @@ export function ScheduleRow({
             {schedule.lastPerformedAt ? null : (
               <span className="rounded-full bg-muted px-2.5 py-1">Never done</span>
             )}
+            {last ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-muted px-2.5 py-1">
+                <Icon name="maintenance" size={12} />
+                <span className="truncate">Last: {last}</span>
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -390,7 +391,7 @@ function Gauge({ gauge, fill, figure }: { gauge: GaugeReading; fill: string; fig
           {Array.from({ length: gauge.cells }, (_, index) => (
             <span key={index} className="flex-1 overflow-hidden rounded-[3px] bg-muted">
               <span
-                className={cn('block h-full transition-[width] duration-700 ease-out', fill)}
+                className={cn('block h-full transition-[width] duration-300 ease-out', fill)}
                 style={{ width: `${Math.min(1, Math.max(0, used - index)) * 100}%` }}
               />
             </span>
@@ -462,6 +463,17 @@ function CompleteForm({
   const [workPerformed, setWorkPerformed] = useState('');
   const [parts, setParts] = useState('');
   const [labour, setLabour] = useState('');
+  // What went in: the job's own parts, each the product fitted last time, until one is touched.
+  const fitted = useVehicleParts(vehicleId);
+  const [linesSet, setLines] = useState<PartDraft[] | null>(null);
+  const seeded = useMemo(
+    () =>
+      fitted.vehicle
+        ? seedPartLines(newLineId, fitted.vehicle, fitted.current, fitted.positions, plan.title)
+        : [],
+    [fitted.vehicle, fitted.current, fitted.positions, plan.title],
+  );
+  const lines = linesSet ?? seeded;
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -478,6 +490,8 @@ function CompleteForm({
         ...(parts ? { partsCostAmountMinor: toMinorUnits(Number(parts), currency) } : {}),
         ...(labour ? { laborCostAmountMinor: toMinorUnits(Number(labour), currency) } : {}),
         ...(parts || labour ? { costCurrency: currency } : {}),
+        // In the same request as the service: the record and its lines land together or not at all.
+        ...(lines.length > 0 ? { parts: lines.map(toPartLine) } : {}),
       }),
     onSuccess: onDone,
   });
@@ -554,6 +568,8 @@ function CompleteForm({
           error={fieldErrors?.laborCostAmountMinor}
         />
       </div>
+
+      <PartLinesField vehicleId={vehicleId} lines={lines} onChange={setLines} />
 
       {mutation.isError && !fieldErrors ? (
         <FormError>{(mutation.error as Error).message}</FormError>

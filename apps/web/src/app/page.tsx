@@ -148,10 +148,10 @@ export default function GaragePage() {
               ))}
           {/* Room for another: an outline, so it never reads as a garage of its own. */}
           <li className="w-44 shrink-0 snap-start">
-            <NewGarageButton className="group flex h-full min-h-40 w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border text-muted-foreground transition-[background-color,border-color,color,scale] duration-300 hover:border-border-strong hover:bg-card/50 hover:text-foreground active:scale-[0.99]">
+            <NewGarageButton className="group flex h-full min-h-40 w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-border text-muted-foreground transition-[background-color,border-color,color,scale] duration-200 hover:border-border-strong hover:bg-card/50 hover:text-foreground active:scale-[0.99]">
               <span
                 aria-hidden="true"
-                className="grid size-11 place-items-center rounded-full bg-muted transition-[background-color,color,rotate] duration-300 ease-out group-hover:rotate-90 group-hover:bg-primary group-hover:text-primary-foreground"
+                className="grid size-11 place-items-center rounded-full bg-muted transition-[background-color,color,rotate] duration-200 ease-out group-hover:rotate-90 group-hover:bg-primary group-hover:text-primary-foreground"
               >
                 <Icon name="add" size={22} />
               </span>

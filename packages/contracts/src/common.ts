@@ -98,6 +98,17 @@ export const PaginationQuery = Type.Object({
   cursor: Type.Optional(Type.String()),
 });
 
+/**
+ * The lists a report reads whole — a window's expenses, readings, income — take bigger pages:
+ * a year of entries is one or two requests instead of a dozen one after another, which on a
+ * phone is most of what opening Stats cost.
+ */
+export const LEDGER_PAGE_MAX = 500;
+export const LedgerPaginationQuery = Type.Object({
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LEDGER_PAGE_MAX, default: 25 })),
+  cursor: Type.Optional(Type.String()),
+});
+
 /** Wraps a row schema in the envelope every collection endpoint returns (§101). */
 export function Paginated<T extends TSchema>(item: T) {
   return Type.Object({

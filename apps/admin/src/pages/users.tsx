@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Button, EmptyState, Field } from '@/components/ui/primitives';
-import { Readings } from '@/components/ui/overview';
+import { Readings } from '../components/readings';
 import { SelectField } from '@/components/ui/select-field';
 import { ListSkeleton, Loading, Skeleton } from '@/components/ui/skeleton';
 import { raise } from '@/components/ui/toaster';

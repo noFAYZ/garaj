@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { avatarFor } from '@vehicle-os/contracts';
 import Svg, { Circle, Defs, Mask, Pattern, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { ease, PressableScale, useReduceMotion } from './motion';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme } from './theme';
+import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from './theme';
 
 /**
  * The handful of primitives every screen uses: the web's materials — the resting card, the copper
@@ -238,6 +238,7 @@ export function Button({
   icon,
   disabled,
   loading,
+  busyLabel,
   a11yLabel,
 }: {
   label: string;
@@ -248,6 +249,8 @@ export function Button({
   icon?: keyof typeof Ionicons.glyphMap;
   disabled?: boolean;
   loading?: boolean;
+  /** Said beside the spinner while `loading`: what is happening, where it takes a moment. */
+  busyLabel?: string;
   /** What a screen reader says, where the label alone ("Log") needs the row's name. */
   a11yLabel?: string;
 }) {
@@ -260,7 +263,14 @@ export function Button({
     ghost: theme.mutedForeground,
   }[variant];
   const inside = loading ? (
-    <ActivityIndicator color={color} />
+    <>
+      <ActivityIndicator color={color} />
+      {busyLabel ? (
+        <Text numberOfLines={1} style={[typeScale.label, { color, fontWeight: '600' }]}>
+          {busyLabel}
+        </Text>
+      ) : null}
+    </>
   ) : (
     <>
       {icon ? (
@@ -714,7 +724,7 @@ export function Empty({
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.xxl, padding: spacing.lg },
+  card: { ...leaf('md'), padding: spacing.lg },
   keyFace: {
     borderWidth: 1,
     alignItems: 'center',
@@ -760,7 +770,7 @@ const styles = StyleSheet.create({
   empty: {
     alignItems: 'center',
     gap: spacing.sm,
-    borderRadius: radius.xxl,
+    ...leaf('md'),
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.xxl + 8,
   },

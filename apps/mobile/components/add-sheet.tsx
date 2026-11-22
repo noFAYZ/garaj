@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useRouter, type Href } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,43 +21,41 @@ import {
   type ActivityMode,
   type QuickAction,
 } from '@/components/add-activity';
-import { ADD_ACTIONS } from '@/components/add-mode';
+import { ADD_ACTIONS, type AddOption, type AddTarget } from '@/components/add-mode';
 import { GrowCombo } from '@/components/grow-combo';
+import type { AddRequest } from '@/lib/add-request';
 import { confirmDiscard } from '@/lib/discard';
 import { fileParams, pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { Eyebrow } from '@/lib/instrument';
 import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
-import { lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { leaf, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { DialogHost } from '@/lib/dialog';
 
-interface SheetOption {
-  readonly pathname: string;
-  readonly icon: keyof typeof Ionicons.glyphMap;
-  readonly label: string;
-  readonly hint: string;
-}
-
-/** Where a photo can go once it is taken — the question the photo step asks. */
-const PHOTO_DESTINATIONS: readonly SheetOption[] = [
+const PHOTO_DESTINATIONS: readonly AddOption[] = [
   {
-    pathname: '/add/done',
+    key: 'receipt',
+    to: { form: 'done' },
     icon: 'receipt-outline',
     label: 'A receipt',
     hint: 'Kept with the entry',
   },
   {
-    pathname: '/add/document',
+    key: 'document',
+    to: { screen: '/add/document' },
     icon: 'document-text-outline',
     label: 'A document',
     hint: 'Insurance, registration',
   },
   {
-    pathname: '/add/photo',
+    key: 'photo',
+    to: { screen: '/add/photo' },
     icon: 'images-outline',
     label: 'A vehicle I have',
     hint: '',
   },
   {
-    pathname: '/add/vehicle',
+    key: 'vehicle',
+    to: { screen: '/add/vehicle' },
     icon: 'car-sport-outline',
     label: 'A new vehicle',
     hint: '',
@@ -133,12 +131,15 @@ interface OpenForm {
   readonly mode: ActivityMode;
   readonly quick: QuickAction | null;
   readonly photo: PickedFile | null;
+  /** What it was opened for from elsewhere: a vehicle, a kind, a reminder to complete. */
+  readonly request?: AddRequest;
 }
 
 export function AddSheet({
   initialFile,
   initialQuick = null,
   initialMode = null,
+  initialRequest = null,
   vehicleId,
   subject,
   onClose,
@@ -151,6 +152,8 @@ export function AddSheet({
   initialQuick?: QuickAction | null;
   /** Opens straight onto the add form in this mode — a dock's Reminder. */
   initialMode?: ActivityMode | null;
+  /** Opens straight onto the add form for this — a reminder's Log, Home's Up next. */
+  initialRequest?: AddRequest | null;
   /** Scopes every route to this vehicle. Absent from the app's own tab bar, which asks. */
   vehicleId?: string;
   /** What the sheet says it is adding to, e.g. "2019 Mazda MX-5". */
@@ -162,8 +165,13 @@ export function AddSheet({
   const router = useRouter();
   const [file, setFile] = useState<PickedFile | null>(initialFile);
   const [form, setForm] = useState<OpenForm | null>(
-    initialQuick || initialMode
-      ? { mode: initialMode ?? 'done', quick: initialQuick, photo: null }
+    initialQuick || initialMode || initialRequest
+      ? {
+          mode: initialRequest?.mode ?? initialMode ?? 'done',
+          quick: initialQuick,
+          photo: null,
+          ...(initialRequest ? { request: initialRequest } : {}),
+        }
       : null,
   );
   const [busy, setBusy] = useState<'camera' | 'library' | null>(null);
@@ -258,40 +266,59 @@ export function AddSheet({
     }
   };
 
-  const go = (pathname: string, params: Record<string, string> = {}) => {
+  const go = (
+    pathname: Extract<AddTarget, { screen: string }>['screen'] | '/add/garage',
+    params: Record<string, string> = {},
+  ) => {
     onClose();
-    router.push({
-      pathname,
-      params: vehicleId ? { vehicleId, ...params } : params,
-    } as Href);
+    router.push({ pathname, params: vehicleId ? { vehicleId, ...params } : params });
   };
+  /** An option, followed: its form opens in the sheet, its screen is pushed. */
+  const follow = (to: AddTarget, file?: PickedFile) =>
+    'form' in to ? open(to.form, null, file ?? null) : go(to.screen, file ? fileParams(file) : {});
 
   /*
    * A new vehicle is not in the list: it grows the garage rather than recording something about a
    * vehicle, so it lives in the combo below with a new garage. Bound to one vehicle, the combo is
    * not shown at all — neither is something you do to the vehicle you are looking at.
    */
-  const actions: SheetOption[] = ADD_ACTIONS.filter((action) => action.href !== '/add/vehicle').map(
-    (action) => ({
-      pathname: action.href,
+  const actions = ADD_ACTIONS.filter((action) => action.key !== 'vehicle');
+  /*
+   * No "Photo" key: the copper photo key is how a photo gets added, and a second way to reach the
+   * same screen is a choice the reader has to work out rather than one they wanted.
+   */
+  const tiles = [
+    ...QUICK_ACTIONS.map((action) => ({
+      key: action.kind,
       icon: action.icon,
       label: action.label,
       hint: action.hint,
-    }),
-  );
-  /*
-   * No "Photo" row: the two capture tiles above are how a photo gets added, and a third way to
-   * reach the same screen is a choice the reader has to work out rather than one they wanted.
-   */
+      onPress: () => open('done', action.kind),
+    })),
+    // "Something done" is the catch-all, so it comes last, after the keys that name a thing.
+    ...[...actions]
+      .sort((a, b) => Number(a.key === 'done') - Number(b.key === 'done'))
+      .map((action) => ({
+        key: action.key,
+        icon: action.icon,
+        // A key is a noun: "A reminder" reads as a sentence in a list, "Reminder" on a key.
+        label:
+          action.key === 'done'
+            ? 'Anything else'
+            : action.label.replace(/^An? (\w)/, (_, first: string) => first.toUpperCase()),
+        hint: action.hint,
+        onPress: () => follow(action.to),
+      })),
+  ];
 
-  const destinations: readonly SheetOption[] = vehicleId
+  const destinations: readonly AddOption[] = vehicleId
     ? [
         ...PHOTO_DESTINATIONS.filter(
-          (destination) =>
-            destination.pathname !== '/add/vehicle' && destination.pathname !== '/add/photo',
+          (destination) => destination.key !== 'vehicle' && destination.key !== 'photo',
         ),
         {
-          pathname: '/add/photo',
+          key: 'photo',
+          to: { screen: '/add/photo' },
           icon: 'images-outline',
           label: 'This vehicle',
           hint: '',
@@ -346,10 +373,11 @@ export function AddSheet({
                    * phone's queue and closes: a quick entry is over before the network is involved.
                    */}
                   <AddActivity
-                    vehicleId={vehicleId}
+                    vehicleId={form.request?.vehicleId ?? vehicleId}
                     initialMode={form.mode}
-                    initialKind={starts?.kind ?? null}
+                    initialKind={form.request?.kind ?? starts?.kind ?? null}
                     initialLine={starts?.line ?? ''}
+                    initialScheduleId={form.request?.planId ?? null}
                     initialPhoto={form.photo}
                     inSheet
                     onDirty={setDirty}
@@ -380,7 +408,10 @@ export function AddSheet({
                     >
                       <Ionicons name="chevron-back" size={18} color={theme.foreground} />
                     </PressableScale>
-                    <Text style={[typeScale.title, { flex: 1, color: theme.foreground }]}>
+                    <Text
+                      accessibilityRole="header"
+                      style={[styles.title, { flex: 1, color: theme.foreground }]}
+                    >
                       What is in the photo?
                     </Text>
                   </View>
@@ -410,23 +441,23 @@ export function AddSheet({
 
                   <OptionList
                     options={destinations.map((destination) => ({
-                      key: destination.pathname,
+                      key: destination.key,
                       icon: destination.icon,
                       label: destination.label,
                       hint: destination.hint,
                       // A receipt is read into the add form, here; the rest go to their screens.
-                      onPress: () =>
-                        destination.pathname === '/add/done'
-                          ? open('done', null, file)
-                          : go(destination.pathname, fileParams(file)),
+                      onPress: () => follow(destination.to, file),
                     }))}
                   />
                 </Rise>
               ) : (
-                <Rise key="menu" style={{ gap: spacing.md }}>
+                <Rise key="menu" style={{ gap: spacing.sm + 4 }}>
                   <View style={styles.sheetHeader}>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={[typeScale.title, { color: theme.foreground }]}>
+                      <Text
+                        accessibilityRole="header"
+                        style={[styles.title, { color: theme.foreground }]}
+                      >
                         What are you adding?
                       </Text>
                       {/* Named, so a sheet that will not ask which vehicle says which it means. */}
@@ -435,62 +466,109 @@ export function AddSheet({
                           numberOfLines={1}
                           style={[typeScale.caption, { color: theme.mutedForeground }]}
                         >
-                          to {subject}
+                          To {subject}
                         </Text>
                       ) : null}
                     </View>
+                    <PressableScale
+                      onPress={dismiss}
+                      accessibilityRole="button"
+                      accessibilityLabel="Close"
+                      hitSlop={8}
+                      scaleTo={0.9}
+                      style={[styles.iconButton, { backgroundColor: theme.muted }]}
+                    >
+                      <Ionicons name="close" size={18} color={theme.foreground} />
+                    </PressableScale>
                   </View>
 
                   {/*
-                   * The pump-side three, as tiles rather than rows.
-                   *
-                   * They are not one of seven equal options: they are what someone standing at a
-                   * vehicle actually opened this for, and they are the only ones that finish inside
-                   * the sheet instead of pushing a screen. Given the size of the difference, they
-                   * are given the size to match — and a thumb reaching the bottom of a phone finds
-                   * a target rather than a line of text.
+                   * Everything that is a record about a vehicle, as one grid of equal keys: the
+                   * pump-side three first, where a thumb lands, then the rest. Each opens its form
+                   * here in the sheet, or (a document) its own screen.
                    */}
-                  <View style={styles.quickRow}>
-                    {QUICK_ACTIONS.map((action, index) => (
-                      <Rise key={action.kind} index={index} style={{ flex: 1 }}>
+                  <View style={styles.grid}>
+                    {tiles.map((tile, index) => (
+                      <Rise key={tile.key} index={index} style={styles.cell}>
                         <PressableScale
-                          onPress={() => open('done', action.kind)}
+                          onPress={tile.onPress}
                           accessibilityRole="button"
-                          accessibilityLabel={action.label}
-                          accessibilityHint={action.hint}
+                          accessibilityLabel={tile.label}
+                          accessibilityHint={tile.hint || undefined}
                           scaleTo={0.94}
-                          style={[styles.quickTile, { backgroundColor: theme.muted }]}
+                          style={[styles.tile, { backgroundColor: theme.muted }]}
                         >
-                          <View style={[styles.quickIcon, { backgroundColor: theme.primarySoft }]}>
-                            <Ionicons name={action.icon} size={20} color={theme.primary} />
+                          <View style={[styles.tileIcon, { backgroundColor: theme.cardRaised }]}>
+                            <Ionicons name={tile.icon} size={18} color={theme.foreground} />
                           </View>
                           <Text
                             numberOfLines={1}
                             adjustsFontSizeToFit
-                            style={[typeScale.label, { fontSize: 13, color: theme.foreground }]}
+                            style={[styles.tileLabel, { color: theme.foreground }]}
                           >
-                            {action.label}
+                            {tile.label}
                           </Text>
                         </PressableScale>
                       </Rise>
                     ))}
                   </View>
 
-                  <View style={styles.captureRow}>
-                    <CaptureTile
-                      icon="camera"
-                      label="Camera"
-                      inked
-                      busy={busy === 'camera'}
+                  {/*
+                   * The photo, as one wide key: the camera is the press, because the receipt, the
+                   * paper and the car are in front of the phone; the library rides on it as a
+                   * smaller key for what was already taken. Its camera is the sheet's one copper.
+                   */}
+                  <Rise
+                    index={tiles.length}
+                    style={[styles.capture, { backgroundColor: theme.muted }]}
+                  >
+                    <PressableScale
                       onPress={() => void capture('camera')}
-                    />
-                    <CaptureTile
-                      icon="images"
-                      label="Upload"
-                      busy={busy === 'library'}
+                      disabled={busy !== null}
+                      accessibilityRole="button"
+                      accessibilityLabel="Camera"
+                      accessibilityHint="A receipt, a paper or the vehicle"
+                      accessibilityState={{ busy: busy === 'camera' }}
+                      scaleTo={0.97}
+                      style={styles.captureMain}
+                    >
+                      <View style={[styles.captureIcon, { backgroundColor: theme.primary }]}>
+                        {busy === 'camera' ? (
+                          <ActivityIndicator size="small" color={theme.primaryForeground} />
+                        ) : (
+                          <Ionicons name="camera" size={20} color={theme.primaryForeground} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={[typeScale.label, { color: theme.foreground }]}>
+                          Snap a photo
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={[typeScale.caption, { color: theme.mutedForeground }]}
+                        >
+                          A receipt, a paper or the car
+                        </Text>
+                      </View>
+                    </PressableScale>
+                    <PressableScale
                       onPress={() => void capture('library')}
-                    />
-                  </View>
+                      disabled={busy !== null}
+                      accessibilityRole="button"
+                      accessibilityLabel="Upload"
+                      accessibilityHint="A photo already on this phone"
+                      accessibilityState={{ busy: busy === 'library' }}
+                      scaleTo={0.92}
+                      style={[styles.upload, { backgroundColor: theme.cardRaised }]}
+                    >
+                      {busy === 'library' ? (
+                        <ActivityIndicator size="small" color={theme.foreground} />
+                      ) : (
+                        <Ionicons name="images-outline" size={15} color={theme.foreground} />
+                      )}
+                      <Text style={[styles.uploadLabel, { color: theme.foreground }]}>Upload</Text>
+                    </PressableScale>
+                  </Rise>
 
                   {error ? (
                     <View style={[styles.banner, { backgroundColor: theme.warningSoft }]}>
@@ -500,26 +578,6 @@ export function AddSheet({
                       >
                         {error}
                       </Text>
-                    </View>
-                  ) : null}
-
-                  {actions.length > 0 ? (
-                    <View style={{ gap: spacing.xs }}>
-                      <Eyebrow>Else</Eyebrow>
-                      <OptionList
-                        options={actions.map((action) => ({
-                          key: action.pathname,
-                          icon: action.icon,
-                          label: action.label,
-                          hint: action.hint,
-                          onPress: () =>
-                            action.pathname === '/add/done'
-                              ? open('done')
-                              : action.pathname === '/add/planned'
-                                ? open('planned')
-                                : go(action.pathname),
-                        }))}
-                      />
                     </View>
                   ) : null}
 
@@ -540,11 +598,8 @@ export function AddSheet({
                    * app that did not save what they typed.
                    */}
                   <View style={styles.assurance}>
-                    <Ionicons name="flash-outline" size={13} color={theme.mutedForeground} />
-                    <Text
-                      numberOfLines={2}
-                      style={[typeScale.caption, { flex: 1, color: theme.mutedForeground }]}
-                    >
+                    <Ionicons name="flash-outline" size={12} color={theme.mutedForeground} />
+                    <Text style={[styles.assuranceText, { color: theme.mutedForeground }]}>
                       Saved here, sent when there is signal.
                     </Text>
                   </View>
@@ -553,51 +608,10 @@ export function AddSheet({
             </View>
           </Animated.View>
         </View>
+        {/* This sheet is its own window: what it asks has to show inside it, not behind it. */}
+        <DialogHost />
       </KeyboardAvoidingView>
     </Modal>
-  );
-}
-
-/** A capture tile: the glyph and the word. Anything more is a caption on a button. */
-function CaptureTile({
-  icon,
-  label,
-  inked = false,
-  busy,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  inked?: boolean;
-  busy: boolean;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const ink = inked ? theme.primaryForeground : theme.foreground;
-  return (
-    <PressableScale
-      onPress={onPress}
-      disabled={busy}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ busy }}
-      scaleTo={0.95}
-      style={[styles.capture, { backgroundColor: inked ? theme.primary : theme.muted }]}
-    >
-      <View
-        style={[
-          styles.captureIcon,
-          { backgroundColor: inked ? theme.primaryForeground : theme.card },
-        ]}
-      >
-        {busy ? (
-          <ActivityIndicator size="small" color={inked ? theme.primary : theme.foreground} />
-        ) : (
-          <Ionicons name={icon} size={20} color={inked ? theme.primary : theme.foreground} />
-        )}
-      </View>
-      <Text style={[typeScale.label, { color: ink }]}>{label}</Text>
-    </PressableScale>
   );
 }
 
@@ -655,12 +669,13 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.xxxl + 4,
     borderTopRightRadius: radius.xxxl + 4,
     borderBottomWidth: 0,
-    paddingHorizontal: spacing.lg,
-    gap: spacing.sm,
+    paddingHorizontal: spacing.md + 2,
+    gap: spacing.xs,
   },
-  handle: { alignItems: 'center', paddingTop: spacing.sm + 2, paddingBottom: spacing.sm },
+  handle: { alignItems: 'center', paddingTop: spacing.sm + 2, paddingBottom: spacing.xs },
   grabber: { width: 40, height: 5, borderRadius: 999 },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 40 },
+  title: { fontSize: 20, lineHeight: 25, fontWeight: '700', letterSpacing: -0.5 },
   iconButton: {
     width: 36,
     height: 36,
@@ -668,41 +683,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quickRow: { flexDirection: 'row', gap: spacing.sm },
-  quickTile: {
-    minHeight: 92,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    gap: spacing.sm,
-    justifyContent: 'space-between',
-  },
-  quickIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
+  cell: { width: '31.9%' },
+  tile: { ...leaf('sm'), minHeight: 74, padding: 10, justifyContent: 'space-between', gap: 8 },
+  tileIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  assurance: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
-  captureRow: { flexDirection: 'row', gap: spacing.sm },
+  tileLabel: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
   capture: {
+    ...leaf('md'),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingRight: 10,
+  },
+  captureMain: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    minHeight: 60,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
+    gap: spacing.sm + 4,
+    minHeight: 62,
+    paddingLeft: 10,
   },
   captureIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  upload: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 36,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+  },
+  uploadLabel: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
+  assurance: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingTop: 2,
+  },
+  assuranceText: { fontSize: 11.5, lineHeight: 15 },
   banner: { borderRadius: radius.md, padding: spacing.md },
-  options: { borderRadius: radius.lg, overflow: 'hidden', gap: StyleSheet.hairlineWidth },
+  options: { ...leaf('md'), overflow: 'hidden', gap: StyleSheet.hairlineWidth },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -717,7 +749,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  preview: { height: 184, borderRadius: radius.lg, overflow: 'hidden' },
+  preview: { ...leaf('md'), height: 184, overflow: 'hidden' },
   retake: {
     position: 'absolute',
     right: 10,

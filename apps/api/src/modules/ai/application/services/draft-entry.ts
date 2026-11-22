@@ -7,6 +7,8 @@
  */
 
 import type { AiAttachment, EntryDraft, EntryDraftKind } from '@vehicle-os/contracts';
+import { PARTS_PER_ENTRY } from '@vehicle-os/contracts';
+import { PART_POSITION_KEYS, PART_POSITIONS, type PartPosition } from '@vehicle-os/domain';
 import type { AiProviderPort, AiToolSpec } from '../../infrastructure/ai-port';
 
 export const FILL_ENTRY: AiToolSpec = {
@@ -37,6 +39,49 @@ export const FILL_ENTRY: AiToolSpec = {
         type: 'string',
         description: 'What was done or bought, in a few words: "Oil and filter change".',
       },
+      parts: {
+        type: 'array',
+        description:
+          'Each part or fluid that went into the vehicle, one per item printed. Never labour, ' +
+          'fees, tax, or a consumable that was not fitted (wipes, gloves).',
+        items: {
+          type: 'object',
+          properties: {
+            position: {
+              type: 'string',
+              enum: [...PART_POSITION_KEYS],
+              // The model reads names, not keys: each key is said with what it holds.
+              description:
+                'Where it went: ' +
+                PART_POSITION_KEYS.map((key) => `${key} = ${PART_POSITIONS[key].label}`).join(
+                  ', ',
+                ) +
+                '. A pair of tyres or pads whose end is not printed: the front.',
+            },
+            brand: { type: 'string', description: 'The maker: "Castrol", "Bosch", "Michelin".' },
+            product: {
+              type: 'string',
+              description: 'The product line, without brand or grade: "Edge", "Pilot Sport 4".',
+            },
+            grade: {
+              type: 'string',
+              description:
+                'Grade, size or standard as printed: "5W-30", "225/45 R17 94W", "DOT 4".',
+            },
+            part_number: { type: 'string', description: 'The maker’s part number, as printed.' },
+            quantity: {
+              type: 'number',
+              description: 'How many or how much: 4.2 for litres of oil, 2 for a pair of tyres.',
+            },
+            unit: {
+              type: 'string',
+              enum: ['L', 'QT', 'PIECE'],
+              description: 'L for litres, QT for quarts, PIECE for a count.',
+            },
+          },
+          required: ['position'],
+        },
+      },
     },
   },
 };
@@ -47,8 +92,10 @@ const BRIEF: Record<EntryDraftKind, string> = {
     'The photo is a fuel or charging receipt. Read the total paid, the litres of fuel (none for ' +
     'an electric charge), the station and the date.',
   service:
-    'The photo is a workshop invoice or receipt for work on a vehicle. Read the total paid, the ' +
-    'workshop, the date, the odometer if the invoice records it, and what was done.',
+    'The photo is a workshop invoice or receipt for work on a vehicle, or the label or packaging ' +
+    'of a part or fluid that went into one (an oil bottle, a tyre sidewall, a battery). Read the ' +
+    'total paid, the workshop, the date, the odometer if the invoice records it, what was done, ' +
+    'and each part or fluid fitted.',
   odometer:
     'The photo is a vehicle dashboard or an odometer. Read the odometer: the total distance on ' +
     'the instrument cluster, never the trip meter, the range or the outside temperature.',
@@ -57,7 +104,7 @@ const BRIEF: Record<EntryDraftKind, string> = {
 /** The fields each kind of entry has; anything else the model reads is not the form's. */
 const FIELDS: Record<EntryDraftKind, readonly (keyof EntryDraft)[]> = {
   fuel: ['amount', 'currency', 'litres', 'provider', 'date', 'odometer'],
-  service: ['amount', 'currency', 'provider', 'date', 'odometer', 'note'],
+  service: ['amount', 'currency', 'provider', 'date', 'odometer', 'note', 'parts'],
   odometer: ['odometer', 'date'],
 };
 
@@ -121,6 +168,41 @@ const isDay = (value: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(value) &&
   new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
 
+const UNIT = { L: 'LITER', QT: 'QUART', PIECE: 'PIECE' } as const;
+
+/**
+ * The parts the model read, held to the line contract: a position it made up drops the item, as
+ * does one that names nothing — an item with no maker, product, grade or number is not a part
+ * anyone can buy again.
+ */
+function readParts(value: unknown): EntryDraft['parts'] {
+  if (!Array.isArray(value)) return undefined;
+  const parts = value.slice(0, PARTS_PER_ENTRY).flatMap((item: unknown) => {
+    if (!item || typeof item !== 'object') return [];
+    const read = item as Record<string, unknown>;
+    const position = String(read.position ?? '');
+    if (!(PART_POSITION_KEYS as readonly string[]).includes(position)) return [];
+    const unit = UNIT[String(read.unit ?? '').toUpperCase() as keyof typeof UNIT];
+    const line = {
+      position: position as PartPosition,
+      brand: text(read.brand, 80),
+      name: text(read.product, 120),
+      spec: text(read.grade, 80),
+      partNumber: text(read.part_number, 80),
+      quantity: amount(read.quantity, 10_000, 3),
+    };
+    if (!line.brand && !line.name && !line.spec && !line.partNumber) return [];
+    return [
+      Object.fromEntries(
+        Object.entries({ ...line, unit: line.quantity === undefined ? undefined : unit }).filter(
+          ([, field]) => field !== undefined,
+        ),
+      ) as NonNullable<EntryDraft['parts']>[number],
+    ];
+  });
+  return parts.length > 0 ? parts : undefined;
+}
+
 /**
  * The model's arguments, held to the event contract: a value out of bounds, of the wrong kind or
  * not the asking form's is dropped, not clamped — a field left empty is honest, a corrected guess
@@ -147,6 +229,7 @@ export function readEntryDraft(
         ? Math.round(odometer)
         : undefined,
     note: text(args.work, 200),
+    parts: readParts(args.parts),
   };
   // Absent rather than `undefined`, so the response says only what was read.
   return Object.fromEntries(

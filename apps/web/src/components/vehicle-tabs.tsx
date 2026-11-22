@@ -377,7 +377,7 @@ function ReportPicker({ base, stuck }: { base: string; stuck: boolean }) {
   return (
     <div
       className={cn(
-        'ml-auto w-44 shrink-0 rounded-2xl p-1 transition-[background-color,box-shadow] duration-300 print:hidden max-sm:w-auto max-sm:min-w-0 max-sm:flex-1',
+        'ml-auto w-44 shrink-0 rounded-2xl p-1 transition-[background-color,box-shadow] duration-200 print:hidden max-sm:w-auto max-sm:min-w-0 max-sm:flex-1',
         stuck ? 'bg-popover shadow-float backdrop-blur-xl' : 'bg-card',
       )}
     >

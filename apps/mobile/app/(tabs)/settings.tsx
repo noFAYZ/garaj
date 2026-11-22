@@ -4,11 +4,10 @@ import Constants from 'expo-constants';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
-  Animated,
   AppState,
   Image as Picture,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -16,34 +15,32 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { garagesQuery, unreadCountQuery } from '@vehicle-os/api-client/react';
 import type { PlanState, UserProfile } from '@vehicle-os/contracts';
-import { PLAN_NAMES, PLAN_RANK, PLAN_TIERS } from '@vehicle-os/domain';
+import { PLAN_RANK, PLAN_TIERS } from '@vehicle-os/domain';
 import logoTextLight from '@/assets/logo-text-light.png';
 import logoText from '@/assets/logo-text.png';
 import { useDockSpace } from '@/components/dock';
 import {
+  askToSignOut,
+  Flag,
   Group,
   groupSurface,
   Row,
   SettingsHeader,
-  SettingsWash,
   useProfileUpdate,
   useSignOut,
 } from '@/components/settings-kit';
 import { api } from '@/lib/api';
 import { setAppearance, useAppearance } from '@/lib/appearance';
 import { Segmented } from '@/lib/instrument';
-import { CURRENCIES, deviceTimeZone } from '@/lib/locale-options';
-import { haptic, PressableScale, Rise, useScrollY } from '@/lib/motion';
+import { deviceTimeZone } from '@/lib/locale-options';
+import { haptic, PressableScale, Rise, useNow } from '@/lib/motion';
 import { pendingCount } from '@/lib/offline';
+import { PlanBadge } from '@/lib/plan-kit';
 import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
-import { figure, radius, spacing, useTheme } from '@/lib/theme';
-import { CompactHeader, Face, Skeleton } from '@/lib/ui';
-import { DATE_LOCALE } from '@/lib/format';
-
-const shortDate = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-const plural = (count: number, one: string) => `${count} ${count === 1 ? one : `${one}s`}`;
+import { figure, spacing, useTheme, leaf } from '@/lib/theme';
+import { Face, Skeleton } from '@/lib/ui';
+import { DATE_LOCALE, plural, shortDate } from '@/lib/format';
 
 /** The zone's own clock, as the phone keeps it; a zone it does not know gives no time. */
 function clockIn(zone: string, now: Date): string | null {
@@ -58,17 +55,8 @@ function clockIn(zone: string, now: Date): string | null {
   }
 }
 
-function useNow(every = 30_000) {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), every);
-    return () => clearInterval(timer);
-  }, [every]);
-  return now;
-}
-
 /**
- * Settings, laid out as a soft list on a warm wash: the way back and the title; you, as one card
+ * Settings, laid out as a soft list on the white page: the way back and the title; you, as one card
  * that opens the account; then the groups under quiet names — the account's plan and
  * notifications, the preferences every record is read in (the units switched where they are), your
  * data and this phone — each row a line icon, a word and its value; and on its own card at the
@@ -79,7 +67,6 @@ export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const dockSpace = useDockSpace();
-  const { y, onScroll } = useScrollY();
   const now = useNow();
 
   const profile = useProfile();
@@ -118,29 +105,8 @@ export default function SettingsScreen() {
     ]).finally(() => setPulling(false));
   };
 
-  // Asks first, and says what is lost: entries still on this phone go with the session.
-  const askToLeave = async () => {
-    haptic.selection();
-    const waiting = await pendingCount();
-    Alert.alert(
-      'Sign out?',
-      waiting
-        ? `${waiting} ${waiting === 1 ? 'entry has' : 'entries have'} not been sent and will be discarded.`
-        : 'Your garage stays; this phone forgets it.',
-      [
-        { text: 'Stay', style: 'cancel' },
-        {
-          text: waiting ? 'Discard and sign out' : 'Sign out',
-          style: 'destructive',
-          onPress: () => void leave(),
-        },
-      ],
-    );
-  };
-
   const me = profile.data;
   const garageCount = garages.data?.length;
-  const currency = CURRENCIES.find((option) => option.value === me?.defaultCurrency);
   const city = me?.timezone.split('/').at(-1)?.replaceAll('_', ' ');
   const time = me ? clockIn(me.timezone, now) : null;
   const phone = deviceTimeZone();
@@ -148,11 +114,8 @@ export default function SettingsScreen() {
   const elsewhere = Boolean(me && phone && phone !== me.timezone);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
-      <SettingsWash />
-      <Animated.ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={16}
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+      <ScrollView
         refreshControl={
           <RefreshControl
             refreshing={pulling}
@@ -246,17 +209,18 @@ export default function SettingsScreen() {
           <Row
             icon="cash-outline"
             label="Currency"
-            value={
-              me ? `${me.defaultCurrency}${currency ? ` · ${currency.label}` : ''}` : undefined
-            }
-            onPress={() => router.push('/settings/units')}
-          />
+            value={me?.defaultCurrency}
+            mono
+            onPress={() => router.push('/settings/currency')}
+          >
+            {me ? <Flag currency={me.defaultCurrency} /> : null}
+          </Row>
           <Row
             icon="time-outline"
             label="Time zone"
             value={city ? `${city}${time ? ` · ${time}` : ''}` : undefined}
             tone={elsewhere ? 'warning' : undefined}
-            onPress={() => router.push('/settings/units')}
+            onPress={() => router.push('/settings/timezone')}
           />
         </Group>
 
@@ -281,7 +245,7 @@ export default function SettingsScreen() {
             icon="log-out-outline"
             label={leaving ? 'Signing out…' : 'Sign out'}
             chevron={false}
-            onPress={() => void askToLeave()}
+            onPress={() => void askToSignOut(leave)}
           />
         </Group>
 
@@ -299,8 +263,7 @@ export default function SettingsScreen() {
             v{Constants.expoConfig?.version}
           </Text>
         </Rise>
-      </Animated.ScrollView>
-      <CompactHeader title="Settings" y={y} />
+      </ScrollView>
     </View>
   );
 }
@@ -352,7 +315,7 @@ function You({
 }
 
 /**
- * The plan's row: its name, or the one thing worth a colour — a payment that failed, a plan
+ * The plan's row: its badge, or the one thing worth a colour — a payment that failed, a plan
  * running out, or, full on Free, the copper way up.
  */
 function PlanRow({
@@ -390,10 +353,11 @@ function PlanRow({
     <Row
       icon="diamond-outline"
       label="Plan & billing"
-      value={alert ? alert.label : upgrade ? undefined : PLAN_NAMES[state.plan]}
+      value={alert?.label}
       tone={alert?.tone}
       onPress={onPress}
     >
+      {!alert ? <PlanBadge tier={state.plan} /> : null}
       {upgrade ? (
         <View style={[styles.upgrade, { backgroundColor: theme.primary }]}>
           <Text style={[styles.upgradeText, { color: theme.primaryForeground }]}>Upgrade</Text>
@@ -412,7 +376,7 @@ const styles = StyleSheet.create({
     gap: 14,
     paddingHorizontal: spacing.lg,
     paddingVertical: 14,
-    borderRadius: radius.xl + 2,
+    ...leaf('md'),
     borderWidth: StyleSheet.hairlineWidth,
   },
   who: { flex: 1, minWidth: 0, gap: 2 },

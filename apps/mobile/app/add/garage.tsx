@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 import { useDiscardGuard } from '@/lib/discard';
 import { Chip, Eyebrow, Headline } from '@/lib/instrument';
 import { haptic, Rise } from '@/lib/motion';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -70,7 +70,7 @@ export default function NewGarageScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ flex: 1, backgroundColor: theme.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
     >
       <Stack.Screen options={{ title: 'New garage' }} />
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
@@ -160,7 +160,7 @@ export default function NewGarageScreen() {
 
 const styles = StyleSheet.create({
   page: { padding: spacing.md, gap: spacing.lg },
-  preview: { borderRadius: radius.xl, padding: spacing.md, gap: spacing.md },
+  preview: { ...leaf('md'), padding: spacing.md, gap: spacing.md },
   previewTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   previewIcon: {
     width: 36,

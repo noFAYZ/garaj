@@ -6,19 +6,18 @@
     "orientation": "portrait",
     "scheme": "vehicleos",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "dev.vehicleos.app",
+      "bundleIdentifier": "app.garajjos",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "dev.vehicleos.app",
+      "package": "app.garajjos",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
@@ -61,14 +60,24 @@
           }
         }
       ],
-      "@sentry/react-native/expo"
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "benzapps",
+          "project": "garaj-mobile"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "icon": "./assets/icon.png",
     "extra": {
-      "sentryDsn": ""
+      "sentryDsn": "https://4b8ed523a0b6e4c0c999663d83f0f5ee@o4512457247031296.ingest.us.sentry.io/4512457259155456",
+      "revenuecat": {
+        "android": "",
+        "ios": ""
+      }
     }
   }
 }

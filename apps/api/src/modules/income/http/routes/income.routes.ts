@@ -10,6 +10,7 @@ import {
   IncomeSummary,
   StandardErrors,
   UpdateIncome,
+  LEDGER_PAGE_MAX,
 } from '@vehicle-os/contracts';
 import { newId } from '@vehicle-os/utils';
 import { NotFoundError, ValidationError } from '../../../../infrastructure/errors';
@@ -69,7 +70,7 @@ export const incomeRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
       );
       await fastify.requireEntitlement(request, 'income.track', access.garageId);
 
-      const limit = normaliseLimit(request.query.limit);
+      const limit = normaliseLimit(request.query.limit, LEDGER_PAGE_MAX);
       const cursor = request.query.cursor ? decodeKeysetCursor(request.query.cursor) : undefined;
 
       const rows = await listIncome(fastify.db, request.params.vehicleId, {

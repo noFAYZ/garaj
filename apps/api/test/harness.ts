@@ -7,6 +7,7 @@
  */
 
 import { createTestDatabase, type TestDatabase } from '@vehicle-os/database/testing';
+import { eq } from 'drizzle-orm';
 import { schema } from '@vehicle-os/database';
 import { newId } from '@vehicle-os/utils';
 import type { PlanTier } from '@vehicle-os/domain';
@@ -108,6 +109,12 @@ export async function signUp(
   if (!userId) throw new Error(`Sign-up returned no user id: ${response.body}`);
 
   if (plan !== 'FREE') await setPlan(context, userId, plan);
+  // Confirmed, as a real account is once its owner opens the link: being added to a garage
+  // requires it. `unverify` puts one back for the cases about that rule.
+  await context.database.db
+    .update(schema.users)
+    .set({ emailVerified: true })
+    .where(eq(schema.users.id, userId));
 
   return { userId, email, cookie };
 }
@@ -118,6 +125,14 @@ export async function signUp(
  * Writes the row the entitlement check reads, rather than stubbing the check — so a test that
  * asserts a 402 is asserting the same path a real free account takes.
  */
+/** An account whose address was never confirmed. */
+export async function unverify(context: TestContext, userId: string): Promise<void> {
+  await context.database.db
+    .update(schema.users)
+    .set({ emailVerified: false })
+    .where(eq(schema.users.id, userId));
+}
+
 export async function setPlan(
   context: TestContext,
   userId: string,

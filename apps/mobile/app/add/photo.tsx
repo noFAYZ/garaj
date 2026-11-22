@@ -11,7 +11,7 @@ import { enqueueUpload, flush } from '@/lib/offline';
 import { fromParams, type FileParams } from '@/lib/file-picker';
 import { Eyebrow, Segmented } from '@/lib/instrument';
 import { haptic, PressableScale } from '@/lib/motion';
-import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty } from '@/lib/ui';
 
 /**
@@ -74,7 +74,7 @@ export default function AddPhotoScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <Stack.Screen options={{ title: 'Add a photo' }} />
       <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
         <View style={[styles.preview, { backgroundColor: theme.muted }]}>
@@ -190,7 +190,7 @@ export default function AddPhotoScreen() {
 
 const styles = StyleSheet.create({
   page: { padding: spacing.md, gap: spacing.lg, paddingBottom: spacing.xl },
-  preview: { width: '100%', aspectRatio: 4 / 3, borderRadius: radius.xl, overflow: 'hidden' },
+  preview: { width: '100%', aspectRatio: 4 / 3, ...leaf('md'), overflow: 'hidden' },
   vehicle: {
     width: 104,
     alignItems: 'center',

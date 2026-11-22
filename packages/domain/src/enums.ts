@@ -324,3 +324,11 @@ export const SUBSCRIPTION_STATUSES = [
   'INCOMPLETE',
 ] as const;
 export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
+
+/**
+ * Who bills the plan: Stripe for a purchase made on the web, RevenueCat for one made in a phone's
+ * store. Each is managed only where it was bought — Google Play cannot change a Stripe plan, and
+ * the web cannot cancel a Play subscription.
+ */
+export const BILLING_PROVIDERS = ['STRIPE', 'REVENUECAT'] as const;
+export type BillingProvider = (typeof BILLING_PROVIDERS)[number];

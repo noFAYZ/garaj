@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, API_URL, sessionToken, setSessionToken } from './api';
 import { clearQueue } from './offline';
 import { unregisterForPush } from './push';
+import { forgetStoreAccount } from './store';
 
 export { useSession, type Session } from './api';
 
@@ -44,7 +45,8 @@ async function post(path: string, body: unknown, headers: Record<string, string>
        */
       credentials: 'omit',
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
+      // Typed for RN's `fetch`; Expo's globals also declare Node's AbortSignal (see api-client).
+      signal: controller.signal as RequestInit['signal'],
     });
   } catch (error) {
     if (controller.signal.aborted) {
@@ -100,6 +102,33 @@ export async function signUp(input: Credentials & { name: string }): Promise<voi
 }
 
 /**
+ * Asks for a reset link. The email opens the web app's reset page — the phone has no page to set a
+ * password on — and the answer is the same whether or not the address has an account, so this can
+ * never tell anyone who uses Garaj.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const response = await post('/request-password-reset', { email });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    throw new Error(errorFrom(payload, 'Could not send the link. Try again.'));
+  }
+}
+
+/** Sends the confirmation link again, to the signed-in account's own address. */
+export async function sendConfirmationEmail(email: string): Promise<void> {
+  const token = sessionToken();
+  const response = await post(
+    '/send-verification-email',
+    { email },
+    token ? { authorization: `Bearer ${token}` } : {},
+  );
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    throw new Error(errorFrom(payload, 'Could not send the link. Try again.'));
+  }
+}
+
+/**
  * Ends the session on this phone, whatever the network says.
  *
  * The server is told when it can be — this phone's push token first, while the session still
@@ -115,6 +144,8 @@ export async function signOut(): Promise<void> {
   }
   await setSessionToken(null);
   await AsyncStorage.removeItem(ACCOUNT_KEY).catch(() => undefined);
+  // The store too: the next account on this phone must not inherit this one's purchases.
+  await forgetStoreAccount();
 }
 
 /**
@@ -126,4 +157,5 @@ export async function deleteAccount(): Promise<void> {
   await api.users.deleteMe();
   await setSessionToken(null);
   await AsyncStorage.removeItem(ACCOUNT_KEY).catch(() => undefined);
+  await forgetStoreAccount();
 }

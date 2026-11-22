@@ -3,7 +3,7 @@ import { ArrowUpRight, CircleDot, Copy, Fingerprint, Warehouse } from 'lucide-re
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Emoji } from '@/components/emoji';
 import { Icon } from '@/components/icons';
-import { Readings } from '@/components/ui/overview';
+import { Readings } from '../components/readings';
 import { Button, EmptyState } from '@/components/ui/primitives';
 import { ListSkeleton, Loading, Skeleton } from '@/components/ui/skeleton';
 import { raise } from '@/components/ui/toaster';

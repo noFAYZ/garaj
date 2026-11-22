@@ -23,15 +23,15 @@ import logoText from '@/assets/logo-text.png';
 import { useScheme } from '@/lib/appearance';
 import type { Tone } from '@/lib/instrument';
 import { useReduceMotion } from '@/lib/motion';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { pad } from '@/lib/format';
 
 /*
- * The plan's pieces, as the web draws them (`apps/web/src/components/plan-kit.tsx`): a pass for
- * the plan you hold, bars for rank, a badge for status, a ledger for a change. A tier never gets a
- * colour of its own — ink carries rank, colour is kept for status.
+ * The plan's pieces, after the web's (`apps/web/src/components/plan-kit.tsx`): a pass for the plan
+ * you hold, bars for rank, a badge for each plan and one for status, a ledger for a change. A plan's
+ * badge is told apart by surface, never a new hue: Free is plain, Plus copper, Business ink (user
+ * asked for a badge of its own per plan, 2026-11-19). Colour beyond that is kept for status.
  */
-
-const pad = (value: number) => String(value).padStart(2, '0');
 
 const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -47,6 +47,70 @@ export function TierMark({ tier, color }: { tier: PlanTier; color: string }) {
           style={[styles.bar, { height, backgroundColor: color, opacity: step > rank ? 0.25 : 1 }]}
         />
       ))}
+    </View>
+  );
+}
+
+const TIER_ICON: Record<PlanTier, keyof typeof Ionicons.glyphMap> = {
+  FREE: 'leaf',
+  PLUS: 'diamond',
+  BUSINESS: 'briefcase',
+};
+
+/** A plan's own surface: its badge's fill, the ink on it, and an edge where the fill is pale. */
+export function tierLook(tier: PlanTier, theme: ReturnType<typeof useTheme>) {
+  return tier === 'PLUS'
+    ? { fill: theme.primary, ink: theme.primaryForeground, edge: theme.primary }
+    : tier === 'BUSINESS'
+      ? { fill: theme.foreground, ink: theme.background, edge: theme.foreground }
+      : { fill: theme.muted, ink: theme.foreground, edge: theme.border };
+}
+
+const BADGE_SIZES = {
+  sm: { height: 22, padding: 8, icon: 11, text: 10.5, gap: 4 },
+  md: { height: 26, padding: 10, icon: 13, text: 11.5, gap: 5 },
+  lg: { height: 34, padding: 14, icon: 15, text: 13, gap: 6 },
+} as const;
+
+/** A small word beside a plan's badge: Current, Recommended. */
+export function PlanTag({ label, fill, ink }: { label: string; fill: string; ink: string }) {
+  return (
+    <View style={[styles.tag, { backgroundColor: fill }]}>
+      <Text style={[styles.tagText, { color: ink }]}>{label.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+/** A plan's badge: its mark and its name, on the plan's own surface. */
+export function PlanBadge({
+  tier,
+  size = 'sm',
+}: {
+  tier: PlanTier;
+  size?: keyof typeof BADGE_SIZES;
+}) {
+  const theme = useTheme();
+  const look = tierLook(tier, theme);
+  const scale = BADGE_SIZES[size];
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${PLAN_NAMES[tier]} plan`}
+      style={[
+        styles.planBadge,
+        {
+          height: scale.height,
+          paddingHorizontal: scale.padding,
+          gap: scale.gap,
+          backgroundColor: look.fill,
+          borderColor: look.edge,
+        },
+      ]}
+    >
+      <Ionicons name={TIER_ICON[tier]} size={scale.icon} color={look.ink} />
+      <Text style={[styles.planBadgeText, { fontSize: scale.text, color: look.ink }]}>
+        {PLAN_NAMES[tier].toUpperCase()}
+      </Text>
     </View>
   );
 }
@@ -228,26 +292,6 @@ export function PlanPass({
   );
 }
 
-/** A plan as a small pass, for a from → to strip. */
-export function PassChip({ tier }: { tier: PlanTier }) {
-  const theme = useTheme();
-  const paid = tier !== 'FREE';
-  const ink = paid ? theme.primaryForeground : theme.foreground;
-  return (
-    <View
-      style={[
-        styles.chip,
-        paid
-          ? { backgroundColor: theme.primary }
-          : { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.borderStrong },
-      ]}
-    >
-      <TierMark tier={tier} color={ink} />
-      <Text style={[typeScale.label, { color: ink }]}>{PLAN_NAMES[tier]}</Text>
-    </View>
-  );
-}
-
 const LEDGER: readonly [string, keyof PlanLimits][] = [
   ['Vehicles', 'vehicles'],
   ['Garages', 'garages'],
@@ -339,7 +383,7 @@ const styles = StyleSheet.create({
   },
   dotBox: { width: 6, height: 6 },
   dot: { width: 6, height: 6, borderRadius: 999 },
-  pass: { borderRadius: radius.xl + 4, overflow: 'hidden' },
+  pass: { ...leaf('md'), overflow: 'hidden' },
   passLift: {
     shadowColor: '#000',
     shadowOpacity: 0.22,
@@ -385,15 +429,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  chip: {
+  planBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    borderRadius: radius.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  ledger: { borderRadius: radius.xl, overflow: 'hidden' },
+  planBadgeText: { fontWeight: '700', letterSpacing: 0.7 },
+  tag: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  tagText: { fontSize: 9.5, lineHeight: 13, fontWeight: '700', letterSpacing: 0.8 },
+  ledger: { ...leaf('md'), overflow: 'hidden' },
   ledgerRow: {
     flexDirection: 'row',
     alignItems: 'center',

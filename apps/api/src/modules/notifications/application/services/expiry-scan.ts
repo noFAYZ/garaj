@@ -9,7 +9,8 @@
 
 import { inArray } from 'drizzle-orm';
 import { schema, type Database } from '@vehicle-os/database';
-import type { NotificationType } from '@vehicle-os/domain';
+import { partName, partPosition, type NotificationType } from '@vehicle-os/domain';
+import { listExpiringWarranties } from '../../../parts/infrastructure/repositories/part-repository';
 import {
   allGarageIds,
   listExpiringDocuments,
@@ -128,5 +129,61 @@ export async function scanForExpiringDocuments(
     }),
   );
 
+  return { scanned: rows.length, notified };
+}
+
+/** How long after a warranty has ended it is still worth one "it has ended" note. */
+const ENDED_WINDOW_DAYS = 30;
+
+/**
+ * Part warranties (PRD §17), in the same daily sweep: the battery's or the tyres' cover ending
+ * soon, or just ended — for parts still fitted. Keyed by line and date like a document, so it is
+ * said once per bucket, and a warranty corrected to a new date is said again.
+ */
+export async function scanForExpiringPartWarranties(
+  db: Database,
+  now: Date = new Date(),
+): Promise<ExpiryScanResult> {
+  const today = now.toISOString().slice(0, 10);
+  const rows = await listExpiringWarranties(
+    db,
+    addDays(today, -ENDED_WINDOW_DAYS),
+    addDays(today, EXPIRY_HORIZON_DAYS),
+  );
+  if (rows.length === 0) return { scanned: 0, notified: 0 };
+
+  const recipients = await recipientsFor(
+    db,
+    rows.map((row) => row.garageId),
+  );
+  const notified = await notifyOnce(
+    db,
+    rows.flatMap<PendingNotification>((row) => {
+      const until = row.part.warrantyUntil!;
+      const remaining = daysUntil(until, today);
+      const expired = remaining < 0;
+      const label = partPosition(row.part.position)?.label ?? 'Part';
+      const what = partName(row.part) ?? label.toLowerCase();
+      const vehicle = displayName(row);
+      const body = expired
+        ? `${vehicle}: the warranty on the ${what} ended ${Math.abs(remaining)} days ago.`
+        : remaining === 0
+          ? `${vehicle}: the warranty on the ${what} ends today.`
+          : `${vehicle}: the warranty on the ${what} ends in ${remaining} days.`;
+      return (recipients.get(row.garageId) ?? []).map((userId) => ({
+        jobName: 'deliver-document-expiry',
+        row: {
+          userId,
+          garageId: row.garageId,
+          vehicleId: row.part.vehicleId,
+          notificationType: 'WARRANTY_EXPIRING' as const,
+          title: `${label} warranty`,
+          body,
+          payload: { partId: row.part.id, warrantyUntil: until, daysRemaining: remaining },
+          dedupeKey: `PART:${expired ? 'EXPIRED' : 'EXPIRING'}:${row.part.id}:${until}`,
+        },
+      }));
+    }),
+  );
   return { scanned: rows.length, notified };
 }

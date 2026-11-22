@@ -7,7 +7,10 @@
 
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { schema } from '@vehicle-os/database';
-import { scanForExpiringDocuments } from '@vehicle-os/api/expiry-scan';
+import {
+  scanForExpiringDocuments,
+  scanForExpiringPartWarranties,
+} from '@vehicle-os/api/expiry-scan';
 import { createStorage } from '@vehicle-os/api/storage';
 import type { JobHandler } from './index';
 
@@ -55,8 +58,10 @@ export const collectDocumentObjects: JobHandler = async (_job, { db, log }) => {
   log.info({ collected: rows.length }, 'Document objects collected');
 };
 
-/** The daily sweep for documents that have expired or are about to. */
+/** The daily sweep for documents — and part warranties — that have expired or are about to. */
 export const scanExpiringDocuments: JobHandler = async (_job, { db, log }) => {
   const result = await scanForExpiringDocuments(db);
   log.info(result, 'Document expiry scan complete');
+  const warranties = await scanForExpiringPartWarranties(db);
+  log.info(warranties, 'Part warranty scan complete');
 };

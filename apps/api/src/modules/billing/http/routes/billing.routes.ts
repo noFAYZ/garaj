@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import type Stripe from 'stripe';
@@ -19,8 +20,14 @@ import {
   priceFor,
   requireStripe,
   resolvePrice,
+  stripe as stripeClient,
   toSubscriptionStatus,
 } from '../../../../infrastructure/stripe';
+import {
+  revenuecatConfigured,
+  storeAccessOf,
+  storeName,
+} from '../../../../infrastructure/revenuecat';
 
 /**
  * Subscriptions (GAPS §17).
@@ -87,6 +94,8 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             id: schema.subscriptions.id,
             plan: schema.subscriptions.plan,
             status: schema.subscriptions.status,
+            provider: schema.subscriptions.provider,
+            store: schema.subscriptions.store,
             stripeCustomerId: schema.subscriptions.stripeCustomerId,
             stripeSubscriptionId: schema.subscriptions.stripeSubscriptionId,
           })
@@ -94,6 +103,16 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
           .where(eq(schema.subscriptions.userId, actor.userId))
           .limit(1);
       let [existing] = await current();
+
+      /*
+       * Already paying in a phone's store: a checkout here would bill the same plan twice, and
+       * neither side can cancel the other's. It is changed where it was bought.
+       */
+      if (existing?.provider === 'REVENUECAT' && LIVE.has(existing.status)) {
+        throw new ValidationError(
+          `Your plan is billed through ${storeName(existing.store)}. Change it in the Garaj app.`,
+        );
+      }
 
       /*
        * A customer this row says is not paying is asked about first: a webhook that never
@@ -217,13 +236,21 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     },
     async (request, reply) => {
       const actor = await fastify.requireAuth(request);
-      const stripe = requireStripe();
-      const [row] = await fastify.db
-        .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
-        .from(schema.subscriptions)
-        .where(eq(schema.subscriptions.userId, actor.userId))
-        .limit(1);
-      if (row?.stripeCustomerId) await syncFromProvider(fastify, stripe, row.stripeCustomerId);
+      /*
+       * Each provider this deployment has, so the phone can call this after a store purchase
+       * on a deployment with no Stripe at all. The store goes first: it is what a phone has just
+       * bought through, and the order matters when both claim the account.
+       */
+      if (revenuecatConfigured()) await syncStoreAccess(fastify, actor.userId);
+      const stripe = stripeClient();
+      if (stripe) {
+        const [row] = await fastify.db
+          .select({ stripeCustomerId: schema.subscriptions.stripeCustomerId })
+          .from(schema.subscriptions)
+          .where(eq(schema.subscriptions.userId, actor.userId))
+          .limit(1);
+        if (row?.stripeCustomerId) await syncFromProvider(fastify, stripe, row.stripeCustomerId);
+      }
       return reply.status(204).send(null);
     },
   );
@@ -238,6 +265,8 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         .select({
           plan: schema.subscriptions.plan,
           status: schema.subscriptions.status,
+          provider: schema.subscriptions.provider,
+          store: schema.subscriptions.store,
           stripeCustomerId: schema.subscriptions.stripeCustomerId,
           stripeSubscriptionId: schema.subscriptions.stripeSubscriptionId,
         })
@@ -245,6 +274,11 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         .where(eq(schema.subscriptions.userId, userId))
         .limit(1);
     let [row] = await current();
+    if (row?.provider === 'REVENUECAT' && LIVE.has(row.status)) {
+      throw new ValidationError(
+        `Your plan is billed through ${storeName(row.store)}. Change or cancel it there.`,
+      );
+    }
     if (row?.stripeCustomerId && !(row.stripeSubscriptionId && LIVE.has(row.status))) {
       if (await syncFromProvider(fastify, stripe, row.stripeCustomerId)) [row] = await current();
     }
@@ -361,6 +395,68 @@ export const billingRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         return_url: safeReturn(request.body.returnPath),
       });
       return { url: session.url };
+    },
+  );
+
+  /**
+   * RevenueCat saying something changed for a customer — bought, renewed, cancelled, refunded,
+   * moved between accounts. The event is only a nudge: what the account owns is asked of
+   * RevenueCat directly (`syncStoreAccess`), so a forged or replayed event can at most make the
+   * API look again. The `Authorization` value is the one set on the webhook in RevenueCat.
+   *
+   * 200 for anything it cannot act on (a test event, an anonymous or unknown id): an error
+   * would only make RevenueCat retry an event that will never apply.
+   */
+  fastify.post(
+    '/revenuecat/webhook',
+    {
+      schema: {
+        tags: ['billing'],
+        summary: 'Store purchase webhook (RevenueCat)',
+        description: 'Authenticated by the shared Authorization value. Not for any other caller.',
+        body: Type.Object(
+          {
+            event: Type.Object(
+              {
+                type: Type.String(),
+                app_user_id: Type.Optional(Type.String()),
+                original_app_user_id: Type.Optional(Type.String()),
+                aliases: Type.Optional(Type.Array(Type.String())),
+                transferred_from: Type.Optional(Type.Array(Type.String())),
+                transferred_to: Type.Optional(Type.Array(Type.String())),
+              },
+              { additionalProperties: true },
+            ),
+          },
+          { additionalProperties: true },
+        ),
+        response: { 200: Type.Object({ received: Type.Boolean() }), ...StandardErrors },
+      },
+    },
+    async (request) => {
+      const expected = env().REVENUECAT_WEBHOOK_AUTH;
+      if (!expected || !revenuecatConfigured()) {
+        throw new ForbiddenError('Webhooks are not configured');
+      }
+      const given = Buffer.from(request.headers.authorization ?? '');
+      const wanted = Buffer.from(expected);
+      if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) {
+        throw new ForbiddenError('Invalid webhook authorization');
+      }
+
+      const { event } = request.body;
+      // Every account the event names: a transfer moves a purchase from one to another.
+      const named = new Set(
+        [
+          event.app_user_id,
+          event.original_app_user_id,
+          ...(event.aliases ?? []),
+          ...(event.transferred_from ?? []),
+          ...(event.transferred_to ?? []),
+        ].filter((id): id is string => typeof id === 'string' && UUID.test(id)),
+      );
+      for (const userId of named) await syncStoreAccess(fastify, userId);
+      return { received: true };
     },
   );
 
@@ -494,10 +590,25 @@ async function applySubscription(
    */
   if (!LIVE.has(status)) {
     const [row] = await fastify.db
-      .select({ tracking: schema.subscriptions.stripeSubscriptionId })
+      .select({
+        tracking: schema.subscriptions.stripeSubscriptionId,
+        provider: schema.subscriptions.provider,
+        status: schema.subscriptions.status,
+      })
       .from(schema.subscriptions)
       .where(eq(schema.subscriptions.stripeCustomerId, customerId))
       .limit(1);
+    /*
+     * The account moved to a store subscription since: an old Stripe one ending (or its late
+     * webhook) is history, not news about the plan the store is billing.
+     */
+    if (row?.provider === 'REVENUECAT' && LIVE.has(row.status)) {
+      fastify.log.info(
+        { subscriptionId: subscription.id },
+        'A Stripe subscription ended while the store bills the plan; left as it is',
+      );
+      return;
+    }
     if (row?.tracking && row.tracking !== subscription.id) {
       fastify.log.info(
         { subscriptionId: subscription.id, tracking: row.tracking },
@@ -516,6 +627,9 @@ async function applySubscription(
     stripeSubscriptionId: subscription.id,
     currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
     cancelAtPeriodEnd: subscription.cancel_at_period_end ?? false,
+    provider: 'STRIPE' as const,
+    store: null,
+    managementUrl: null,
   };
 
   const updated = await fastify.db
@@ -544,6 +658,73 @@ async function applySubscription(
   await fastify.db
     .insert(schema.subscriptions)
     .values({ id: newId(), userId, stripeCustomerId: customerId, plan: plan ?? 'FREE', ...changes })
+    .onConflictDoUpdate({ target: schema.subscriptions.userId, set: changes });
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Write what the store says the account owns — the one writer for store plans, behind both the
+ * webhook and `/sync`. Idempotent like `applySubscription`: it sets the state, never adjusts it.
+ *
+ * - A plan Stripe is billing stays Stripe's. Paying in both places is reported, not merged.
+ * - Owning nothing ends a store plan, and leaves any other row (a comped plan, a lapsed Stripe
+ *   one) alone — the store has nothing to say about those.
+ * - An id with no account behind it (deleted since, or never ours) is skipped.
+ */
+export async function syncStoreAccess(
+  fastify: Parameters<FastifyPluginAsyncTypebox>[0],
+  userId: string,
+): Promise<void> {
+  const [account] = await fastify.db
+    .select({
+      id: schema.users.id,
+      provider: schema.subscriptions.provider,
+      status: schema.subscriptions.status,
+      stripeSubscriptionId: schema.subscriptions.stripeSubscriptionId,
+    })
+    .from(schema.users)
+    .leftJoin(schema.subscriptions, eq(schema.subscriptions.userId, schema.users.id))
+    .where(eq(schema.users.id, userId))
+    .limit(1);
+  if (!account) return;
+
+  const access = await storeAccessOf(userId);
+  const stripeLive =
+    account.provider === 'STRIPE' &&
+    Boolean(account.stripeSubscriptionId) &&
+    account.status !== null &&
+    LIVE.has(account.status);
+  if (stripeLive) {
+    if (access) {
+      fastify.log.warn({ userId, plan: access.plan }, 'Paying through Stripe and a store at once');
+    }
+    return;
+  }
+
+  if (!access) {
+    if (account.provider === 'REVENUECAT') {
+      // The tier stays as history; the status is what stops it counting (`effectivePlan`).
+      await fastify.db
+        .update(schema.subscriptions)
+        .set({ status: 'CANCELED', cancelAtPeriodEnd: false, managementUrl: null })
+        .where(eq(schema.subscriptions.userId, userId));
+    }
+    return;
+  }
+
+  const changes = {
+    plan: access.plan,
+    status: access.status,
+    provider: 'REVENUECAT' as const,
+    store: access.store,
+    managementUrl: access.managementUrl,
+    currentPeriodEnd: access.currentPeriodEnd,
+    cancelAtPeriodEnd: access.cancelAtPeriodEnd,
+  };
+  await fastify.db
+    .insert(schema.subscriptions)
+    .values({ id: newId(), userId, ...changes })
     .onConflictDoUpdate({ target: schema.subscriptions.userId, set: changes });
 }
 

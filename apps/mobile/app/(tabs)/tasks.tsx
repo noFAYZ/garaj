@@ -10,13 +10,14 @@ import type { TaskPriority } from '@vehicle-os/domain';
 import { queryKeys, taskBucketsQuery, vehiclesQuery } from '@vehicle-os/api-client/react';
 import { daysUntil } from '@vehicle-os/ui';
 import { BrandLogo } from '@/components/brand-logo';
+import { openAdd } from '@/lib/add-request';
 import { api } from '@/lib/api';
-import { humanise } from '@/lib/format';
+import { pad, humanise } from '@/lib/format';
 import { ToneTile, type Tone } from '@/lib/instrument';
 import { CountUp, haptic, Pop, PressableScale, Pulse, Rise, useScrollY } from '@/lib/motion';
 import { enqueue, flush } from '@/lib/offline';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
-import { Button, CompactHeader, IconButton, LargeHeader, Skeleton } from '@/lib/ui';
+import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { Button, IconButton, LargeHeader, Skeleton } from '@/lib/ui';
 
 type BucketKey = keyof TaskBuckets['counts'];
 
@@ -38,8 +39,6 @@ const PRIORITY_TONE: Record<TaskPriority, Tone> = {
   MEDIUM: 'neutral',
   LOW: 'neutral',
 };
-
-const pad = (value: number) => String(value).padStart(2, '0');
 
 const toggled = (task: Task): 'TODO' | 'COMPLETED' =>
   task.status === 'COMPLETED' ? 'TODO' : 'COMPLETED';
@@ -75,7 +74,6 @@ function when(task: Task): { label: string; tone: Tone } | null {
  */
 export default function TasksScreen() {
   const theme = useTheme();
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const dockSpace = useDockSpace();
   const { y, onScroll } = useScrollY();
@@ -137,7 +135,7 @@ export default function TasksScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <AnimatedSectionList
         ref={list}
         sections={sections}
@@ -171,7 +169,7 @@ export default function TasksScreen() {
                     icon="add"
                     tone="primary"
                     label="Plan something"
-                    onPress={() => router.push('/add/planned')}
+                    onPress={() => openAdd({ mode: 'planned' })}
                   />
                 }
               />
@@ -270,7 +268,7 @@ export default function TasksScreen() {
                 label="Plan something"
                 icon="add"
                 variant="primary"
-                onPress={() => router.push('/add/planned')}
+                onPress={() => openAdd({ mode: 'planned' })}
               />
             </View>
           )
@@ -314,7 +312,6 @@ export default function TasksScreen() {
           </Rise>
         )}
       />
-      <CompactHeader title="Tasks" y={y} />
     </View>
   );
 }
@@ -534,7 +531,7 @@ const styles = StyleSheet.create({
   empty: {
     alignItems: 'center',
     gap: spacing.sm,
-    borderRadius: radius.xl,
+    ...leaf('md'),
     borderWidth: StyleSheet.hairlineWidth,
     padding: spacing.xl,
     paddingVertical: spacing.xxl,

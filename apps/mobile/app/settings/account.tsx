@@ -1,24 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { avatarSeeds, avatarUrl } from '@vehicle-os/contracts';
 import { dashboardQuery } from '@vehicle-os/api-client/react';
 import {
+  askToSignOut,
   Group,
-  pad,
   Row,
   SettingsPage,
   useProfileUpdate,
   useSignOut,
 } from '@/components/settings-kit';
+import { dialog, FAILED } from '@/lib/dialog';
+import { pad } from '@/lib/format';
 import { api } from '@/lib/api';
 import { ToneChip } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
 import { pendingCount } from '@/lib/offline';
+import { sendConfirmationEmail } from '@/lib/auth';
+import { openStoreManagement, storeBilled, storeName } from '@/lib/store';
+import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
-import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { MenuSheet } from '@/lib/pickers';
 import { Button, Face, Skeleton } from '@/lib/ui';
 
@@ -54,20 +59,42 @@ export default function AccountScreen() {
       void pendingCount().then(setPending);
     }, []),
   );
-  const [confirming, setConfirming] = useState(false);
   const { leave, remove, leaving } = useSignOut();
-  const [deleting, setDeleting] = useState<'idle' | 'confirming' | 'working'>('idle');
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // A store subscription outlives the account — only the store can stop it — so it is said first.
+  const { data: plan } = usePlan();
+  const inStore = storeBilled(plan);
+  const confirm = useMutation({
+    mutationFn: () => sendConfirmationEmail(me!.email),
+    onSuccess: () => haptic.success(),
+  });
   const removeAccount = async () => {
-    setDeleting('working');
-    setDeleteError(null);
+    setDeleting(true);
     try {
       await remove();
     } catch (error) {
-      haptic.warning();
-      setDeleteError((error as Error).message);
-      setDeleting('confirming');
+      dialog('Could not delete your account', (error as Error).message, undefined, FAILED);
+    } finally {
+      setDeleting(false);
     }
+  };
+  // The second press, in the app's dialog: what goes, for everyone — and a store plan said first,
+  // since only the store can stop it.
+  const askToDelete = () => {
+    const store = storeName(plan?.store);
+    dialog(
+      'Delete your account?',
+      inStore
+        ? `Every garage you own goes too, with its vehicles, records and documents, for everyone in it. This cannot be undone. Your plan is billed through ${store}, and deleting the account does not stop it — cancel it there first.`
+        : 'Every garage you own goes too, with its vehicles, records and documents, for everyone in it. A plan paid for on the web is cancelled. This cannot be undone.',
+      [
+        { text: 'Keep it', style: 'cancel' },
+        ...(inStore
+          ? [{ text: `Cancel plan in ${store}`, onPress: () => void openStoreManagement(plan) }]
+          : []),
+        { text: 'Delete for good', style: 'destructive', onPress: () => void removeAccount() },
+      ],
+    );
   };
 
   const trimmed = name.trim();
@@ -147,6 +174,21 @@ export default function AccountScreen() {
 
       <Group title="Account" index={2}>
         <Row icon="mail-outline" label="Email" value={me?.email} />
+        {me && !me.emailVerified ? (
+          // Until it is confirmed, nobody can add this account to their garage.
+          <Row
+            icon="checkmark-done-outline"
+            label={
+              confirm.isSuccess
+                ? `Link sent to ${me.email}`
+                : confirm.isError
+                  ? 'Could not send — try again'
+                  : 'Confirm your email'
+            }
+            chevron={false}
+            onPress={confirm.isPending || confirm.isSuccess ? undefined : () => confirm.mutate()}
+          />
+        ) : null}
         <Row
           icon="calendar-outline"
           label="Member since"
@@ -176,8 +218,8 @@ export default function AccountScreen() {
       </Group>
 
       {/*
-       * Apart from everything routine, on its own tint, and two presses: the second button says
-       * exactly what happens, including what is lost.
+       * Apart from everything routine, on its own tint, and two presses: the second, in the app's
+       * dialog, says exactly what happens, including what is lost.
        */}
       <Rise index={3} style={[styles.danger, { backgroundColor: theme.destructiveSoft }]}>
         <View style={styles.dangerTop}>
@@ -191,32 +233,12 @@ export default function AccountScreen() {
             </Text>
           </View>
         </View>
-        {confirming ? (
-          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-            <View style={{ flex: 1 }}>
-              <Button label="Stay" onPress={() => setConfirming(false)} disabled={leaving} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button
-                label={pending ? 'Discard and sign out' : 'Sign out now'}
-                variant="danger"
-                loading={leaving}
-                onPress={() => void leave()}
-              />
-            </View>
-          </View>
-        ) : (
-          <Button
-            label="Sign out"
-            variant="danger"
-            onPress={() => {
-              haptic.selection();
-              // Read fresh rather than trusting the count from when this screen opened.
-              void pendingCount().then(setPending);
-              setConfirming(true);
-            }}
-          />
-        )}
+        <Button
+          label="Sign out"
+          variant="danger"
+          loading={leaving}
+          onPress={() => void askToSignOut(leave)}
+        />
       </Rise>
 
       {/*
@@ -229,52 +251,20 @@ export default function AccountScreen() {
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={[typeScale.label, { color: theme.destructive }]}>Delete account</Text>
             <Text style={[typeScale.caption, { color: theme.foreground }]}>
-              {deleting === 'idle'
-                ? 'Removes your account for good.'
-                : 'Every garage you own goes too, with its vehicles, records and documents, for everyone in it. A subscription is cancelled. This cannot be undone.'}
+              Removes your account, and every garage you own, for good.
             </Text>
-            {deleteError ? (
-              <Text
-                accessibilityRole="alert"
-                style={[typeScale.caption, { color: theme.destructive }]}
-              >
-                {deleteError}
-              </Text>
-            ) : null}
           </View>
         </View>
-        {deleting === 'idle' ? (
-          <Button
-            label="Delete account"
-            variant="danger"
-            disabled={leaving}
-            onPress={() => {
-              haptic.warning();
-              setDeleting('confirming');
-            }}
-          />
-        ) : (
-          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-            <View style={{ flex: 1 }}>
-              <Button
-                label="Keep it"
-                onPress={() => {
-                  setDeleting('idle');
-                  setDeleteError(null);
-                }}
-                disabled={deleting === 'working'}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button
-                label="Delete for good"
-                variant="danger"
-                loading={deleting === 'working'}
-                onPress={() => void removeAccount()}
-              />
-            </View>
-          </View>
-        )}
+        <Button
+          label="Delete account"
+          variant="danger"
+          loading={deleting}
+          disabled={leaving}
+          onPress={() => {
+            haptic.warning();
+            askToDelete();
+          }}
+        />
       </Rise>
 
       {picking ? (
@@ -340,6 +330,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  danger: { borderRadius: radius.xl, padding: spacing.md, gap: spacing.md },
+  danger: { ...leaf('md'), padding: spacing.md, gap: spacing.md },
   dangerTop: { flexDirection: 'row', gap: spacing.sm },
 });

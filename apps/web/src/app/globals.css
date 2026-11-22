@@ -107,31 +107,31 @@
   --text-label--font-weight: 650;
 
   /* Motion */
-  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-quint: cubic-bezier(0.12, 1, 0.36, 1);
   --ease-standard: cubic-bezier(0.2, 0.75, 0.25, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --animate-rise: rise 360ms var(--ease-out-quint) backwards;
-  --animate-dial: dial-fill 700ms var(--ease-out-quint) backwards;
-  --animate-pop: pop 180ms var(--ease-out-quint) backwards;
-  --animate-step: step 220ms var(--ease-out-quint) backwards;
+  --animate-rise: rise 100ms var(--ease-out-quint) backwards;
+  --animate-dial: dial-fill 250ms var(--ease-out-quint) backwards;
+  --animate-pop: pop 30ms var(--ease-out-quint) backwards;
+  --animate-step: step 50ms var(--ease-out-quint) backwards;
 
   @keyframes rise {
     from {
       opacity: 0;
-      translate: 0 10px;
+      translate: 0 4px;
     }
   }
   @keyframes pop {
     from {
       opacity: 0;
-      translate: 0 -5px;
-      scale: 0.985;
+      translate: 0 -3px;
+      scale: 0.99;
     }
   }
   @keyframes step {
     from {
       opacity: 0;
-      translate: calc(var(--step-dir, 1) * 12px) 0;
+      translate: calc(var(--step-dir, 1) * 6px) 0;
     }
   }
   @keyframes dial-fill {
@@ -182,6 +182,35 @@ html[data-theme='light'] {
   --color-chart-income: #5eaf8b;
   --color-chart-trip: #9285c9;
   --color-chart-neutral: #77716a;
+}
+
+/* A card at rest is the card at half strength over the page (`bg-card/50`), as one opaque fill. */
+:root {
+  --color-card-rest: color-mix(in oklab, var(--color-card) 50%, var(--color-background));
+}
+
+/*
+ * Daylight, as the phone draws it (apps/mobile/lib/theme.ts): a plain white page, a softer muted,
+ * raised surfaces in the page's own white. Kept apart from the token block above so that block
+ * still mirrors @vehicle-os/ui. Glass keeps the paper — its blur needs something to show through.
+ *
+ * A card is told from the page by fill alone: no outline, no drop shadow, no lift. Under the
+ * pointer it darkens a shade, and that is the whole hover. White chips read against the card.
+ */
+html[data-theme='light']:not([data-glass]) {
+  --color-background: oklch(1 0 0);
+  --color-card: oklch(1 0 0);
+  --color-card-rest: oklch(0.975 0.003 75);
+  --color-popover: oklch(1 0 0);
+  --color-muted: oklch(0.96 0.006 78);
+}
+
+/* Unlayered, so these outrank the background utilities they replace. */
+html[data-theme='light']:not([data-glass]) :is(.bg-card\/50, .bg-card\/60, .hover\:bg-card\/50:hover) {
+  background-color: var(--color-card-rest);
+}
+html[data-theme='light']:not([data-glass]) :is(.bg-card\/50, .bg-card\/60).hover\:bg-card:hover {
+  background-color: oklch(0.962 0.004 75);
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -361,7 +390,7 @@ html[data-theme-switching]::view-transition-new(root) {
     mask:
       linear-gradient(#000 0 0) content-box exclude,
       linear-gradient(#000 0 0);
-    transition: opacity 200ms var(--ease-standard);
+    transition: opacity 150ms var(--ease-standard);
   }
   html:not([data-theme='light']):not([data-glass]) :is(.bg-card\/50, .bg-card\/60):hover::before {
     opacity: 1;
@@ -452,11 +481,11 @@ html[data-theme-switching]::view-transition-new(root) {
     0 3px 2px -1px var(--color-shadow),
     0 6px 14px -8px var(--color-shadow);
   transition:
-    translate 160ms var(--ease-out-quint),
-    scale 160ms var(--ease-out-quint),
-    box-shadow 160ms var(--ease-out-quint),
-    background-color 160ms var(--ease-standard),
-    color 160ms var(--ease-standard);
+    translate 120ms var(--ease-out-quint),
+    scale 120ms var(--ease-out-quint),
+    box-shadow 120ms var(--ease-out-quint),
+    background-color 120ms var(--ease-standard),
+    color 120ms var(--ease-standard);
 
   @media (hover: hover) {
     &:hover:not(:disabled) {
@@ -514,9 +543,9 @@ html:not([data-theme='light']):not([data-glass]) :is(dialog, [popover]:not(.bg-t
   top: 0;
   z-index: 30;
   transition:
-    background-color 220ms var(--ease-standard),
-    border-color 220ms var(--ease-standard),
-    box-shadow 220ms var(--ease-standard);
+    background-color 150ms var(--ease-standard),
+    border-color 150ms var(--ease-standard),
+    box-shadow 150ms var(--ease-standard);
 }
 
 @utility scrollbar-slim {
@@ -525,7 +554,7 @@ html:not([data-theme='light']):not([data-glass]) :is(dialog, [popover]:not(.bg-t
 }
 
 @utility stagger {
-  animation-delay: calc(min(var(--i, 0), 8) * 28ms);
+  animation-delay: calc(min(var(--i, 0), 8) * 16ms);
 }
 
 @utility row-flash {
@@ -648,14 +677,14 @@ html:not([data-theme='light']):not([data-glass]) :is(dialog, [popover]:not(.bg-t
   transform-box: view-box;
   transform-origin: 100px 100px;
   transform: rotate(var(--angle));
-  transition: transform 1050ms var(--ease-out-quint);
+  transition: transform 600ms var(--ease-out-quint);
 }
 .gauge-arc {
   stroke-dasharray: 100;
   stroke-dashoffset: var(--offset);
   transition:
-    stroke-dashoffset 1050ms var(--ease-out-quint),
-    stroke 300ms ease;
+    stroke-dashoffset 600ms var(--ease-out-quint),
+    stroke 200ms ease;
 }
 .odo-digit {
   display: inline-block;
@@ -668,7 +697,7 @@ html:not([data-theme='light']):not([data-glass]) :is(dialog, [popover]:not(.bg-t
   display: flex;
   flex-direction: column;
   translate: 0 calc(var(--d) * -1 * var(--odo-h, 1em));
-  transition: translate 900ms var(--ease-out-quint) calc(var(--i) * 42ms);
+  transition: translate 500ms var(--ease-out-quint) calc(var(--i) * 24ms);
 }
 .odo-drums {
   --odo-h: 1.3em;
@@ -690,33 +719,33 @@ dialog .odo-drums {
     inset 0 0 0 1px var(--color-border);
 }
 .odo-drums .odo-digit > span {
-  transition-duration: 600ms;
+  transition-duration: 350ms;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .trail-wipe {
-    animation: trail-wipe 1300ms var(--ease-out-quint) 220ms backwards;
+    animation: trail-wipe 700ms var(--ease-out-quint) 80ms backwards;
   }
   .bar-grow {
     transform-origin: bottom;
-    animation: bar-grow 800ms var(--ease-out-quint) backwards;
-    animation-delay: calc(220ms + var(--i, 0) * 35ms);
+    animation: bar-grow 420ms var(--ease-out-quint) backwards;
+    animation-delay: calc(60ms + var(--i, 0) * 18ms);
   }
   .gauge-rise .gauge-needle {
-    animation: needle-rise 1050ms var(--ease-out-quint) 100ms backwards;
+    animation: needle-rise 600ms var(--ease-out-quint) 40ms backwards;
   }
   .gauge-rise .gauge-arc {
-    animation: arc-rise 1050ms var(--ease-out-quint) 100ms backwards;
+    animation: arc-rise 600ms var(--ease-out-quint) 40ms backwards;
   }
   .gauge-ignite .gauge-needle {
-    animation: needle-sweep 1700ms cubic-bezier(0.45, 0, 0.2, 1) 280ms backwards;
+    animation: needle-sweep 1000ms cubic-bezier(0.45, 0, 0.2, 1) 120ms backwards;
   }
   .gauge-ignite .gauge-arc {
-    animation: arc-sweep 1700ms cubic-bezier(0.45, 0, 0.2, 1) 280ms backwards;
+    animation: arc-sweep 1000ms cubic-bezier(0.45, 0, 0.2, 1) 120ms backwards;
   }
   .odo-digit > span {
-    animation: odo-roll 1300ms var(--ease-out-quint) backwards;
-    animation-delay: calc(200ms + var(--i) * 70ms);
+    animation: odo-roll 700ms var(--ease-out-quint) backwards;
+    animation-delay: calc(60ms + var(--i) * 36ms);
   }
 }
 @keyframes trail-wipe {
@@ -786,19 +815,19 @@ dialog .odo-drums {
 }
 .seal-close {
   stroke-dasharray: 100 100;
-  animation: seal-close 650ms var(--ease-out-quint) backwards;
+  animation: seal-close 380ms var(--ease-out-quint) backwards;
 }
 .seal-tick {
   stroke-dasharray: 1 1;
   stroke-dashoffset: 1;
-  animation: seal-tick 360ms var(--ease-out-quint) 480ms forwards;
+  animation: seal-tick 220ms var(--ease-out-quint) 280ms forwards;
 }
 .seal-disk {
-  animation: seal-disk 500ms var(--ease-out-quint) 390ms backwards;
+  animation: seal-disk 300ms var(--ease-out-quint) 230ms backwards;
 }
 .seal-ripple {
   opacity: 0;
-  animation: seal-ripple 900ms var(--ease-out-quint) 570ms;
+  animation: seal-ripple 550ms var(--ease-out-quint) 340ms;
 }
 @keyframes seal-orbit {
   to {

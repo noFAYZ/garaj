@@ -8,12 +8,13 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { unreadCountQuery } from '@vehicle-os/api-client/react';
-import { Group, pad, Row, SettingsPage } from '@/components/settings-kit';
+import { Group, Row, SettingsPage } from '@/components/settings-kit';
+import { pad } from '@/lib/format';
 import { api, API_URL } from '@/lib/api';
 import { haptic, Rise } from '@/lib/motion';
 import { flush, pendingCount } from '@/lib/offline';
 import { registerForPush } from '@/lib/push';
-import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 
 type Permission = 'granted' | 'denied' | 'undetermined';
@@ -193,7 +194,7 @@ export default function DeviceScreen() {
 }
 
 const styles = StyleSheet.create({
-  sync: { borderRadius: radius.xl, padding: spacing.md + 2, gap: spacing.md },
+  sync: { ...leaf('md'), padding: spacing.md + 2, gap: spacing.md },
   syncTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   syncIcon: {
     width: 44,

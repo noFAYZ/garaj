@@ -18,6 +18,13 @@ import { cn } from '@/lib/utils';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
+/** "Google Play", "the App Store" — the store a phone plan was bought in, in a sentence. */
+function storeName(store: string | null): string {
+  if (store === 'PLAY_STORE') return 'Google Play';
+  if (store === 'APP_STORE' || store === 'MAC_APP_STORE') return 'the App Store';
+  return 'the app store';
+}
+
 /**
  * The plan (GAPS §10, §17): what you hold, how full it is, the way up, and the way down.
  *
@@ -55,10 +62,18 @@ export function PlanSettings() {
     );
   }
 
+  /*
+   * Bought in a phone's store: only that store can change, renew or cancel it, so the card,
+   * cancel and upgrade controls here — all Stripe's — give way to the store's own page.
+   */
+  const store =
+    data?.provider === 'REVENUECAT' && data.status !== 'CANCELED'
+      ? { name: storeName(data.store), url: data.managementUrl }
+      : null;
   // A customer exists once anyone has checked out; before that there is no portal to open.
-  const hasBilling = Boolean(data && (data.plan !== 'FREE' || data.currentPeriodEnd));
+  const hasBilling = Boolean(data && !store && (data.plan !== 'FREE' || data.currentPeriodEnd));
   // Paid through the provider, so there is a subscription to end. A comped plan has no period.
-  const cancellable = Boolean(data && data.plan !== 'FREE' && data.currentPeriodEnd);
+  const cancellable = Boolean(data && !store && data.plan !== 'FREE' && data.currentPeriodEnd);
   const paid = data?.plan !== 'FREE';
 
   return (
@@ -80,13 +95,32 @@ export function PlanSettings() {
                 Card & invoices
                 <ExternalLink className="size-3.5" aria-hidden="true" />
               </button>
+            ) : store?.url ? (
+              <a
+                href={store.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors hover:bg-primary-foreground/10"
+              >
+                Manage in {store.name}
+                <ExternalLink className="size-3.5" aria-hidden="true" />
+              </a>
             ) : null}
           </PlanPass>
         ) : (
           <Skeleton className="h-[11.5rem] rounded-2xl" />
         )}
 
-        {data?.status === 'PAST_DUE' ? (
+        {store && data ? (
+          <p className="rounded-xl bg-muted/50 p-3 pl-4 text-sm text-muted-foreground">
+            Billed through {store.name}, from the Garaj app.{' '}
+            {data.status === 'PAST_DUE'
+              ? `The last payment failed — update it in ${store.name} to keep ${PLAN_NAMES[data.plan]}.`
+              : data.cancelAtPeriodEnd && data.currentPeriodEnd
+                ? `Renewal is off: ${PLAN_NAMES[data.plan]} stays until ${formatDate(data.currentPeriodEnd)}, then Free.`
+                : `Change or cancel it in ${store.name}.`}
+          </p>
+        ) : data?.status === 'PAST_DUE' ? (
           <Notice
             tone="destructive"
             action={
@@ -144,7 +178,13 @@ export function PlanSettings() {
 
       <section aria-label="Plans" className="flex flex-col gap-3">
         <p className="text-label uppercase text-muted-foreground">Plans</p>
-        <PlanCompare current={data?.plan} onDowngrade={setMoving} />
+        {store ? (
+          <p className="text-sm text-muted-foreground">
+            Your plan changes in {store.name}, where you bought it.
+          </p>
+        ) : (
+          <PlanCompare current={data?.plan} onDowngrade={setMoving} />
+        )}
       </section>
 
       {cancellable && data && !data.cancelAtPeriodEnd ? (

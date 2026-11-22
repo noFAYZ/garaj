@@ -62,6 +62,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (
     pathname.startsWith('/sign-in') ||
     pathname.startsWith('/sign-up') ||
+    pathname.startsWith('/forgot-password') ||
+    pathname.startsWith('/reset-password') ||
     pathname.startsWith('/p/')
   ) {
     return <main className="min-h-dvh bg-background">{children}</main>;
@@ -69,10 +71,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-dvh bg-background">
-      
       <header className="header-scroll sticky top-0 z-20">
         {/* On a phone, open search takes the logo's and the navigation's place. */}
-        <div className="group/header mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:gap-3">
+        <div className="group/header mx-auto flex h-16 max-w-4xl items-center gap-2 px-4 sm:gap-3">
           <Link
             href="/"
             aria-label="Garaj home"
@@ -132,7 +133,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <motion.span
                       layoutId="main-nav-active"
                       className="absolute inset-0 -z-10 rounded-full bg-primary-soft"
-                      transition={{ type: 'spring', bounce: 0.18, duration: 0.32 }}
+                      transition={{ type: 'spring', bounce: 0, duration: 0.22 }}
                       aria-hidden="true"
                     />
                   ) : null}
@@ -164,7 +165,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Route changes cross-fade instead of cutting; the header above stays put. */}
       {/* The bottom padding keeps the last row clear of the GarajAI pill. */}
-      <main className="mx-auto max-w-5xl px-4 pb-24 pt-8">
+      <main className="mx-auto max-w-2xl px-4 pb-24 pt-8">
         <ViewTransition>{children}</ViewTransition>
       </main>
 

@@ -8,12 +8,12 @@
  * saved, leaves at once.
  */
 
-import { usePreventRemove, useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useRef } from 'react';
-import { Alert } from 'react-native';
+import { usePreventRemove } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { dialog } from './dialog';
 
 export function confirmDiscard(discard: () => void): void {
-  Alert.alert('Discard changes?', 'What you have entered here has not been saved.', [
+  dialog('Discard changes?', 'What you have entered here has not been saved.', [
     { text: 'Keep editing', style: 'cancel' },
     { text: 'Discard', style: 'destructive', onPress: discard },
   ]);
@@ -23,19 +23,28 @@ export function confirmDiscard(discard: () => void): void {
  * Holds the screen while `dirty`. Returns `release`, to call just before a save navigates away:
  * the navigation that follows a save happens before the form's state says it is saved, and would
  * otherwise be asked about.
+ *
+ * A refused navigation is carried on with the callback's `repeat`, which stops preventing in the
+ * same update: dispatching the refused action again by hand is refused again while the screen still
+ * prevents, and a released form then re-sent it forever — the screen stayed, and so did its close.
  */
 export function useDiscardGuard(dirty: boolean): () => void {
-  const navigation = useNavigation();
-  const released = useRef(false);
-  usePreventRemove(dirty, ({ data }) => {
-    const leave = () => navigation.dispatch(data.action);
-    // After the navigator has finished refusing this action, not from inside its handling of it.
-    if (released.current) queueMicrotask(leave);
-    else confirmDiscard(leave);
-  });
-  return useCallback(() => {
-    released.current = true;
+  const [released, setReleased] = useState(false);
+  const releasedNow = useRef(false);
+  const letGo = useCallback(() => {
+    releasedNow.current = true;
+    setReleased(true);
   }, []);
+  usePreventRemove(dirty && !released, ({ repeat }) => {
+    // After the navigator has finished refusing this action, not from inside its handling of it.
+    if (releasedNow.current) queueMicrotask(repeat);
+    else
+      confirmDiscard(() => {
+        letGo();
+        repeat();
+      });
+  });
+  return letGo;
 }
 
 /**

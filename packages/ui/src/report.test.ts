@@ -9,6 +9,7 @@ import {
   distanceInWindow,
   distancePerYear,
   efficiencyInWindow,
+  fitLabels,
   groupDetail,
   groupOf,
   monthlyPace,
@@ -154,6 +155,11 @@ describe('report', () => {
       ['KWH', 20, 1],
     ]);
     expect(fuel.units[0]!.pricePerUnitMinor).toBeCloseTo(183);
+    expect(fuel.units[0]!.prices.map((fill) => [fill.quantity, fill.amountMinor])).toEqual([
+      [50, 9_000],
+      [40, 7_600],
+      [10, 1_700],
+    ]);
     // "Shell" and "shell " are one place; Aral is cheaper per litre and so comes first.
     expect(fuel.units[0]!.places.map((place) => [place.vendor, place.fills])).toEqual([
       ['Aral', 1],
@@ -314,5 +320,18 @@ describe('report', () => {
         local,
       ),
     ).toBe(9_000);
+  });
+});
+
+describe('fitLabels', () => {
+  it('names every column that has room, and counts back from the latest when not', () => {
+    const centres = (count: number, step: number) =>
+      Array.from({ length: count }, (_, index) => index * step + step / 2);
+    expect(fitLabels(centres(4, 30), 20, 120).map((label) => label.index)).toEqual([3, 2, 1, 0]);
+    // Too tight for each: every other one, and the newest is always among them.
+    expect(fitLabels(centres(5, 15), 20, 75).map((label) => label.index)).toEqual([4, 2, 0]);
+    // Kept inside the span at both ends.
+    const ends = fitLabels([0, 100], 20, 100);
+    expect(ends.map((label) => label.left)).toEqual([80, 0]);
   });
 });

@@ -23,7 +23,8 @@ let registered: string | null = null;
 // Shown while the app is open too: the reminder is the point, and the bell alone is easy to miss.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: false,
     shouldSetBadge: false,
   }),
@@ -65,7 +66,19 @@ export async function registerForPush({ ask = false }: { ask?: boolean } = {}): 
     reportError(new Error('No EAS projectId in the app config: push is off for this build.'));
     return;
   }
-  const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+  let token: string;
+  try {
+    ({ data: token } = await Notifications.getExpoPushTokenAsync({ projectId }));
+  } catch (error) {
+    /*
+     * On Android the token comes through Firebase Cloud Messaging, so a build without its
+     * `google-services.json` (and the FCM key on EAS) fails here on every launch. Said to crash
+     * reporting for the same reason as a missing project id: it is the build's fault, and every
+     * reminder would otherwise silently never arrive.
+     */
+    reportError(error, { stage: 'push-token' });
+    throw error;
+  }
 
   if (token === registered) return;
   await api.notifications.registerDevice({

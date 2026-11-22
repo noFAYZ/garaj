@@ -41,6 +41,8 @@ export const notifications = pgTable(
   (table) => [
     unique('notifications_user_dedupe_unique').on(table.userId, table.dedupeKey),
     index('notifications_user_unread_idx').on(table.userId, table.readAt),
+    // The bell's list: one person's, newest first — the order it is read in, so no sort.
+    index('notifications_user_created_idx').on(table.userId, table.createdAt.desc()),
   ],
 );
 

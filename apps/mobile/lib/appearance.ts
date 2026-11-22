@@ -21,8 +21,8 @@ const listeners = new Set<() => void>();
 
 function apply(next: AppearanceChoice) {
   choice = next;
-  // `null` hands the decision back to the phone.
-  Appearance.setColorScheme(next === 'system' ? null : next);
+  // `unspecified` hands the decision back to the phone.
+  Appearance.setColorScheme(next === 'system' ? 'unspecified' : next);
   listeners.forEach((listener) => listener());
 }
 

@@ -20,8 +20,8 @@ import { api } from '@/lib/api';
 import { humanise } from '@/lib/format';
 import { Chip, ToneTile } from '@/lib/instrument';
 import { PressableScale, Rise, useScrollY } from '@/lib/motion';
-import { radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
-import { Button, CompactHeader, IconButton, LargeHeader } from '@/lib/ui';
+import { radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { Button, IconButton, LargeHeader } from '@/lib/ui';
 
 /** Past this many vehicles, finding one by name is quicker than scrolling for it. */
 const SEARCH_FROM = 5;
@@ -71,7 +71,7 @@ export default function VehiclesScreen() {
   const showGarage = garageList.length > 1 && !garage;
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <Animated.FlatList
         data={list}
         onScroll={onScroll}
@@ -250,7 +250,6 @@ export default function VehiclesScreen() {
           </Rise>
         )}
       />
-      <CompactHeader title="Vehicles" y={y} />
     </View>
   );
 }
@@ -277,7 +276,7 @@ const styles = StyleSheet.create({
   empty: {
     alignItems: 'center',
     gap: spacing.sm,
-    borderRadius: radius.xl,
+    ...leaf('md'),
     borderWidth: StyleSheet.hairlineWidth,
     padding: spacing.xl,
     paddingVertical: spacing.xxl,

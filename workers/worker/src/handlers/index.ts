@@ -36,7 +36,7 @@ import { maintenanceCompleted, scanDueMaintenance } from './maintenance';
 import { collectDocumentObjects, scanExpiringDocuments } from './documents';
 import { deliverNotificationJob } from './delivery';
 import { scanRecalls } from './recalls';
-import { deletePhotoObjects, processPhoto } from './images';
+import { deleteObjects, deletePhotoObjects, processPhoto } from './images';
 
 /*
  * Processed messages are history nobody reads after the admin console's last-day count; left
@@ -67,6 +67,7 @@ export const HANDLERS: Record<string, JobHandler> = {
   'deliver-recall': deliverNotificationJob,
   'process-photo': processPhoto,
   'delete-photo-objects': deletePhotoObjects,
+  'delete-objects': deleteObjects,
   'collect-document-objects': collectDocumentObjects,
   'prune-outbox': pruneOutbox,
 };

@@ -215,7 +215,7 @@ function ToastBody({
               initial={{ y: '110%' }}
               animate={{ y: 0 }}
               exit={{ y: '-110%' }}
-              transition={{ type: 'spring', bounce: 0.3, duration: 0.35 }}
+              transition={{ type: 'spring', bounce: 0.1, duration: 0.25 }}
             >
               {toast.count}
             </motion.span>
@@ -242,7 +242,7 @@ function Mark({ error }: { error: boolean }) {
       initial={error ? { x: 0 } : { scale: 0.5 }}
       animate={error ? { x: [0, -3, 3, -2, 2, 0] } : { scale: 1 }}
       transition={
-        error ? { duration: 0.4, delay: 0.12 } : { type: 'spring', bounce: 0.5, duration: 0.4 }
+        error ? { duration: 0.25, delay: 0.06 } : { type: 'spring', bounce: 0.2, duration: 0.28 }
       }
       className={cn(
         'grid size-7 shrink-0 place-items-center rounded-full',

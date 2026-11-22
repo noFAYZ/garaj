@@ -14,14 +14,40 @@ import fp from 'fastify-plugin';
 import { betterAuth } from 'better-auth';
 import { bearer } from 'better-auth/plugins';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { env } from '@vehicle-os/config';
+import type { FastifyBaseLogger } from 'fastify';
+import { env, isProduction } from '@vehicle-os/config';
 import { schema, type Database } from '@vehicle-os/database';
 import { newId } from '@vehicle-os/utils';
+import {
+  createResendEmail,
+  isDeliverableAddress,
+  type EmailMessage,
+} from '../modules/notifications/application/services/deliver';
 
 export type Auth = ReturnType<typeof createAuth>;
 
-export function createAuth(db: Database) {
+/**
+ * The account's own mail — a reset link, an address to confirm — through the same provider as
+ * reminders. Not awaited by the caller: how long a send takes must not tell anyone whether an
+ * address has an account. With no provider (a development machine) the link is logged instead,
+ * so a fresh clone can still reset a password and confirm an address.
+ */
+function sendAccountEmail(log: FastifyBaseLogger, message: EmailMessage, link: string): void {
   const config = env();
+  if (!config.RESEND_API_KEY || !isDeliverableAddress(message.to)) {
+    if (!isProduction(config))
+      log.info({ to: message.to, link }, `Not emailed: ${message.subject}`);
+    else log.warn({ subject: message.subject }, 'Account email skipped: no email provider');
+    return;
+  }
+  void createResendEmail(config.RESEND_API_KEY, config.EMAIL_FROM)
+    .send(message)
+    .catch((error: unknown) => log.error({ err: error }, 'Account email failed'));
+}
+
+export function createAuth(db: Database, log: FastifyBaseLogger) {
+  const config = env();
+  const web = config.WEB_URL.replace(/\/$/, '');
 
   return betterAuth({
     database: drizzleAdapter(db, {
@@ -43,9 +69,64 @@ export function createAuth(db: Database) {
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 12,
-      // Left off for local development so a fresh clone can sign up without an SMTP
-      // server. Turn on together with the email sender in Phase 3.
+      /*
+       * Signing in does not wait on the inbox: someone logging a fill-up at the pump should not
+       * be stopped by an unopened email. What an unconfirmed address cannot do is be added to
+       * someone's garage (`addMember`) — that is where an address claimed by the wrong person
+       * would do harm.
+       */
       requireEmailVerification: false,
+      /*
+       * The link opens the web app's reset page with the token, wherever the request came from —
+       * the phone has no page of its own to set a password on, and Better Auth's redirect only
+       * goes to a trusted origin anyway. A reset ends every other session: whoever knew the old
+       * password is signed out with it.
+       */
+      sendResetPassword: async ({ user, token }) => {
+        const link = `${web}/reset-password?token=${encodeURIComponent(token)}`;
+        sendAccountEmail(
+          log,
+          {
+            to: user.email,
+            subject: 'Reset your Garaj password',
+            text: [
+              'Someone asked to reset the password for this Garaj account.',
+              '',
+              'Choose a new one here (the link works for an hour):',
+              link,
+              '',
+              "If it wasn't you, ignore this email — your password stays as it is.",
+            ].join('\n'),
+          },
+          link,
+        );
+      },
+      resetPasswordTokenExpiresIn: 60 * 60,
+      revokeSessionsOnPasswordReset: true,
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: true,
+      expiresIn: 60 * 60 * 24,
+      // The API checks the token, then sends the person on to the web app's home.
+      sendVerificationEmail: async ({ user, token }) => {
+        const back = encodeURIComponent(`${web}/?verified=1`);
+        const link = `${config.AUTH_URL.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}&callbackURL=${back}`;
+        sendAccountEmail(
+          log,
+          {
+            to: user.email,
+            subject: 'Confirm your email for Garaj',
+            text: [
+              'Confirm this address for your Garaj account:',
+              link,
+              '',
+              'Until it is confirmed, nobody can add you to their garage. The link works for a day.',
+            ].join('\n'),
+          },
+          link,
+        );
+      },
     },
     session: {
       expiresIn: 60 * 60 * 24 * 30,
@@ -94,7 +175,7 @@ declare module 'fastify' {
 
 export default fp(
   async (fastify) => {
-    const auth = createAuth(fastify.db);
+    const auth = createAuth(fastify.db, fastify.log);
     fastify.decorate('auth', auth);
 
     /*

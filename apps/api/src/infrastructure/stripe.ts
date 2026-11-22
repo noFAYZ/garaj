@@ -113,10 +113,12 @@ export function planForPrice(priceId: string | null | undefined): PlanTier | nul
 /**
  * The provider's status vocabulary, in ours.
  *
- * `unpaid` maps to `PAST_DUE` rather than `CANCELED`: the provider has stopped retrying but
- * has not ended the subscription, and the person still has an account they can fix. Anything
- * unrecognised reads as `INCOMPLETE`, which grants nothing — the safe direction to be wrong in
- * when a provider adds a status we have never seen.
+ * `past_due` keeps the plan: the provider is still retrying the card, and a failed card is usually
+ * a card, not a decision. `unpaid` does not: the provider has stopped retrying, so nothing is
+ * being collected, and keeping the plan would make an unpaid one free for ever. It reads as
+ * `INCOMPLETE` — the account is still there to pay from — and paying moves it back to `active`.
+ * Anything unrecognised reads as `INCOMPLETE` too, which grants nothing — the safe direction to
+ * be wrong in when a provider adds a status we have never seen.
  */
 export function toSubscriptionStatus(status: string): SubscriptionStatusName {
   switch (status) {
@@ -125,7 +127,6 @@ export function toSubscriptionStatus(status: string): SubscriptionStatusName {
     case 'trialing':
       return 'TRIALING';
     case 'past_due':
-    case 'unpaid':
       return 'PAST_DUE';
     case 'canceled':
       return 'CANCELED';

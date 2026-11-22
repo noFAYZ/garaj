@@ -84,7 +84,7 @@ export function VehicleCard({
       href={`/vehicles/${vehicle.id}`}
       // Lifts toward the pointer and gives under a press. Tailwind v4 only applies `hover:` on
       // devices that can hover, so a tap on a phone never leaves a card stuck raised.
-      className="group flex h-full flex-col gap-3 rounded-2xl bg-card/50 p-2 pb-2.5 transition-[background-color,translate,scale,box-shadow] duration-300 ease-out hover:-translate-y-1 hover:bg-card hover:shadow-float active:scale-[0.99]"
+      className="group flex h-full flex-col gap-3 rounded-2xl border border-border/50 bg-card p-2 pb-2.5 transition-[border-color,scale] duration-50 ease-out hover:border-border active:scale-[0.99]"
     >
       <div className="relative aspect-[16/10] overflow-hidden rounded-xl bg-muted">
         {photo ? (
@@ -102,7 +102,7 @@ export function VehicleCard({
                 src={photo.thumbnailUrl!}
                 alt=""
                 loading="lazy"
-                className="absolute inset-0 m-auto max-h-[86%] max-w-[90%] object-contain transition-transform duration-500 ease-out group-hover:-translate-y-0.5 group-hover:scale-[1.03]"
+                className="absolute inset-0 m-auto max-h-[86%] max-w-[90%] object-contain"
               />
             </>
           ) : (
@@ -110,12 +110,12 @@ export function VehicleCard({
               src={photo.thumbnailUrl!}
               alt=""
               loading="lazy"
-              className="size-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.04]"
+              className="size-full object-cover"
             />
           )
         ) : vehicle.make ? (
           <span className="grid size-full place-items-center">
-            <span className="size-14 overflow-hidden rounded-2xl bg-card shadow-float transition-transform duration-500 ease-out group-hover:scale-105">
+            <span className="size-14 overflow-hidden rounded-2xl bg-card shadow-float">
               <BrandLogo
                 make={vehicle.make}
                 size={56}
@@ -170,7 +170,7 @@ export function VehicleCard({
         {/* Says the whole card is the way in; turns toward where it goes under the pointer. */}
         <span
           aria-hidden="true"
-          className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground transition-[background-color,color,rotate] duration-300 group-hover:-rotate-45 group-hover:bg-primary group-hover:text-primary-foreground"
+          className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground transition-[background-color,color,rotate] duration-200 group-hover:-rotate-45 group-hover:bg-primary group-hover:text-primary-foreground"
         >
           <ArrowRight className="size-3.5" />
         </span>

@@ -815,6 +815,8 @@ export default function LandingPage() {
                   [
                     { href: SIGN_UP, label: 'Start free' },
                     { href: SIGN_IN, label: 'Sign in' },
+                    { href: '/privacy', label: 'Privacy' },
+                    { href: '/delete-account', label: 'Delete account' },
                   ],
                 ],
               ] as const

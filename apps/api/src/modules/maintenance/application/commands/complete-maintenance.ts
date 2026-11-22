@@ -9,6 +9,7 @@
  */
 
 import { eq } from 'drizzle-orm';
+import type { PartLine } from '@vehicle-os/contracts';
 import type { Database } from '@vehicle-os/database';
 import {
   assertCurrency,
@@ -20,6 +21,8 @@ import { NotFoundError, ValidationError } from '../../../../infrastructure/error
 import { idConflict } from '../../../../infrastructure/idempotency';
 import { enqueue } from '../../../../infrastructure/outbox';
 import { insertEvent } from '../../../events/infrastructure/repositories/event-repository';
+import { resolvePartLines } from '../../../parts/domain/part-lines';
+import { insertParts } from '../../../parts/infrastructure/repositories/part-repository';
 import {
   findVehicleById,
   raiseEngineHours,
@@ -49,6 +52,8 @@ export interface CompleteInput {
   readonly partsCostAmountMinor?: number;
   readonly laborCostAmountMinor?: number;
   readonly costCurrency?: string;
+  /** What went in — the oil, the filter — written with the service's entry. */
+  readonly parts?: readonly PartLine[];
 }
 
 export interface CompletionResult {
@@ -101,6 +106,19 @@ export async function completeMaintenance(
   const title = input.title?.trim() || plan?.title;
   if (!title) fields.title = 'An unscheduled repair needs a title.';
 
+  const parts = resolvePartLines(
+    input.parts,
+    {
+      vehicleId,
+      vehicleType: vehicle.vehicleType,
+      odometerUnit: vehicle.odometerUnit,
+      createdBy: actor.userId,
+      onEntry: true,
+      now,
+    },
+    fields,
+  );
+
   if (Object.keys(fields).length > 0) throw new ValidationError('Invalid request', fields);
 
   // Summed here rather than in the database so the total is a stored fact, not a view that
@@ -145,6 +163,7 @@ export async function completeMaintenance(
       source: 'USER',
       createdBy: actor.userId,
     });
+    await insertParts(tx, parts, event.id);
 
     const record = await insertRecord(tx, {
       ...(input.id ? { id: input.id } : {}),

@@ -99,3 +99,19 @@ export function compactMoney(amountMinor: number, currency: string): string {
         : String(Math.round(major));
   return `${symbol}${figure}`;
 }
+
+/** `07` — two digits, the way the instruments print a count. */
+export const pad = (value: number) => String(value).padStart(2, '0');
+
+/** "3 Mar" — a day this year, in the phone's own order. */
+export const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+/** "1 vehicle", "3 vehicles" — for nouns that take an s. */
+export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
+/** "240 KB", "1.4 MB". From a thousand KB it is a megabyte: "1008 KB" reads worse than "1.0 MB". */
+export function fileSize(bytes: number): string {
+  if (bytes < 1000 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}

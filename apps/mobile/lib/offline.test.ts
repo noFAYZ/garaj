@@ -97,6 +97,13 @@ const keptFilesEntries = async () => {
 
 const apiError = (status: number) => new ApiError(status, 'CODE', 'message', 'req');
 
+/** A queued note, as a form would queue it: what the event contract needs and a title. */
+const note = (title: string) => ({
+  eventType: 'NOTE' as const,
+  title,
+  occurredAt: '2026-11-18T09:00:00.000Z',
+});
+
 beforeEach(async () => {
   store.clear();
   createEvent.mockReset();
@@ -107,15 +114,15 @@ beforeEach(async () => {
 
 describe('enqueue', () => {
   it('keeps entries and counts them', async () => {
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Two' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Two') });
 
     expect(await pendingCount()).toBe(2);
   });
 
   /** The entry has to survive the process dying between the pump and the next launch. */
   it('writes through to storage rather than holding entries in memory', async () => {
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
 
     expect(store.get('vehicleos.pending-writes')).toContain('One');
   });
@@ -124,8 +131,8 @@ describe('enqueue', () => {
 describe('flush', () => {
   it('sends everything and empties the queue when the network is there', async () => {
     createEvent.mockResolvedValue({});
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Two' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Two') });
 
     const result = await flush();
 
@@ -139,8 +146,8 @@ describe('flush', () => {
    */
   it('sends in the order they were recorded', async () => {
     createEvent.mockResolvedValue({});
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'First' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Second' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('First') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Second') });
 
     await flush();
 
@@ -153,8 +160,8 @@ describe('flush', () => {
   /** No signal: nothing is lost, and nothing is sent out of order on the next attempt. */
   it('keeps everything when the very first send fails on the network', async () => {
     createEvent.mockRejectedValue(new Error('Network request failed'));
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Two' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Two') });
 
     const result = await flush();
 
@@ -166,9 +173,9 @@ describe('flush', () => {
     createEvent
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error('Network request failed'));
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Two' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Three' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Two') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Three') });
 
     const result = await flush();
 
@@ -183,8 +190,8 @@ describe('flush', () => {
    */
   it('sets aside an entry the server rejected, with the reason, and sends the rest', async () => {
     createEvent.mockRejectedValueOnce(apiError(400)).mockResolvedValueOnce({});
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Bad' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Good' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Bad') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Good') });
 
     const result = await flush();
 
@@ -199,7 +206,7 @@ describe('flush', () => {
 
   it('lets a failed entry be discarded', async () => {
     createEvent.mockRejectedValueOnce(apiError(422));
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Bad' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Bad') });
     await flush();
 
     const failed = JSON.parse(store.get('vehicleos.pending-writes')!) as { id: string }[];
@@ -211,7 +218,7 @@ describe('flush', () => {
   /** Overlapping runs would each send the head of the queue, and the server would record it twice. */
   it('shares one run between overlapping calls', async () => {
     createEvent.mockResolvedValue({});
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Once' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Once') });
 
     await Promise.all([flush(), flush(), flush()]);
 
@@ -221,15 +228,24 @@ describe('flush', () => {
   /** An expired session is not a verdict on the entry either: it waits for sign-in. */
   it('keeps an entry refused only because the session expired', async () => {
     createEvent.mockRejectedValue(apiError(401));
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
 
     expect(await flush()).toEqual({ sent: 0, failed: 0, remaining: 1 });
   });
 
   /** A 500 is the server having a bad minute, not a verdict on the entry. */
+  /** Too many requests, or a request the server gave up on: a pause, not a verdict. */
+  it.each([429, 408])('keeps an entry the server answered %i, unmarked', async (status) => {
+    createEvent.mockRejectedValue(apiError(status));
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
+
+    expect(await flush()).toEqual({ sent: 0, failed: 0, remaining: 1 });
+    expect(await pendingCount()).toBe(1);
+  });
+
   it('keeps an entry the server failed to process', async () => {
     createEvent.mockRejectedValue(apiError(500));
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
 
     expect(await flush()).toEqual({ sent: 0, failed: 0, remaining: 1 });
   });
@@ -242,16 +258,23 @@ describe('flush', () => {
   it('routes each kind of entry to its own endpoint', async () => {
     createEvent.mockResolvedValue({});
     updateTask.mockResolvedValue({});
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
     logMaintenance.mockResolvedValue({});
     await enqueue({ kind: 'task-status', taskId: 't1', status: 'COMPLETED' });
-    await enqueue({ kind: 'maintenance-log', vehicleId: 'v1', body: { title: 'Service' } });
+    await enqueue({
+      kind: 'maintenance-log',
+      vehicleId: 'v1',
+      body: { title: 'Service', performedAt: '2026-11-18T09:00:00.000Z' },
+    });
 
     await flush();
 
-    expect(createEvent).toHaveBeenCalledWith('v1', { title: 'One' });
+    expect(createEvent).toHaveBeenCalledWith('v1', note('One'));
     expect(updateTask).toHaveBeenCalledWith('t1', { status: 'COMPLETED' });
-    expect(logMaintenance).toHaveBeenCalledWith('v1', { title: 'Service' });
+    expect(logMaintenance).toHaveBeenCalledWith('v1', {
+      title: 'Service',
+      performedAt: '2026-11-18T09:00:00.000Z',
+    });
   });
 
   /*
@@ -268,7 +291,7 @@ describe('flush', () => {
       name: 'scan.jpg',
       mimeType: 'image/jpeg',
       size: 1024,
-      body: { documentType: 'REGISTRATION' },
+      body: { documentType: 'REGISTRATION', title: 'Registration' },
     });
 
     expect(kept.size).toBe(1);
@@ -332,7 +355,10 @@ describe('flush', () => {
     uploads.length = 0;
     createVehicle.mockResolvedValue({});
 
-    await enqueue({ kind: 'vehicle-create', body: { id: 'veh-1', garageId: 'g1' } });
+    await enqueue({
+      kind: 'vehicle-create',
+      body: { id: 'veh-1', garageId: 'g1', vehicleType: 'CAR' },
+    });
     await enqueueUpload({
       kind: 'upload',
       target: 'photo',
@@ -347,7 +373,7 @@ describe('flush', () => {
     await flush();
 
     // The vehicle first: its photo names an id the server has to have seen already.
-    expect(createVehicle).toHaveBeenCalledWith({ id: 'veh-1', garageId: 'g1' });
+    expect(createVehicle).toHaveBeenCalledWith({ id: 'veh-1', garageId: 'g1', vehicleType: 'CAR' });
     expect(uploads).toEqual([{ target: 'photo', vehicleId: 'veh-1' }]);
   });
 
@@ -361,8 +387,8 @@ describe('flush', () => {
     createEvent.mockRejectedValueOnce(new Error('Upload failed with status 403'));
     createEvent.mockRejectedValueOnce(new Error('Upload failed with status 403'));
     createEvent.mockResolvedValue({});
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Stuck' } });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Behind it' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Stuck') });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Behind it') });
 
     // Two runs keep it, in order: it might yet go.
     expect(await flush()).toEqual({ sent: 0, failed: 0, remaining: 2 });
@@ -383,7 +409,7 @@ describe('flush', () => {
       size: 10,
       body: {},
     });
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'After' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('After') });
     // The OS, or an old app's path, lost the copy.
     kept.clear();
     createEvent.mockResolvedValue({});
@@ -402,10 +428,10 @@ describe('flush', () => {
     const heard: (ReadonlySet<string> | null)[] = [];
     const stop = onSynced((vehicles) => heard.push(vehicles));
 
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'One' } });
-    await enqueue({ kind: 'event', vehicleId: 'v2', body: { title: 'Two' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('One') });
+    await enqueue({ kind: 'event', vehicleId: 'v2', body: note('Two') });
     await flush();
-    await enqueue({ kind: 'event', vehicleId: 'v1', body: { title: 'Three' } });
+    await enqueue({ kind: 'event', vehicleId: 'v1', body: note('Three') });
     await enqueue({ kind: 'task-status', taskId: 't1', status: 'COMPLETED' });
     await flush();
     // Nothing sent, nothing heard.

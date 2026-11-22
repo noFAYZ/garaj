@@ -8,7 +8,7 @@ export default function NotFoundScreen() {
   const theme = useTheme();
   const router = useRouter();
   return (
-    <View style={[styles.page, { backgroundColor: theme.background }]}>
+    <View style={[styles.page, { backgroundColor: 'transparent' }]}>
       <Stack.Screen options={{ title: 'Not found' }} />
       <Text style={[typeScale.title, { color: theme.foreground, textAlign: 'center' }]}>
         That page isn’t here

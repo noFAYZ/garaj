@@ -7,6 +7,7 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
 import {
   ACCOUNT_KINDS,
+  BILLING_PROVIDERS,
   CONDITION_CATEGORIES,
   COST_REPORTING_MODES,
   DOCUMENT_TYPES,
@@ -54,3 +55,4 @@ export const costReportingModeEnum = pgEnum('cost_reporting_mode', COST_REPORTIN
 export const accountKindEnum = pgEnum('account_kind', ACCOUNT_KINDS);
 export const planTierEnum = pgEnum('plan_tier', PLAN_TIERS);
 export const subscriptionStatusEnum = pgEnum('subscription_status', SUBSCRIPTION_STATUSES);
+export const billingProviderEnum = pgEnum('billing_provider', BILLING_PROVIDERS);

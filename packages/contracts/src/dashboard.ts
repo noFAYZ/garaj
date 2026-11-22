@@ -35,6 +35,12 @@ export const Dashboard = Type.Object({
     worstVehicle: Nullable(
       Type.Object({ vehicleId: Uuid, vehicleName: Type.String(), health: Type.Integer() }),
     ),
+    /**
+     * Running spend (purchases left out) this calendar month and last, UTC, across every vehicle.
+     * Null when nothing was spent, or when it was spent in more than one currency.
+     */
+    spentThisMonth: Nullable(MoneyOutput),
+    spentLastMonth: Nullable(MoneyOutput),
   }),
 
   /**
