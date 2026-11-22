@@ -66,7 +66,8 @@ gc run jobs execute garaj-migrate --region "$REGION" --wait
 
 echo "== API"
 gc run deploy garaj-api "${common[@]}" --port 3001 --allow-unauthenticated \
-  --cpu 1 --memory 512Mi --min-instances 0 --max-instances 4
+  --cpu 1 --memory 512Mi --min-instances 0 --max-instances 4 \
+  --command node --args=--import,tsx,src/server.ts # the API alone; the worker is its own job
 
 echo "== Worker (a job, every 5 minutes)"
 gc run jobs deploy garaj-worker "${common[@]}" --max-retries 0 --task-timeout 5m \

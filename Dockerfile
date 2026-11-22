@@ -11,4 +11,6 @@ USER node
 WORKDIR /app/apps/api
 # ponytail: runs TypeScript through tsx, as dev does (workspace packages ship as source).
 # Bundle with esbuild if cold starts ever matter.
-CMD ["node", "--import", "tsx", "src/server.ts"]
+# By default the worker runs inside the API's process (the second --import), as Render's free
+# plan needs; Cloud Run overrides this to run them apart.
+CMD ["node", "--import", "tsx", "--import", "/app/workers/worker/src/index.ts", "src/server.ts"]
