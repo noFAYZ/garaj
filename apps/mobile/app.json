@@ -73,6 +73,7 @@
     },
     "icon": "./assets/icon.png",
     "extra": {
+      "apiUrl": "https://garaj-api-p3k1.onrender.com",
       "sentryDsn": "https://4b8ed523a0b6e4c0c999663d83f0f5ee@o4512457247031296.ingest.us.sentry.io/4512457259155456",
       "revenuecat": {
         "android": "",

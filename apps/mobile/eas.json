@@ -8,8 +8,7 @@
       "node": "22.20.0",
       "pnpm": "11.12.0",
       "env": {
-        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
-        "API_URL": "https://garaj-api-p3k1.onrender.com"
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     },
     "preview": {
@@ -26,9 +25,6 @@
       "extends": "preview",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "API_URL": "https://drops-costs-vanilla-completing.trycloudflare.com"
       }
     }
   },
