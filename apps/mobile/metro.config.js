@@ -76,7 +76,11 @@ function dressText(context, resolution) {
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'react' || moduleName.startsWith('react/')) {
-    return context.resolveRequest({ ...context, originModulePath: reactRoot }, moduleName, platform);
+    return context.resolveRequest(
+      { ...context, originModulePath: reactRoot },
+      moduleName,
+      platform,
+    );
   }
   /*
    * TypeBox through its CommonJS build. Its ESM build declares `export var Object`, and the

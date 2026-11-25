@@ -37,7 +37,12 @@ describe('monthSpend', () => {
   });
 });
 
-const reading = (id: string, day: string, odometer: number | null, amountMinor: number | null = null) => ({
+const reading = (
+  id: string,
+  day: string,
+  odometer: number | null,
+  amountMinor: number | null = null,
+) => ({
   id,
   occurredAt: `2026-${day}T10:00:00`,
   cost: amountMinor === null ? null : usd(amountMinor),
@@ -46,7 +51,11 @@ const reading = (id: string, day: string, odometer: number | null, amountMinor: 
 });
 
 describe('sincePrevious', () => {
-  const fills = [reading('c', '10-12', 92_310), reading('b', '09-30', 91_470), reading('a', '09-01', null)];
+  const fills = [
+    reading('c', '10-12', 92_310),
+    reading('b', '09-30', 91_470),
+    reading('a', '09-01', null),
+  ];
 
   it('finds the entry of the kind before, the days and the distance between', () => {
     const since = sincePrevious(fills[0]!, fills);
@@ -84,13 +93,18 @@ describe('economy and unitPrice', () => {
 
 describe('spendWindow', () => {
   const fills = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) =>
-    reading(`f${n}`, `10-${String(n).padStart(2, "0")}`, null, n * 1000),
+    reading(`f${n}`, `10-${String(n).padStart(2, '0')}`, null, n * 1000),
   );
 
   it('keeps the entry near the middle, oldest first, with the median as typical', () => {
     const window = spendWindow(fills[1]!, fills, 4)!;
     expect(window.bars.map((bar) => bar.id)).toEqual(['f1', 'f2', 'f3', 'f4']);
-    expect(spendWindow(fills[9]!, fills, 4)!.bars.map((bar) => bar.id)).toEqual(['f7', 'f8', 'f9', 'f10']);
+    expect(spendWindow(fills[9]!, fills, 4)!.bars.map((bar) => bar.id)).toEqual([
+      'f7',
+      'f8',
+      'f9',
+      'f10',
+    ]);
     expect(window.typical).toBe(5500);
     expect(window.max).toBe(5500);
   });

@@ -206,7 +206,8 @@ html[data-theme='light']:not([data-glass]) {
 }
 
 /* Unlayered, so these outrank the background utilities they replace. */
-html[data-theme='light']:not([data-glass]) :is(.bg-card\/50, .bg-card\/60, .hover\:bg-card\/50:hover) {
+html[data-theme='light']:not([data-glass])
+  :is(.bg-card\/50, .bg-card\/60, .hover\:bg-card\/50:hover) {
   background-color: var(--color-card-rest);
 }
 html[data-theme='light']:not([data-glass]) :is(.bg-card\/50, .bg-card\/60).hover\:bg-card:hover {
