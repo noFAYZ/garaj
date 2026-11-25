@@ -5,8 +5,23 @@
 import fp from 'fastify-plugin';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import rateLimit from '@fastify/rate-limit';
+import rateLimit, { type errorResponseBuilderContext } from '@fastify/rate-limit';
+import type { FastifyRequest } from 'fastify';
 import { env, isProduction } from '@vehicle-os/config';
+
+/*
+ * The plugin throws what this returns, so it is an error for the error handler, not a body. It
+ * returned the body itself, with no status: the handler read that as a crash, and someone over
+ * the limit got a 500 "unexpected error" instead of a 429 with its Retry-After.
+ */
+export const rateLimitResponse = (
+  _request: FastifyRequest,
+  context: errorResponseBuilderContext,
+) => ({
+  statusCode: context.statusCode,
+  code: 'RATE_LIMITED',
+  message: `Too many requests. Retry in ${context.after}.`,
+});
 
 export default fp(
   async (fastify) => {
@@ -49,13 +64,7 @@ export default fp(
       // Falls back to the socket address when there is no actor: an unauthenticated flood
       // is precisely the case the limit exists for.
       keyGenerator: (request) => request.actor?.userId ?? request.ip,
-      errorResponseBuilder: (request, context) => ({
-        error: {
-          code: 'RATE_LIMITED',
-          message: `Too many requests. Retry in ${context.after}.`,
-          requestId: request.id,
-        },
-      }),
+      errorResponseBuilder: rateLimitResponse,
     });
   },
   { name: 'security', dependencies: ['redis'] },
