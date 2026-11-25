@@ -23,7 +23,6 @@ import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Ground } from '@/lib/ui';
 import { dialog, FAILED } from '@/lib/dialog';
-import { markWelcomeSeen, useWelcomeSeen } from '@/lib/onboarding';
 import { Welcome } from '@/components/welcome';
 
 /**
@@ -38,8 +37,9 @@ export default function SignInScreen() {
   const queryClient = useQueryClient();
   // Sent here by the server ending the session, rather than by signing out: say so.
   const { ended } = useSession();
-  // A new install meets the welcome first; it hands over to the form in the mode it was left in.
-  const welcomed = useWelcomeSeen();
+  // Signed out, the welcome comes first every time; it hands over to the form in the mode it was
+  // left in. An expired session skips it, so the form can say why they are back.
+  const [welcomed, setWelcomed] = useState(ended === 'expired');
 
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [name, setName] = useState('');
@@ -82,7 +82,7 @@ export default function SignInScreen() {
         onFinish={(next) => {
           setMode(next);
           setError(null);
-          markWelcomeSeen();
+          setWelcomed(true);
         }}
       />
     );

@@ -72,6 +72,12 @@ const ICONS = {
   analyticsActive: 'pie-chart-2-bold',
   papers: 'folder-with-files-linear',
   papersActive: 'folder-with-files-bold',
+  // The vehicle's parts & fluids, the fifth place on the phone's dock.
+  parts: 'wheel-linear',
+  partsActive: 'wheel-bold',
+  // What is due, on the phone's dock: a calendar, outlined and solid.
+  due: 'calendar-linear',
+  dueActive: 'calendar-bold',
   task: 'checklist-minimalistic-bold-duotone',
   document: 'document-text-bold-duotone',
   // The papers a vehicle is expected to have (Documents' key grid).

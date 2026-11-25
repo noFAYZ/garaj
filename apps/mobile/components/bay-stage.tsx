@@ -112,7 +112,7 @@ export function BayStage({
       ]}
     >
       {make ? (
-        <BrandLogo make={make} size={Math.round(tile * 0.6)} />
+        <BrandLogo make={make} size={tile} />
       ) : (
         <Ionicons
           name={vehicleIcon(vehicleType)}

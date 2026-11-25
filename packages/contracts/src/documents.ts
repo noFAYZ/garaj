@@ -22,6 +22,8 @@ export const VehicleDocument = Type.Object({
   id: Uuid,
   vehicleId: Uuid,
   eventId: Nullable(Uuid),
+  /** The part line it is the paper for: a receipt, a warranty card, a photo of the box. */
+  partId: Nullable(Uuid),
 
   documentType: DocumentTypeSchema,
   title: Type.String(),
@@ -87,6 +89,7 @@ export const FinalizeDocumentUpload = Type.Object(
     expiresOn: Type.Optional(IsoDate),
     notes: Type.Optional(Type.String({ maxLength: 2000 })),
     eventId: Type.Optional(Uuid),
+    partId: Type.Optional(Uuid),
   },
   { additionalProperties: false },
 );

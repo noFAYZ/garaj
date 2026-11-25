@@ -92,6 +92,7 @@ export interface FinalizeDocumentInput {
   readonly expiresOn?: string;
   readonly notes?: string;
   readonly eventId?: string;
+  readonly partId?: string;
 }
 
 export async function finalizeDocumentUpload(
@@ -140,6 +141,21 @@ export async function finalizeDocumentUpload(
     }
   }
 
+  if (input.partId) {
+    const [part] = await db
+      .select({ id: schema.vehicleParts.id })
+      .from(schema.vehicleParts)
+      .where(
+        and(eq(schema.vehicleParts.id, input.partId), eq(schema.vehicleParts.vehicleId, vehicleId)),
+      )
+      .limit(1);
+    if (!part) {
+      throw new ValidationError('Invalid request', {
+        partId: 'That part does not belong to this vehicle.',
+      });
+    }
+  }
+
   await db.transaction(async (tx) => {
     await updateDocument(tx, documentId, {
       documentType: input.documentType,
@@ -152,6 +168,7 @@ export async function finalizeDocumentUpload(
       expiresOn: input.expiresOn ?? null,
       notes: input.notes?.trim() || null,
       eventId: input.eventId ?? null,
+      partId: input.partId ?? null,
       uploadedAt: new Date(),
     });
 

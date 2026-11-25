@@ -46,7 +46,7 @@ const TILE_RADIUS = RING / 2;
 const COLUMN_GAP = 6;
 const LINE = 1.5;
 /** The mark's top inside its row, and so where its middle falls: the air between entries. */
-const RING_TOP = 8;
+const RING_TOP = 11;
 const RING_MID = RING_TOP + RING / 2;
 /** Rows reach past the page's gutter by this much, so a pressed row's wash has room round it. */
 const BLEED = spacing.sm;
@@ -238,7 +238,7 @@ export function LedgerRow({
   nextAt?: string;
   meta: readonly (string | null | false | undefined)[];
   cost: Money | null;
-  /** Said in the cost's place when there is none: a trip's distance. */
+  /** Said in the cost's place when there is none: a trip's distance, an odometer reading. */
   aside?: string | null;
   /** Under the cost, quieter: what went in. */
   trail?: readonly (string | null | false | undefined)[];
@@ -359,9 +359,7 @@ export function LedgerRow({
                     ) : null}
                   </View>
                 ) : aside ? (
-                  <Text
-                    style={[figure, styles.cost, styles.aside, { color: theme.mutedForeground }]}
-                  >
+                  <Text style={[figure, styles.cost, styles.aside, { color: theme.foreground }]}>
                     {aside}
                   </Text>
                 ) : null}
@@ -656,6 +654,40 @@ const QUANTITY = /^\s*(\d[\d.,]*\s?(?:l|kwh|gal))\b[\s,;·—-]*/i;
  * A fill's quantity from the front of its note — where the quick entry puts it — and what is left
  * of the note: the web's `fillQuantity`, so "40 L" stands as a fact on both.
  */
+/**
+ * A row's figures as small chips under it, washed in its kind's colour — a fill's litres, what one
+ * cost and how far it went. Only the figures there are.
+ */
+export function FactChips({
+  eventType,
+  facts,
+}: {
+  eventType: EventType;
+  facts: readonly { icon: ComponentProps<typeof Ionicons>['name']; text: string }[];
+}) {
+  const theme = useTheme();
+  const hue = HUE[eventType];
+  const tint = hue ? theme[hue] : null;
+  return (
+    <View style={styles.factChips}>
+      {facts.map((fact) => (
+        <View
+          key={fact.icon}
+          style={[styles.factChip, { backgroundColor: tint ? `${tint}1A` : theme.muted }]}
+        >
+          <Ionicons name={fact.icon} size={11} color={tint ?? theme.mutedForeground} />
+          <Text
+            numberOfLines={1}
+            style={[figure, styles.factChipText, { color: theme.foreground }]}
+          >
+            {fact.text}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function fillQuantity(eventType: EventType, note: string | null) {
   const match = eventType === 'FUEL' || eventType === 'CHARGE' ? QUANTITY.exec(note ?? '') : null;
   return match
@@ -752,18 +784,35 @@ const styles = StyleSheet.create({
   },
   thumbCountText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '700' },
   note: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '400' },
-  badge: {
+  factChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  factChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    height: 16,
-    paddingHorizontal: 5,
-    borderRadius: 5,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    maxWidth: '100%',
+  },
+  factChipText: {
+    flexShrink: 1,
+    fontSize: 10.5,
+    lineHeight: 14,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    height: 14,
+    paddingHorizontal: 4,
+    borderRadius: 4,
     borderWidth: StyleSheet.hairlineWidth,
     flexShrink: 0,
   },
-  badgeDot: { width: 5, height: 5, borderRadius: 2.5 },
-  badgeText: { fontSize: 8.5, lineHeight: 11, fontWeight: '700', letterSpacing: 0.6 },
+  badgeDot: { width: 4, height: 4, borderRadius: 2 },
+  badgeText: { fontSize: 7.5, lineHeight: 10, fontWeight: '700', letterSpacing: 0.4 },
   aside: { fontWeight: '600' },
   // The two lines (19 + 2 + 16) centred on the tile's middle: RING_MID − 37 ÷ 2.
   body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 18.5 },

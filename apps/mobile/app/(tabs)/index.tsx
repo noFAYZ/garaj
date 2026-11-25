@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, type Href } from 'expo-router';
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import {
   Animated,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -52,7 +53,7 @@ import {
   pad,
   TWELVE_HOUR,
 } from '@/lib/format';
-import { SectionHeading } from '@/lib/instrument';
+import { Icon, SectionHeading } from '@/lib/instrument';
 import {
   ease,
   Gauge,
@@ -64,7 +65,7 @@ import {
   useReduceMotion,
   useScrollY,
 } from '@/lib/motion';
-import { figure, lift, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { figure, lift, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty, Face, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -236,7 +237,14 @@ export default function GarageScreen() {
               <GarageDash data={data} vehicles={vehicleList} flags={flags} items={items} />
             </Rise>
 
-            <Rise index={2}>
+            {/* An entry needs a vehicle to be about, so the shortcuts wait for the first one. */}
+            {parked ? (
+              <Rise index={2}>
+                <QuickActions />
+              </Rise>
+            ) : null}
+
+            <Rise index={3}>
               {vehicles.isPending ? (
                 <ShowroomSkeleton />
               ) : parked ? (
@@ -250,7 +258,7 @@ export default function GarageScreen() {
              * The garages, as a rail rather than a line of text — and the way to add one sits at
              * the end of the row it will join.
              */}
-            <Rise index={3} style={styles.section}>
+            <Rise index={4} style={styles.section}>
               <SectionHeading
                 title="Garages"
                 count={garages.isPending ? undefined : garageList.length}
@@ -284,13 +292,86 @@ export default function GarageScreen() {
             </Rise>
 
             {data && data.recentActivity.length > 0 ? (
-              <Rise index={4} style={styles.section}>
+              <Rise index={5} style={styles.section}>
                 <RecentActivity data={data} />
               </Rise>
             ) : null}
           </>
         )}
       </Animated.ScrollView>
+    </View>
+  );
+}
+
+/**
+ * A press each for what is logged most often, under the dash: one strip, its segments split by
+ * rules, like the switch bank under a car's screen. The pump-side entries open in the + drawer, which asks which vehicle on
+ * top; a document goes to its screen, which asks the same.
+ */
+function QuickActions() {
+  const theme = useTheme();
+  const router = useRouter();
+  const actions = [
+    { key: 'fuel', icon: 'fuel', label: 'Fill-up', onPress: () => openAdd({ quick: 'fuel' }) },
+    {
+      key: 'odometer',
+      icon: 'odometer',
+      label: 'Odometer',
+      onPress: () => openAdd({ quick: 'odometer' }),
+    },
+    {
+      key: 'service',
+      icon: 'maintenance',
+      label: 'Service',
+      onPress: () => openAdd({ quick: 'service' }),
+    },
+    {
+      key: 'document',
+      icon: 'document',
+      label: 'Document',
+      onPress: () => router.push('/add/document'),
+    },
+  ] as const;
+  return (
+    <View style={[styles.strip, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
+      {actions.map((action, index) => (
+        <Fragment key={action.key}>
+          {index > 0 ? (
+            <View style={[styles.stripRule, { backgroundColor: theme.border }]} />
+          ) : null}
+          <Pressable
+            onPress={() => {
+              haptic.selection();
+              action.onPress();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Add ${action.label.toLowerCase()}`}
+            style={styles.stripSlot}
+          >
+            {/* Held, a segment lights the way the dock marks where you are: wash and needle. */}
+            {({ pressed }) => (
+              <View style={[styles.stripFace, pressed && { backgroundColor: theme.primarySoft }]}>
+                {pressed ? (
+                  <View style={[styles.stripNeedle, { backgroundColor: theme.primary }]} />
+                ) : null}
+                <Icon name={action.icon} size={21} color={theme.primary} />
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  allowFontScaling={false}
+                  style={[
+                    styles.stripLabel,
+                    { color: pressed ? theme.foreground : theme.mutedForeground },
+                  ]}
+                >
+                  {action.label}
+                </Text>
+              </View>
+            )}
+          </Pressable>
+        </Fragment>
+      ))}
     </View>
   );
 }
@@ -1088,7 +1169,7 @@ function Parked({ vehicle }: { vehicle: Vehicle }) {
   return (
     <View style={[styles.parkedBadge, { backgroundColor: theme.cardRaised }]}>
       {vehicle.make ? (
-        <BrandLogo make={vehicle.make} size={30} />
+        <BrandLogo make={vehicle.make} size={32} />
       ) : (
         <Ionicons name={vehicleIcon(vehicle.vehicleType)} size={16} color={theme.mutedForeground} />
       )}
@@ -1232,6 +1313,36 @@ const styles = StyleSheet.create({
   day: { fontSize: 10.5, lineHeight: 14, fontWeight: '600', letterSpacing: 1 },
   clock: { flexDirection: 'row' },
   heroGap: { paddingTop: 18 },
+  // Pulled up under the dash: the shortcuts belong to it, not a section of their own.
+  // Clipped to its leaf, so a lit segment can never show past the strip's edge.
+  strip: {
+    flexDirection: 'row',
+    padding: 4,
+    marginTop: -spacing.sm,
+    overflow: 'hidden',
+    ...leaf('md'),
+  },
+  // The wash stands in from its segment, clear of the rules either side.
+  stripSlot: { flex: 1, minWidth: 0, padding: 2 },
+  stripRule: { width: StyleSheet.hairlineWidth, marginVertical: 12 },
+  stripFace: {
+    alignItems: 'center',
+    gap: 5,
+    paddingTop: 8,
+    paddingBottom: 6,
+    paddingHorizontal: 4,
+    // The strip's leaf, less the 6pt it stands in: its corners run with the strip's.
+    ...leaf('md', 6),
+  },
+  stripNeedle: {
+    position: 'absolute',
+    top: 0,
+    width: 16,
+    height: 3,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
+  },
+  stripLabel: { fontSize: 10.5, lineHeight: 13, fontWeight: '600' },
   rowSkeleton: {
     flexDirection: 'row',
     alignItems: 'center',

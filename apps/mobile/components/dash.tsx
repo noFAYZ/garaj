@@ -175,6 +175,82 @@ export function DashCell({
   );
 }
 
+/** Two small readings stacked in one tile's place, splitting its height: health over fuel. */
+export function DashStack({ children }: { children: ReactNode }) {
+  return <View style={styles.stack}>{children}</View>;
+}
+
+/**
+ * A small reading on one line, for a `DashStack`: its mark (a dial, a glyph), the figure, then
+ * its word in the label's caps — "◔ 82 HEALTH". `value` undefined is still loading.
+ */
+export function DashMini({
+  lead,
+  value,
+  word,
+  muted = false,
+  said,
+  index,
+  hint,
+  narrow = false,
+  onPress,
+}: {
+  lead: ReactNode;
+  value: string | undefined;
+  word: string;
+  muted?: boolean;
+  said: string;
+  index: number;
+  hint?: string;
+  narrow?: boolean;
+  onPress?: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Rise index={index} style={styles.miniSlot}>
+      <PressableScale
+        onPress={
+          onPress
+            ? () => {
+                haptic.selection();
+                onPress();
+              }
+            : undefined
+        }
+        disabled={!onPress}
+        accessible
+        accessibilityRole={onPress ? 'button' : 'text'}
+        accessibilityLabel={said}
+        accessibilityHint={onPress ? hint : undefined}
+        scaleTo={0.96}
+        style={[styles.mini, narrow ? styles.cellNarrow : null, { backgroundColor: theme.muted }]}
+      >
+        {lead}
+        {value === undefined ? (
+          <Skeleton width={22} height={12} />
+        ) : (
+          <Text
+            numberOfLines={1}
+            style={[
+              figure,
+              styles.miniFigure,
+              { color: muted ? theme.mutedForeground : theme.foreground },
+            ]}
+          >
+            {value}
+          </Text>
+        )}
+        <Text
+          numberOfLines={1}
+          style={[figure, styles.unit, styles.miniWord, { color: theme.mutedForeground }]}
+        >
+          {word.toUpperCase()}
+        </Text>
+      </PressableScale>
+    </Rise>
+  );
+}
+
 /** A tile before its reading arrives: the label as real text, only the figure waiting. */
 export function DashCellSkeleton({
   label,
@@ -353,6 +429,25 @@ const styles = StyleSheet.create({
     ...leaf('sm'),
   },
   cellNarrow: { paddingHorizontal: 8 },
+  stack: { flex: 1, minWidth: 0, gap: 6 },
+  miniSlot: { flex: 1 },
+  mini: {
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 4,
+    ...leaf('sm'),
+  },
+  miniFigure: {
+    flexShrink: 0,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  miniWord: { flexShrink: 1 },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   label: { flexShrink: 1, fontSize: 7.5, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
   // Taller than the label, so it hangs over the line rather than pushing the figure down.

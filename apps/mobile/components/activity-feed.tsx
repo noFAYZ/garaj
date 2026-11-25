@@ -24,9 +24,16 @@ import {
   queryKeys,
 } from '@vehicle-os/api-client/react';
 import { daysUntil, dueGauge, groupByMonth, odometerDeltas, spanOfDays } from '@vehicle-os/ui';
-import { lastFitted, useParts } from '@/components/parts-kit';
+import {
+  lastFitted,
+  PartChips,
+  positionLabel,
+  useParts,
+  type PartLike,
+} from '@/components/parts-kit';
 import { photoKey } from '@/components/remote-image';
 import {
+  FactChips,
   fillQuantity,
   type Filed,
   KindIcon,
@@ -38,7 +45,7 @@ import {
 import { openAdd } from '@/lib/add-request';
 import { api } from '@/lib/api';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
-import { ledgerDate } from '@/lib/ledger';
+import { ledgerDate, unitPrice } from '@/lib/ledger';
 import { pad, DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
 import { Chip, Glyph, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
 import { ease, haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
@@ -221,6 +228,16 @@ export function ActivityFeed({
     return byEvent;
   }, [photos.data, papers.data]);
 
+  // What went in with each entry, for its chips: the parts read the Upkeep tab shares.
+  const { history: partLines } = useParts(vehicle);
+  const partsByEvent = useMemo(() => {
+    const byEvent = new Map<string, PartLike[]>();
+    for (const part of partLines) {
+      if (part.eventId) byEvent.set(part.eventId, [...(byEvent.get(part.eventId) ?? []), part]);
+    }
+    return byEvent;
+  }, [partLines]);
+
   const planned = activity.data?.planned;
   const writes = usePendingWrites();
   const updatedAt = activity.dataUpdatedAt;
@@ -367,6 +384,7 @@ export function ActivityFeed({
                     nextAt={group.items[place + 1]?.occurredAt}
                     delta={deltas.get(event.id) ?? null}
                     filed={filed.get(event.id) ?? null}
+                    parts={partsByEvent.get(event.id) ?? null}
                     index={row++}
                   />
                 ))}
@@ -807,6 +825,7 @@ const DoneRow = memo(function DoneRow({
   nextAt,
   delta,
   filed,
+  parts,
   index,
 }: {
   event: VehicleEvent;
@@ -815,6 +834,8 @@ const DoneRow = memo(function DoneRow({
   nextAt: string | undefined;
   delta: number | null;
   filed: Filed | null;
+  /** The parts and fluids that went in with it. */
+  parts: readonly PartLike[] | null;
   index: number;
 }) {
   const theme = useTheme();
@@ -826,6 +847,21 @@ const DoneRow = memo(function DoneRow({
     event.title.trim() !== '' && event.title.trim().toLowerCase() !== kind.toLowerCase();
   const unit = event.odometerUnit;
   const when = ledgerDate(event.occurredAt);
+  // A fill's figures, as chips under it: what went in and what one cost.
+  const fill = event.eventType === 'FUEL' || event.eventType === 'CHARGE';
+  const price = fill ? unitPrice(event.cost, quantity) : null;
+  const facts = [
+    quantity
+      ? {
+          icon:
+            event.eventType === 'CHARGE' ? ('flash-outline' as const) : ('water-outline' as const),
+          text: quantity,
+        }
+      : null,
+    price
+      ? { icon: 'pricetag-outline' as const, text: `${formatMoney(price.price)}/${price.per}` }
+      : null,
+  ].filter((fact) => fact !== null);
 
   return (
     <LedgerRow
@@ -836,10 +872,18 @@ const DoneRow = memo(function DoneRow({
       nextAt={nextAt}
       meta={[event.provider]}
       cost={event.cost}
-      // Nothing paid: a trip says how far it went.
-      aside={event.cost || !event.trip ? null : formatDistance(event.trip.distance, unit)}
-      // Under the cost: what went in, and how far since the reading before — a tank's range.
-      trail={[quantity]}
+      // Nothing paid: a trip says how far it went, a reading where the odometer stands.
+      aside={
+        event.cost
+          ? null
+          : event.trip
+            ? formatDistance(event.trip.distance, unit)
+            : event.odometer !== null
+              ? formatDistance(event.odometer, unit)
+              : null
+      }
+      // Under the figure, how far since the reading before; a fill's litres are its chips.
+      trail={fill ? [] : [quantity]}
       change={
         delta === null
           ? null
@@ -868,12 +912,16 @@ const DoneRow = memo(function DoneRow({
         event.odometer !== null ? `at ${formatDistance(event.odometer, unit)}` : null,
         note || null,
         filed ? `${filed.count} ${filed.count === 1 ? 'attachment' : 'attachments'}` : null,
+        price ? `${formatMoney(price.price)} per ${price.per}` : null,
+        parts ? `parts: ${parts.map((part) => positionLabel(part.position)).join(', ')}` : null,
       ]
         .filter(Boolean)
         .join(', ')}
       accessibilityHint={local ? undefined : 'Opens the entry'}
       index={index}
     >
+      {facts.length > 0 ? <FactChips eventType={event.eventType} facts={facts} /> : null}
+      {parts ? <PartChips lines={parts} /> : null}
       {local ? (
         local.error ? (
           <View style={styles.failed}>

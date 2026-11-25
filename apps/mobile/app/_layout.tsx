@@ -24,7 +24,6 @@ import { useSession } from '@/lib/auth';
 import { reportError } from '@/lib/crash';
 import { registerForPush } from '@/lib/push';
 import { appearanceReady } from '@/lib/appearance';
-import { welcomeReady } from '@/lib/onboarding';
 import { useAppFonts } from '@/lib/fonts';
 import { flush, keptFiles, onPlanWall, onSynced } from '@/lib/offline';
 import { showUpgrade } from '@/lib/upgrade';
@@ -216,14 +215,8 @@ export default function RootLayout() {
   useEffect(() => {
     void appearanceReady.then(() => setSchemed(true));
   }, []);
-  // Whether this phone has seen the welcome: read under the launch screen, so a new install opens
-  // straight onto it rather than flashing the sign-in form first.
-  const [welcomeRead, setWelcomeRead] = useState(false);
-  useEffect(() => {
-    void welcomeReady.then(() => setWelcomeRead(true));
-  }, []);
 
-  const ready = fontsLoaded && !loading && restored && schemed && welcomeRead;
+  const ready = fontsLoaded && !loading && restored && schemed;
   // The launch screen over everything until the app behind is ready and it has driven off.
   const [launching, setLaunching] = useState(true);
   useEffect(() => {
@@ -330,6 +323,7 @@ export default function RootLayout() {
                   <Stack.Screen name="add/garage" options={{ title: 'New garage' }} />
                   <Stack.Screen name="add/document" options={{ title: 'Add a document' }} />
                   <Stack.Screen name="add/photo" options={{ title: 'Add a photo' }} />
+                  <Stack.Screen name="add/part" options={{ headerShown: false }} />
                   <Stack.Screen name="event/[id]" options={{ title: 'Entry' }} />
                   <Stack.Screen name="document/[id]" options={{ title: 'Document' }} />
                   <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />

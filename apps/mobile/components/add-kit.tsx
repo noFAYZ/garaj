@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
 import {
   Animated,
   ScrollView,
@@ -72,8 +72,8 @@ export function Line({
 export interface RailItem {
   readonly key: string;
   readonly label: string;
-  /** An emoji, drawn in the web's own artwork. */
-  readonly glyph?: string;
+  /** An emoji, drawn in the web's own artwork — or an icon of its own. */
+  readonly glyph?: string | ReactElement;
   readonly selected: boolean;
   /** Chosen by the line, not a hand: ✦. */
   readonly marked?: boolean;
@@ -169,7 +169,11 @@ export function Rail({
                 },
               ]}
             >
-              {item.glyph ? <Glyph size={17}>{item.glyph}</Glyph> : null}
+              {typeof item.glyph === 'string' ? (
+                <Glyph size={17}>{item.glyph}</Glyph>
+              ) : (
+                (item.glyph ?? null)
+              )}
               <Text numberOfLines={1} style={[typeScale.label, { maxWidth: 200, color: ink }]}>
                 {item.label}
               </Text>

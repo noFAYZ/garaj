@@ -7,11 +7,13 @@
  * an authorization check that then mints a short-lived signed URL.
  */
 
+import { sql } from 'drizzle-orm';
 import { date, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { documentTypeEnum } from './enums';
 import { deletedAt, primaryId, timestamps } from './_shared';
 import { vehicles } from './vehicles';
 import { vehicleEvents } from './events';
+import { vehicleParts } from './parts';
 import { users } from './auth';
 
 export const documents = pgTable(
@@ -22,6 +24,9 @@ export const documents = pgTable(
       .notNull()
       .references(() => vehicles.id, { onDelete: 'cascade' }),
     eventId: uuid('event_id').references(() => vehicleEvents.id, { onDelete: 'set null' }),
+    // A part's own paper — its receipt, its warranty card, a photo of the box. Left behind, not
+    // deleted, when the part line is removed: the paper is still the vehicle's.
+    partId: uuid('part_id').references(() => vehicleParts.id, { onDelete: 'set null' }),
 
     documentType: documentTypeEnum('document_type').notNull(),
     title: text('title').notNull(),
@@ -54,5 +59,8 @@ export const documents = pgTable(
   (table) => [
     index('documents_expires_on_idx').on(table.expiresOn),
     index('documents_type_idx').on(table.vehicleId, table.documentType),
+    index('documents_part_idx')
+      .on(table.partId)
+      .where(sql`${table.partId} is not null`),
   ],
 );

@@ -1,9 +1,11 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type {
   PartLine,
+  VehicleDocument,
   PartProduct,
   UpdatePart,
   Vehicle,
@@ -32,20 +34,19 @@ import {
   type RecordedPart,
   type VehicleType,
 } from '@vehicle-os/domain';
-import { partsQuery, queryKeys } from '@vehicle-os/api-client/react';
+import { documentsQuery, partsQuery, queryKeys } from '@vehicle-os/api-client/react';
 import { amountOnly, digitsOnly, localDay, spanOfDays, stampForDay } from '@vehicle-os/ui';
 import { newId } from '@vehicle-os/utils';
 import { Fact, Rail } from '@/components/add-kit';
-import { KindIcon } from '@/components/timeline';
+import { RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
 import { DateField } from '@/lib/date-picker';
 import { dialog, FAILED } from '@/lib/dialog';
-import { jobEmoji } from '@/lib/emoji';
 import { DATE_LOCALE, formatDistance, humanise } from '@/lib/format';
 import { Eyebrow, FigureInput, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { usePendingWrites, type PendingWrite, type SentWrite } from '@/lib/offline';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
-import { cardSurface, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { cardSurface, figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 
 /*
@@ -62,7 +63,96 @@ const DATE = new Intl.DateTimeFormat(DATE_LOCALE, {
 
 export const positionLabel = (position: string) =>
   partPosition(position)?.label ?? humanise(position);
-export const positionGlyph = (position: string) => jobEmoji(positionLabel(position));
+type PartIconName = keyof typeof MaterialCommunityIcons.glyphMap;
+
+/** Each position's own drawing, from the workshop's icon set; anything else is a wrench. */
+const PART_ICON: Record<string, PartIconName> = {
+  ENGINE_OIL: 'oil',
+  OIL_FILTER: 'filter-cog-outline',
+  AIR_FILTER: 'air-filter',
+  FUEL_FILTER: 'gas-station-outline',
+  SPARK_PLUGS: 'flash',
+  TIMING_BELT: 'cog-sync',
+  COOLANT: 'car-coolant-level',
+  GEARBOX_OIL: 'car-shift-pattern',
+  CHAIN: 'link-variant',
+  SPROCKETS: 'cogs',
+  BRAKE_PADS_FRONT: 'car-brake-worn-linings',
+  BRAKE_PADS_REAR: 'car-brake-worn-linings',
+  BRAKE_DISCS_FRONT: 'car-brake-hold',
+  BRAKE_DISCS_REAR: 'car-brake-hold',
+  BRAKE_FLUID: 'car-brake-fluid-level',
+  TYRES_FRONT: 'tire',
+  TYRES_REAR: 'tire',
+  BATTERY: 'car-battery',
+  WIPER_BLADES: 'wiper',
+  CABIN_FILTER: 'air-purifier',
+  ANODES: 'anchor',
+  IMPELLER: 'fan',
+  OTHER: 'wrench',
+};
+
+/** The colour a position's group wears: fluids and the engine orange, brakes red, and so on. */
+function groupTint(theme: ReturnType<typeof useTheme>, position: string): string | null {
+  switch (partPosition(position)?.group) {
+    case 'ENGINE':
+      return theme.chartRefuel;
+    case 'DRIVETRAIN':
+    case 'HULL':
+      return theme.chartService;
+    case 'BRAKES':
+      return theme.destructive;
+    case 'TYRES':
+      return theme.chartTrip;
+    case 'ELECTRICAL':
+      return theme.warning;
+    case 'BODY':
+      return theme.chartExpense;
+    default:
+      return null;
+  }
+}
+
+/**
+ * A position's icon: its drawing in its group's colour, on a tile washed in it — or, `bare`, the
+ * drawing alone, for a chip.
+ */
+export function PartIcon({
+  position,
+  size = 36,
+  bare = false,
+}: {
+  position: string;
+  size?: number;
+  bare?: boolean;
+}) {
+  const theme = useTheme();
+  const tint = groupTint(theme, position);
+  const drawing = (
+    <MaterialCommunityIcons
+      name={PART_ICON[position] ?? 'wrench'}
+      size={bare ? size : Math.round(size * 0.56)}
+      color={tint ?? theme.mutedForeground}
+    />
+  );
+  if (bare) return drawing;
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.36),
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: tint ? `${tint}1F` : theme.muted,
+      }}
+    >
+      {drawing}
+    </View>
+  );
+}
 
 /** "4.2 L", "×4" — the domain's, in this phone's own number format. */
 export const partAmount = (quantity: number | null, unit: PartUnit | null) =>
@@ -333,7 +423,7 @@ function LineRow({
       scaleTo={0.99}
       style={styles.line}
     >
-      <KindIcon emoji={positionGlyph(draft.position)} size={32} />
+      <PartIcon position={draft.position} size={32} />
       <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
         <View style={styles.lineHead}>
           <Text numberOfLines={1} style={[styles.lineLabel, { color: theme.foreground }]}>
@@ -445,7 +535,7 @@ export function PartLinesField({
           items={left.map((position) => ({
             key: position,
             label: positionLabel(position),
-            glyph: positionGlyph(position),
+            glyph: <PartIcon position={position} size={17} bare />,
             selected: false,
             onPress: () => add(position),
           }))}
@@ -465,18 +555,24 @@ export function PartLinesField({
 
 // --- The vehicle's parts -----------------------------------------------------
 
-/** When it was fitted and how long ago, and how far the vehicle has gone on it since. */
-function fittedText(part: VehiclePart, vehicle: Vehicle): string {
-  if (!part.fittedAt) return 'Date not recorded';
-  const since = `Since ${DATE.format(new Date(part.fittedAt))}`;
-  // How far it has gone is the wear that matters; without a reading, how long it has been in.
+/** How far the vehicle has gone on a line, and how long it has been in: the wear that matters. */
+function wear(
+  part: VehiclePart,
+  vehicle: Vehicle,
+): { driven: string | null; age: string | null; since: string | null } {
+  if (!part.fittedAt) return { driven: null, age: null, since: null };
+  let driven: string | null = null;
   if (part.odometer !== null && part.odometerUnit && vehicle.currentOdometer !== null) {
     const at = convertDistance(part.odometer, part.odometerUnit, vehicle.odometerUnit);
-    const driven = Math.round(vehicle.currentOdometer - at);
-    if (driven > 0) return `${since} · ${formatDistance(driven, vehicle.odometerUnit)}`;
+    const gone = Math.round(vehicle.currentOdometer - at);
+    if (gone > 0) driven = formatDistance(gone, vehicle.odometerUnit);
   }
   const days = Math.floor((Date.now() - Date.parse(part.fittedAt)) / 86_400_000);
-  return days >= 1 ? `${since} · ${spanOfDays(days)}` : since;
+  return {
+    driven,
+    age: days >= 1 ? spanOfDays(days) : 'Today',
+    since: DATE.format(new Date(part.fittedAt)),
+  };
 }
 
 /** "Warranty until 3 Mar 2028", or that it has ended; nothing without one. */
@@ -491,13 +587,20 @@ function warrantyText(
     : { text: `Warranty until ${DATE.format(end)}`, ended: false, soon: days <= 60 };
 }
 
+/** The add screen, for a position (a new line there) or a line (to correct it). */
+export const partRoute = (vehicleId: string, to: { position?: string; partId?: string } = {}) => ({
+  pathname: '/add/part' as const,
+  params: { vehicleId, ...to },
+});
+
 /**
- * Holding a line: correct it, or remove it — a mistake typed in, never the entry it came with.
- * A line still on this phone has nothing on the server to change yet.
+ * What a line can have done to it: corrected on the add screen, or removed — a mistake typed in,
+ * never the entry it came with. A line still on this phone has nothing on the server to change.
  */
-function useLineActions(vehicleId: string, onEdit: (part: PartLike) => void) {
+function useLineActions(vehicleId: string) {
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const remove = useMutation({
+  const removal = useMutation({
     mutationFn: (partId: string) => api.parts.remove(vehicleId, partId),
     onSuccess: () => {
       haptic.success();
@@ -505,34 +608,63 @@ function useLineActions(vehicleId: string, onEdit: (part: PartLike) => void) {
     },
     onError: (error) => dialog('Could not remove it', (error as Error).message, undefined, FAILED),
   });
-  const confirmRemove = (part: PartLike) =>
+  const waiting = (part: PartLike) => {
+    if (!part.local) return false;
+    dialog('Waiting to sync', 'It can be changed once it has been sent.', undefined, {
+      icon: 'cloud-upload-outline',
+    });
+    return true;
+  };
+  const edit = (part: PartLike) => {
+    if (!waiting(part)) router.push(partRoute(vehicleId, { partId: part.id }));
+  };
+  // Its receipt, its warranty card, a photo of the box: the add-document screen, filed against it.
+  const attach = (part: PartLike) => {
+    if (waiting(part)) return;
+    router.push({
+      pathname: '/add/document',
+      params: {
+        vehicleId,
+        partId: part.id,
+        documentType: part.warrantyUntil ? 'WARRANTY' : 'RECEIPT',
+        title: `${positionLabel(part.position)} · ${partName(part) ?? 'receipt'}`,
+      },
+    });
+  };
+  const open = (paper: VehicleDocument) =>
+    router.push({
+      pathname: '/document/[id]',
+      params: { id: paper.id, vehicleId, title: paper.title },
+    });
+  const remove = (part: PartLike) => {
+    if (waiting(part)) return;
     dialog(
       `Remove ${positionLabel(part.position).toLowerCase()}?`,
       `${partSummary(part)} leaves the history. The entry it came with stays.`,
       [
         { text: 'Keep it', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => remove.mutate(part.id) },
+        { text: 'Remove', style: 'destructive', onPress: () => removal.mutate(part.id) },
       ],
     );
-  return (part: PartLike) => {
+  };
+  // Held: the same two, asked.
+  const hold = (part: PartLike) => {
     haptic.selection();
-    if (part.local) {
-      dialog('Waiting to sync', 'It can be changed once it has been sent.', undefined, {
-        icon: 'cloud-upload-outline',
-      });
-      return;
-    }
+    if (waiting(part)) return;
     dialog(positionLabel(part.position), partSummary(part), [
-      { text: 'Edit', onPress: () => onEdit(part) },
-      { text: 'Remove', style: 'destructive', onPress: () => confirmRemove(part) },
+      { text: 'Edit', onPress: () => edit(part) },
+      { text: 'Remove', style: 'destructive', onPress: () => remove(part) },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
+  return { edit, remove, hold, attach, open };
 }
 
 /**
- * A position with something fitted: its glyph, what is there, and since when. Pressed, it opens
- * every line it has had, newest first — the product history; holding one removes it.
+ * A position with something fitted: its glyph, its name over what is there, since when and its
+ * cover; flush right, how far it has gone and how long it has been in, in the ledger's mono.
+ * Pressed, it opens every line it has had, newest first, and what can be done: fit a new one,
+ * correct this one, or remove it.
  */
 function FittedRow({
   part,
@@ -540,19 +672,25 @@ function FittedRow({
   vehicle,
   open,
   onToggle,
-  onHold,
+  actions,
+  onReplace,
+  papers,
 }: {
   part: PartLike;
   history: readonly PartLike[];
   vehicle: Vehicle;
   open: boolean;
   onToggle: () => void;
-  onHold: (part: PartLike) => void;
+  actions: ReturnType<typeof useLineActions>;
+  onReplace: () => void;
+  /** What is filed against this line: its receipt, its warranty card, photos. */
+  papers: readonly VehicleDocument[];
 }) {
   const theme = useTheme();
   const label = positionLabel(part.position);
   const earlier = history.length - 1;
   const warranty = warrantyText(part.warrantyUntil);
+  const { driven, age, since } = wear(part, vehicle);
   return (
     <View>
       <PressableScale
@@ -560,52 +698,57 @@ function FittedRow({
           haptic.selection();
           onToggle();
         }}
-        onLongPress={() => onHold(part)}
+        onLongPress={() => actions.hold(part)}
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         accessibilityLabel={[
           `${label}: ${partSummary(part)}`,
-          fittedText(part, vehicle),
+          since ? `fitted ${since}` : 'date not recorded',
+          driven ? `${driven} since` : null,
           warranty?.text,
+          earlier > 0 ? `${earlier} earlier` : null,
+          papers.length > 0
+            ? `${papers.length} ${papers.length === 1 ? 'attachment' : 'attachments'}`
+            : null,
           part.local ? 'waiting to sync' : null,
         ]
           .filter(Boolean)
           .join(', ')}
-        accessibilityHint="Shows its history. Hold to edit or remove."
+        accessibilityHint="Shows its history and what can be done."
         scaleTo={0.99}
         style={styles.line}
       >
-        <KindIcon emoji={positionGlyph(part.position)} size={36} />
-        <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
-          <Text numberOfLines={1} style={[styles.lineLabel, { color: theme.mutedForeground }]}>
+        <PartIcon position={part.position} size={40} />
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+          <Text numberOfLines={1} style={[styles.rowTitle, { color: theme.foreground }]}>
             {label}
           </Text>
-          <Text numberOfLines={1} style={[styles.product, { color: theme.foreground }]}>
+          <Text numberOfLines={1} style={[styles.rowProduct, { color: theme.mutedForeground }]}>
             {partSummary(part)}
+            {part.action === 'TOPPED_UP' ? ' · top-up' : ''}
           </Text>
-          <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
-            {fittedText(part, vehicle)}
-          </Text>
-          {warranty || part.local ? (
+          {part.local || (warranty && !warranty.ended) || papers.length > 0 ? (
             <View style={styles.flags}>
+              {papers.length > 0 ? (
+                <View style={styles.flag}>
+                  <Ionicons name="attach" size={13} color={theme.mutedForeground} />
+                  <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+                    {papers.length}
+                  </Text>
+                </View>
+              ) : null}
               {part.local ? (
                 <View style={styles.flag}>
                   <Ionicons name="cloud-upload-outline" size={12} color={theme.warning} />
                   <Text style={[typeScale.caption, { color: theme.warning }]}>Waiting to sync</Text>
                 </View>
               ) : null}
-              {warranty ? (
+              {warranty && !warranty.ended ? (
                 <View style={styles.flag}>
                   <Ionicons
-                    name="shield-checkmark-outline"
-                    size={12}
-                    color={
-                      warranty.ended
-                        ? theme.mutedForeground
-                        : warranty.soon
-                          ? theme.warning
-                          : theme.success
-                    }
+                    name="shield-checkmark"
+                    size={11}
+                    color={warranty.soon ? theme.warning : theme.success}
                   />
                   <Text
                     numberOfLines={1}
@@ -614,22 +757,25 @@ function FittedRow({
                       { color: warranty.soon ? theme.warning : theme.mutedForeground },
                     ]}
                   >
-                    {warranty.text}
+                    {warranty.soon ? warranty.text : 'Under warranty'}
                   </Text>
                 </View>
               ) : null}
             </View>
           ) : null}
         </View>
-        {earlier > 0 ? (
-          <View style={[styles.count, { backgroundColor: theme.muted }]}>
-            <Ionicons name="time-outline" size={11} color={theme.mutedForeground} />
-            <Text style={[styles.countText, { color: theme.mutedForeground }]}>{earlier}</Text>
-          </View>
-        ) : null}
+        {/* The wear, flush right: how far on it, over how long. */}
+        <View style={styles.wear}>
+          <Text style={[figure, styles.wearFigure, { color: theme.foreground }]}>
+            {driven ?? age ?? '—'}
+          </Text>
+          <Text style={[figure, styles.wearAge, { color: theme.mutedForeground }]}>
+            {driven ? age : since ? since : 'no date'}
+          </Text>
+        </View>
         <Ionicons
           name={open ? 'chevron-up' : 'chevron-down'}
-          size={16}
+          size={15}
           color={theme.mutedForeground}
         />
       </PressableScale>
@@ -638,7 +784,7 @@ function FittedRow({
           {history.map((line) => (
             <PressableScale
               key={line.id}
-              onLongPress={() => onHold(line)}
+              onLongPress={() => actions.hold(line)}
               accessibilityRole="text"
               accessibilityLabel={`${line.fittedAt ? DATE.format(new Date(line.fittedAt)) : 'Date not recorded'}, ${partSummary(line)}${line.action === 'TOPPED_UP' ? ', top-up' : ''}`}
               accessibilityHint="Hold to edit or remove."
@@ -651,7 +797,7 @@ function FittedRow({
                   { backgroundColor: line.id === part.id ? theme.primary : theme.borderStrong },
                 ]}
               />
-              <Text style={[typeScale.caption, styles.pastDate, { color: theme.mutedForeground }]}>
+              <Text style={[figure, styles.pastDate, { color: theme.mutedForeground }]}>
                 {line.fittedAt ? DATE.format(new Date(line.fittedAt)) : '—'}
               </Text>
               <Text
@@ -663,6 +809,66 @@ function FittedRow({
               </Text>
             </PressableScale>
           ))}
+          {papers.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.papers}
+            >
+              {papers.map((paper) => (
+                <PressableScale
+                  key={paper.id}
+                  onPress={() => {
+                    haptic.selection();
+                    actions.open(paper);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${paper.title}`}
+                  scaleTo={0.94}
+                  style={[
+                    styles.paper,
+                    { backgroundColor: theme.muted, borderColor: theme.border },
+                  ]}
+                >
+                  <RemoteImage
+                    uri={paper.thumbnailUrl}
+                    cacheKey={`document:${paper.id}`}
+                    style={StyleSheet.absoluteFill}
+                    contentFit="cover"
+                    accessibilityIgnoresInvertColors
+                    fallback={
+                      <Ionicons
+                        name={
+                          paper.mimeType === 'application/pdf'
+                            ? 'document-text-outline'
+                            : 'document-outline'
+                        }
+                        size={20}
+                        color={theme.mutedForeground}
+                      />
+                    }
+                  />
+                </PressableScale>
+              ))}
+            </ScrollView>
+          ) : null}
+          <View style={styles.actions}>
+            <Button size="xs" icon="add" label="Fit new" onPress={onReplace} />
+            <Button size="xs" icon="attach" label="Attach" onPress={() => actions.attach(part)} />
+            <Button
+              size="xs"
+              icon="create-outline"
+              label="Edit"
+              onPress={() => actions.edit(part)}
+            />
+            <Button
+              size="xs"
+              variant="ghost"
+              icon="trash-outline"
+              label="Remove"
+              onPress={() => actions.remove(part)}
+            />
+          </View>
         </View>
       ) : null}
     </View>
@@ -681,24 +887,31 @@ const dayOf = (iso: string) => {
  * line's fields and, for a line of its own, when it went in and at what reading; a line on an
  * entry keeps the entry's. Sent at once, not queued: a record of the past, typed at leisure.
  */
-function PartForm({
+export function PartForm({
   vehicle,
   position,
   part,
+  last,
   products,
   onDone,
+  onCancel = onDone,
 }: {
   vehicle: Vehicle;
   position: PartPosition;
   /** The line being corrected; none to record a new one. */
   part?: PartLike;
+  /** What is fitted there now, for a new line: offered as "same as last time". */
+  last?: RecordedPart;
   products: readonly PartProduct[];
+  /** Saved. */
   onDone: () => void;
+  /** The ×: by default the same as done. */
+  onCancel?: () => void;
 }) {
   const theme = useTheme();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(() =>
-    part ? draftFromPart(part) : draftFor(position, vehicle, undefined),
+    part ? draftFromPart(part) : draftFor(position, vehicle, last),
   );
   const onEntry = Boolean(part?.eventId);
   const [day, setDay] = useState(() => (part?.fittedAt && !onEntry ? dayOf(part.fittedAt) : ''));
@@ -742,12 +955,12 @@ function PartForm({
   return (
     <Rise style={[styles.card, styles.recording, cardSurface(theme)]}>
       <View style={styles.lineHead}>
-        <KindIcon emoji={positionGlyph(position)} size={32} />
+        <PartIcon position={position} size={32} />
         <Text style={[typeScale.headline, { flex: 1, color: theme.foreground }]}>
           {positionLabel(position)}
         </Text>
         <PressableScale
-          onPress={onDone}
+          onPress={onCancel}
           accessibilityRole="button"
           accessibilityLabel="Cancel"
           hitSlop={8}
@@ -814,20 +1027,105 @@ const GROUP_LABEL: Record<(typeof PART_GROUPS)[number], string> = {
   OTHER: 'Other parts',
 };
 
+const NO_PAPERS: readonly VehicleDocument[] = [];
+
+/** Tiles to a row in the position grid. */
+const GRID = 3;
+const GRID_GAP = 8;
+
 /**
- * The vehicle's parts: what is fitted at each position, grouped as a workshop would — engine,
- * brakes, tyres — each with its history a tap away; then the positions with nothing recorded,
- * one tap to record what is there now.
+ * Positions as a grid of tiles, grouped as a workshop would — engine, brakes, tyres — each its
+ * glyph over its name; one already fitted wears a green dot. A press picks it.
+ */
+export function PositionGrid({
+  positions,
+  current,
+  onPick,
+}: {
+  positions: readonly PartPosition[];
+  /** What is fitted where, to mark those tiles. */
+  current?: ReadonlyMap<string, PartLike>;
+  onPick: (position: PartPosition) => void;
+}) {
+  const theme = useTheme();
+  const [width, setWidth] = useState(0);
+  const tile = width > 0 ? (width - GRID_GAP * (GRID - 1)) / GRID : 0;
+  const groups = PART_GROUPS.map((group) => ({
+    group,
+    positions: positions.filter((position) => (partPosition(position)?.group ?? 'OTHER') === group),
+  })).filter((entry) => entry.positions.length > 0);
+  return (
+    <View
+      style={{ gap: spacing.md }}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+    >
+      {tile > 0
+        ? groups.map(({ group, positions: inGroup }) => (
+            <View key={group} style={{ gap: spacing.sm }}>
+              <Eyebrow>{GROUP_LABEL[group]}</Eyebrow>
+              <View style={styles.grid}>
+                {inGroup.map((position) => {
+                  const fitted = current?.get(position);
+                  return (
+                    <PressableScale
+                      key={position}
+                      onPress={() => {
+                        haptic.selection();
+                        onPick(position);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${positionLabel(position)}${fitted ? `, fitted: ${partSummary(fitted)}` : ''}`}
+                      scaleTo={0.95}
+                      style={[styles.tile, { width: tile, backgroundColor: theme.muted }]}
+                    >
+                      <PartIcon position={position} size={40} />
+                      <Text
+                        numberOfLines={2}
+                        style={[styles.tileLabel, { color: theme.foreground }]}
+                      >
+                        {positionLabel(position)}
+                      </Text>
+                      {fitted ? (
+                        <View style={[styles.tileDot, { backgroundColor: theme.success }]} />
+                      ) : null}
+                    </PressableScale>
+                  );
+                })}
+              </View>
+            </View>
+          ))
+        : null}
+    </View>
+  );
+}
+
+/**
+ * The vehicle's parts: what is fitted at each position, grouped as a workshop would, each with its
+ * history and its actions a tap away; then the positions with nothing recorded and Other, a tile
+ * each, one tap to record what is there now.
  */
 export function VehicleParts({ vehicle }: { vehicle: Vehicle }) {
   const theme = useTheme();
-  const { query, history, current, products, positions } = useParts(vehicle);
+  const router = useRouter();
+  const { query, history, current, positions } = useParts(vehicle);
   const [open, setOpen] = useState<string | null>(null);
-  // The form open over the list: a position to record, or a line to correct.
-  const [form, setForm] = useState<{ position: PartPosition; part?: PartLike } | null>(null);
-  const hold = useLineActions(vehicle.id, (part) =>
-    setForm({ position: part.position as PartPosition, part }),
-  );
+  const actions = useLineActions(vehicle.id);
+  // The Docs tab's own read, so this is the cache, not another request.
+  // ponytail: the first page only (25), as the logbook's thumbnails; a partId filter if garages file more.
+  const documents = useQuery(documentsQuery(api, vehicle.id));
+  const papersByPart = useMemo(() => {
+    const byPart = new Map<string, VehicleDocument[]>();
+    for (const paper of documents.data?.data ?? []) {
+      if (paper.partId && paper.uploadedAt) {
+        byPart.set(paper.partId, [...(byPart.get(paper.partId) ?? []), paper]);
+      }
+    }
+    return byPart;
+  }, [documents.data]);
+  const add = (position?: string) => {
+    haptic.selection();
+    router.push(partRoute(vehicle.id, position ? { position } : {}));
+  };
 
   if (query.isPending) {
     return (
@@ -853,54 +1151,56 @@ export function VehicleParts({ vehicle }: { vehicle: Vehicle }) {
   const groups = PART_GROUPS.map((group) => ({
     group,
     positions: [...current.keys()].filter(
-      (position) => (partPosition(position)?.group ?? 'OTHER') === group,
+      (position) => position !== 'OTHER' && (partPosition(position)?.group ?? 'OTHER') === group,
     ),
   })).filter((entry) => entry.positions.length > 0);
   const unrecorded = positions.filter((position) => position !== 'OTHER' && !current.has(position));
+  const fitted = [
+    ...groups.flatMap((entry) => entry.positions.map((position) => current.get(position)!)),
+    ...others,
+  ];
+
+  const row = (part: PartLike, lines: readonly PartLike[]) => (
+    <FittedRow
+      part={part}
+      history={lines}
+      vehicle={vehicle}
+      open={open === part.id}
+      onToggle={() => setOpen(open === part.id ? null : part.id)}
+      actions={actions}
+      onReplace={() => add(part.position)}
+      papers={papersByPart.get(part.id) ?? NO_PAPERS}
+    />
+  );
 
   return (
     <View style={{ gap: spacing.lg }}>
-      {form ? (
-        <PartForm
-          key={form.part?.id ?? form.position}
-          vehicle={vehicle}
-          position={form.position}
-          part={form.part}
-          products={products}
-          onDone={() => setForm(null)}
-        />
-      ) : null}
-
-      {groups.length === 0 && others.length === 0 && !form ? (
+      {fitted.length === 0 ? (
         <View style={[styles.card, styles.empty, cardSurface(theme)]}>
           <Ionicons name="construct-outline" size={26} color={theme.mutedForeground} />
           <Text style={[typeScale.headline, { color: theme.foreground }]}>
             What’s in it, and since when
           </Text>
           <Text style={[typeScale.label, styles.emptyText, { color: theme.mutedForeground }]}>
-            Record the oil, tyres and battery fitted now. Every service you log from here fills it
-            in, and next time is one tap: same as last time.
+            Record the oil, tyres and battery fitted now. Every service you log fills it in, and
+            next time is one tap: same as last time.
           </Text>
         </View>
       ) : null}
 
-      {groups.map(({ group, positions: fitted }, index) => (
-        <Rise key={group} index={index} style={{ gap: spacing.sm }}>
+      {groups.map(({ group, positions: inGroup }, index) => (
+        <Rise key={group} index={index + 1} style={{ gap: spacing.sm }}>
           <Eyebrow>{GROUP_LABEL[group]}</Eyebrow>
           <View style={[styles.card, cardSurface(theme)]}>
-            {fitted.map((position, place) => (
+            {inGroup.map((position, place) => (
               <Fragment key={position}>
                 {place > 0 ? (
                   <View style={[styles.rule, { backgroundColor: theme.border }]} />
                 ) : null}
-                <FittedRow
-                  part={current.get(position)!}
-                  history={history.filter((part) => part.position === position)}
-                  vehicle={vehicle}
-                  open={open === position}
-                  onToggle={() => setOpen(open === position ? null : position)}
-                  onHold={hold}
-                />
+                {row(
+                  current.get(position)!,
+                  history.filter((part) => part.position === position),
+                )}
               </Fragment>
             ))}
           </View>
@@ -916,36 +1216,64 @@ export function VehicleParts({ vehicle }: { vehicle: Vehicle }) {
                 {place > 0 ? (
                   <View style={[styles.rule, { backgroundColor: theme.border }]} />
                 ) : null}
-                <FittedRow
-                  part={part}
-                  history={[part]}
-                  vehicle={vehicle}
-                  open={false}
-                  onToggle={() => undefined}
-                  onHold={hold}
-                />
+                {row(part, [part])}
               </Fragment>
             ))}
           </View>
         </View>
       ) : null}
 
-      {unrecorded.length > 0 ? (
-        <View style={{ gap: spacing.sm }}>
-          <Eyebrow>{groups.length ? 'Not recorded yet' : 'Record what’s fitted'}</Eyebrow>
-          <View style={styles.wrap}>
-            {unrecorded.map((position) => (
-              <Fact
-                key={position}
-                glyph={positionGlyph(position)}
-                label={positionLabel(position)}
-                selected={form?.position === position && !form.part}
-                onPress={() =>
-                  setForm(form?.position === position && !form.part ? null : { position })
-                }
-              />
-            ))}
+      {/* What is not recorded yet, a tile each — and Other, for anything the list does not name. */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={[typeScale.headline, { color: theme.foreground }]}>
+          {unrecorded.length > 0 ? 'Not recorded yet' : 'Add a part'}
+        </Text>
+        <PositionGrid
+          positions={[...unrecorded, ...(positions.includes('OTHER') ? (['OTHER'] as const) : [])]}
+          onPick={(position) => add(position)}
+        />
+      </View>
+    </View>
+  );
+}
+
+/** How many of an entry's lines its timeline row shows before "+N". */
+const CHIPS = 3;
+
+/**
+ * An entry's lines on its timeline row: one small chip each — the position's glyph, its name and
+ * what went in ("Engine oil 4.2 L") — the first few, then how many more. The product is on the
+ * entry's own screen.
+ */
+export function PartChips({ lines }: { lines: readonly PartLike[] }) {
+  const theme = useTheme();
+  const more = lines.length - CHIPS;
+  return (
+    <View style={styles.partChips}>
+      {lines.slice(0, CHIPS).map((part) => {
+        const amount = [
+          part.action === 'TOPPED_UP' ? 'top-up' : null,
+          partAmount(part.quantity, part.unit),
+        ]
+          .filter(Boolean)
+          .join(' ');
+        return (
+          <View key={part.id} style={[styles.partChip, { backgroundColor: theme.muted }]}>
+            <PartIcon position={part.position} size={12} bare />
+            <Text numberOfLines={1} style={[styles.chipLabel, { color: theme.foreground }]}>
+              {positionLabel(part.position)}
+            </Text>
+            {amount ? (
+              <Text style={[figure, styles.chipAmount, { color: theme.mutedForeground }]}>
+                {amount}
+              </Text>
+            ) : null}
           </View>
+        );
+      })}
+      {more > 0 ? (
+        <View style={[styles.partChip, { backgroundColor: theme.muted }]}>
+          <Text style={[figure, styles.chipAmount, { color: theme.mutedForeground }]}>+{more}</Text>
         </View>
       ) : null}
     </View>
@@ -980,7 +1308,7 @@ export function EntryParts({
           accessibilityLabel={`${positionLabel(part.position)}: ${partSummary(part)}`}
           style={styles.entryLine}
         >
-          <KindIcon emoji={positionGlyph(part.position)} size={30} />
+          <PartIcon position={part.position} size={30} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text numberOfLines={1} style={[styles.lineLabel, { color: theme.mutedForeground }]}>
               {positionLabel(part.position)}
@@ -993,28 +1321,6 @@ export function EntryParts({
         </View>
       ))}
     </Rise>
-  );
-}
-
-/**
- * The vehicle's upkeep: what it needs next and what is in it now, on two tabs of one section, so
- * a reminder and the part it replaces are a tap apart.
- */
-export function VehicleUpkeep({ vehicle, reminders }: { vehicle: Vehicle; reminders: ReactNode }) {
-  const [tab, setTab] = useState<'reminders' | 'parts'>('reminders');
-  return (
-    <View style={{ gap: spacing.md }}>
-      <Segmented
-        small
-        value={tab}
-        options={[
-          { value: 'reminders', label: 'Reminders', icon: 'alarm-outline' },
-          { value: 'parts', label: 'Parts & fluids', icon: 'construct-outline' },
-        ]}
-        onChange={setTab}
-      />
-      {tab === 'reminders' ? reminders : <VehicleParts vehicle={vehicle} />}
-    </View>
   );
 }
 
@@ -1061,10 +1367,50 @@ const styles = StyleSheet.create({
   pastDot: { width: 6, height: 6, borderRadius: 3 },
   flags: { flexDirection: 'row', flexWrap: 'wrap', columnGap: spacing.md, marginTop: 2 },
   flag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  pastDate: { width: 92 },
+  pastDate: { width: 84, fontSize: 11, lineHeight: 16 },
+  papers: { gap: 6, paddingTop: 8 },
+  paper: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowTitle: { fontSize: 14.5, lineHeight: 19, fontWeight: '600', letterSpacing: -0.2 },
+  rowProduct: { fontSize: 12.5, lineHeight: 16, fontWeight: '500' },
+  wear: { alignItems: 'flex-end', gap: 1, flexShrink: 0 },
+  wearFigure: { fontSize: 13, lineHeight: 17, fontWeight: '600', letterSpacing: -0.3 },
+  wearAge: { fontSize: 10.5, lineHeight: 14, fontWeight: '500' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingTop: 8 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
+  tile: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 78,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+    ...leaf('sm'),
+  },
+  tileLabel: { fontSize: 11.5, lineHeight: 14, fontWeight: '600', textAlign: 'center' },
+  tileDot: { position: 'absolute', top: 8, right: 8, width: 6, height: 6, borderRadius: 3 },
   recording: { padding: 14, gap: spacing.md, overflow: 'visible' },
   empty: { alignItems: 'center', gap: spacing.sm, padding: spacing.xl },
   emptyText: { fontWeight: '400', textAlign: 'center' },
   entry: { padding: 14, gap: 10 },
   entryLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  partChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  partChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    maxWidth: '100%',
+  },
+  chipLabel: { flexShrink: 1, fontSize: 11, lineHeight: 14, fontWeight: '600' },
+  chipAmount: { fontSize: 10.5, lineHeight: 14, fontWeight: '500', letterSpacing: -0.2 },
 });

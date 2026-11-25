@@ -78,7 +78,11 @@
       "revenuecat": {
         "android": "",
         "ios": ""
+      },
+      "eas": {
+        "projectId": "49ae75e0-972d-4afc-bdbd-93eadcfdd53e"
       }
-    }
+    },
+    "owner": "nofayz"
   }
 }

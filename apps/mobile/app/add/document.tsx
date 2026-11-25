@@ -87,7 +87,13 @@ export default function AddDocumentScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const params = useLocalSearchParams<
-    { vehicleId?: string; documentType?: DocumentType } & FileParams
+    {
+      vehicleId?: string;
+      documentType?: DocumentType;
+      /** The part line it is the paper for, and the name it is filed under by default. */
+      partId?: string;
+      title?: string;
+    } & FileParams
   >();
 
   const vehicles = useQuery(vehiclesQuery(api));
@@ -117,11 +123,13 @@ export default function AddDocumentScreen() {
   // A paper that runs out runs from a day: today unless it says otherwise.
   const from = terms ? issued || today : issued;
   const name = kindName(documentType);
-  const fallbackTitle = terms
-    ? `${name} ${(from || today).slice(0, 4)}`
-    : file
-      ? file.name.replace(/\.[^.]+$/, '')
-      : name;
+  const fallbackTitle = params.title
+    ? params.title
+    : terms
+      ? `${name} ${(from || today).slice(0, 4)}`
+      : file
+        ? file.name.replace(/\.[^.]+$/, '')
+        : name;
 
   const take = async (source: 'camera' | 'library' | 'files') => {
     setPickError(null);
@@ -156,6 +164,7 @@ export default function AddDocumentScreen() {
           title: title.trim() || fallbackTitle,
           ...(from ? { issuedOn: from } : {}),
           ...(until ? { expiresOn: until } : {}),
+          ...(params.partId ? { partId: params.partId } : {}),
         },
       });
       void flush();

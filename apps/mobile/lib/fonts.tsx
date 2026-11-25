@@ -14,7 +14,7 @@
  * nothing to patch and every label fell to the system font.
  */
 
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import {
   CascadiaMono_400Regular,
@@ -45,6 +45,8 @@ export function useAppFonts(): boolean {
      * glyph drawn before it lands is an empty box — the tab bar, the bell and + came up blank.
      */
     ...Ionicons.font,
+    // A part's icons (components/parts-kit): the workshop's own drawings, not emoji.
+    ...MaterialCommunityIcons.font,
   });
   // A font that fails to load should cost its glyphs, not the whole app behind a blank screen.
   return loaded || Boolean(error);

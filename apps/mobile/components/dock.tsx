@@ -1,22 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
-  LayoutAnimation,
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
-  UIManager,
   useWindowDimensions,
   View,
-  type LayoutChangeEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
 import { AddGlyph } from '@/components/add-sheet';
 import { Glyph, Icon, type IconName } from '@/lib/instrument';
 import { ease, haptic, PressableScale, spring, useReduceMotion } from '@/lib/motion';
-import { lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { leaf, LEAF, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 import { Key } from '@/lib/ui';
 
 /** One place in a dock. */
@@ -46,19 +43,87 @@ export type DockAction = {
   onPress: () => void;
 };
 
-// Old architecture on Android keeps LayoutAnimation behind a flag; on the new one it is a no-op.
-if (Platform.OS === 'android') UIManager.setLayoutAnimationEnabledExperimental?.(true);
+/*
+ * The slab's geometry. The bar is lower than the key is wide, and over its middle it rises into a
+ * round boss that carries the key — the key grows out of the bar rather than sitting on it.
+ */
+/** The bar: an icon over its name. */
+const BAR = 52;
+/** The copper key, across. */
+const KEY = 58;
+/** The lip under the key's face (`Key`'s own). */
+const LIP = 2;
+/** The bar's material standing round the key. */
+const RING = 6;
+/** The boss: a circle round the key's centre, the key's radius and the ring. */
+const BOSS = KEY / 2 + RING;
+/** How far the boss rises above the bar's top edge. */
+const RISE = 18;
+/** The curve where the bar's edge turns up into the boss. */
+const FILLET = 10;
+/** The whole slab, boss included. */
+const HEIGHT = RISE + BAR;
+/** The key's centre, from the slab's top: its top a ring's width under the boss's. */
+const KEY_Y = RING + KEY / 2;
+/** How far either side of the key the bar's edge starts to rise. */
+const REACH = filletReach();
+/** Between the two halves of the places: the boss's foot, with air either side. */
+const SPACE = 2 * REACH + 8;
+/**
+ * A place's width when the slab fits its places (the key in the middle): with no pad at the ends,
+ * the slab's edge stands as far from a place's icon and name as the bar's top and bottom do.
+ */
+const SLOT = 62;
+/** With the key at the end: its centre from the slab's right edge, clear of the tight corner. */
+const KEY_END = REACH + LEAF.md.tight + 4;
+// Less than a page's gutter: the vehicle dock's places get the width.
+const GUTTER = spacing.md;
+/** How far the wash stands in from its slot, and how wide it grows at most. */
+const WASH_INSET = 3;
+const WASH_MAX = 76;
+/** Wider than a phone, the slab stops growing and sits centred. */
+const MAX_WIDTH = 520;
+/** The bar above the safe area: the slab and the air over it. */
+const BAR_HEIGHT = spacing.sm + HEIGHT;
 
-/** Where a place sits inside the dock, measured rather than divided into equal slots. */
-type Box = { x: number; width: number };
+/** How far from the centre the bar's edge starts to turn up into the boss. */
+function filletReach(): number {
+  const dy = KEY_Y - (RISE - FILLET);
+  return Math.sqrt((BOSS + FILLET) ** 2 - dy ** 2);
+}
 
-const PAD = 5;
-const TAB = 44;
-const KEY = 44;
-const DOCK = KEY + PAD * 2;
-const GUTTER = spacing.lg;
-/** The bar above the safe area: the dock and the air over it. */
-const BAR_HEIGHT = spacing.sm + DOCK;
+/**
+ * The slab's outline at a width: the house leaf (swept top-left and bottom-right, tight elsewhere),
+ * and over the key, at `cx` along its top edge, the boss, joined by a fillet either side so the edge
+ * flows into it. Drawn rather than composed from views, because a bump has no `borderRadius`.
+ */
+function outline(width: number, cx: number, top = 0): string {
+  const t = top + RISE;
+  const bottom = top + HEIGHT;
+  const { wide, tight } = LEAF.md;
+  const reach = REACH;
+  // Where each fillet meets the boss: along the line between their centres, the boss's radius out.
+  const dy = KEY_Y - (RISE - FILLET);
+  const k = BOSS / (BOSS + FILLET);
+  const meetX = reach * k;
+  const meetY = top + KEY_Y - dy * k;
+  return [
+    `M ${wide} ${t}`,
+    `L ${cx - reach} ${t}`,
+    `A ${FILLET} ${FILLET} 0 0 0 ${cx - meetX} ${meetY}`,
+    `A ${BOSS} ${BOSS} 0 0 1 ${cx + meetX} ${meetY}`,
+    `A ${FILLET} ${FILLET} 0 0 0 ${cx + reach} ${t}`,
+    `L ${width - tight} ${t}`,
+    `A ${tight} ${tight} 0 0 1 ${width} ${t + tight}`,
+    `L ${width} ${bottom - wide}`,
+    `A ${wide} ${wide} 0 0 1 ${width - wide} ${bottom}`,
+    `L ${tight} ${bottom}`,
+    `A ${tight} ${tight} 0 0 1 0 ${bottom - tight}`,
+    `L 0 ${t + wide}`,
+    `A ${wide} ${wide} 0 0 1 ${wide} ${t}`,
+    'Z',
+  ].join(' ');
+}
 
 /**
  * What a screen under a dock leaves below its last row: the dock floats, so a page that ends where
@@ -70,18 +135,21 @@ export function useDockSpace(): number {
 }
 
 /**
- * The dock: one floating surface — the web's popover material, its lit rim in the dark — that
- * hugs what it holds and sits centred over the page: the places, then the copper key. Nothing is
- * spread to fill a width, so the icons sit close and the bar is only as wide as its contents.
+ * The dock: one floating slab at the foot of the screen in the web's popover material, cut as the
+ * house leaf, and the copper key — larger than the bar is tall, standing in a boss the bar rises
+ * into, so it reads as grown out of the bar. `keyAt="center"` (the app's few places) fits its
+ * places either side of the key; `keyAt="end"` (a vehicle's five sections) runs the width of the
+ * screen, the places in a row and the key at the right, where the thumb is.
  *
- * The places wear the web's own Solar duotone icons. Where you are wears its label inside the web
- * nav's copper wash, and the wash *travels*: its leading edge sets off first and the trailing one
- * follows, so it stretches toward where you are going and gathers itself there. The icon you
- * arrive at pops in, in copper.
+ * Every place says its name under its icon, always. Where you are sits on a copper wash in the
+ * small leaf, a short copper needle on its top edge like a gauge's pointer, and the wash *travels*:
+ * its leading edge sets off first and the trailing one follows, so it stretches toward where you
+ * are going and gathers itself there. The icon you arrive at pops in, solid and copper.
  *
- * The key is the web's `.key` — a lit top edge, a lip under it, a face that sinks onto the lip.
- * Pressed, it deals what you can add as a fanned hand of cards, nearest first, and becomes their
- * ×. Held, it goes straight to the camera. With no `actions`, a press opens the sheet directly.
+ * The key is the web's `.key` — a lit top edge, a lip under it, a face that sinks onto the lip —
+ * made round, with light falling across its face and a bezel ring like a dial's. Pressed, it deals
+ * what you can add as a hand of cards above it and becomes their ×. Held, it goes straight to the
+ * camera. With no `actions`, a press opens the sheet directly.
  *
  * Both docks in the app are this one — the app's places and a vehicle's sections.
  */
@@ -91,6 +159,7 @@ export function Dock({
   onSelect,
   add,
   actions,
+  keyAt = 'center',
   children,
 }: {
   items: readonly DockItem[];
@@ -104,86 +173,90 @@ export function Dock({
     onLongPress: () => void;
   };
   actions?: readonly DockAction[];
+  /** Where the key stands: between the places, or after them at the right. */
+  keyAt?: 'center' | 'end';
   /** The sheet the key opens: a sibling of the dock, so it covers the page rather than sits in it. */
   children?: ReactNode;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
   const reduce = useReduceMotion();
-  const [boxes, setBoxes] = useState<Record<string, Box>>({});
-  const [dockWidth, setDockWidth] = useState(0);
+  const { width: screenWidth } = useWindowDimensions();
+  const [width, setWidth] = useState(0);
   const [left] = useState(() => new Animated.Value(0));
   const [right] = useState(() => new Animated.Value(0));
   const [arrive] = useState(() => new Animated.Value(reduce ? 1 : 0));
   const [fanned, setFanned] = useState(false);
-  const placed = useRef<Box | null>(null);
+  const placed = useRef<number | null>(null);
   const bottom = Math.max(insets.bottom, spacing.sm);
-  // The dock is centred, so the key's distance from the screen's right edge follows its width.
-  const keyRight = dockWidth > 0 ? (screenWidth - dockWidth) / 2 + PAD : GUTTER + PAD;
 
-  const target = boxes[activeKey];
+  const centred = keyAt === 'center';
+  // The key's centre along the slab.
+  const keyX = centred ? width / 2 : width - KEY_END;
+  // Centred, the halves either side of it: the first holds the extra place when there is an odd
+  // number. At the end, one row up to the boss's foot.
+  const split = centred ? Math.ceil(items.length / 2) : items.length;
+  const halves = [items.slice(0, split), items.slice(split)] as const;
+  // No pad at the slab's ends: the air beside the places matches the air above and below them.
+  const half = Math.max(0, (width - SPACE) / 2);
+  const row = Math.max(0, keyX - REACH - 4);
+  const index = items.findIndex((item) => item.key === activeKey);
 
-  // The dock rises into place once, when its screen first appears.
+  /** The active place's wash, from the slab's width rather than measured: the slots are equal. */
+  const washAt = (at: number): [number, number] => {
+    let slot: number;
+    let x: number;
+    if (centred) {
+      const first = at < split;
+      slot = half / Math.max(1, first ? halves[0].length : halves[1].length);
+      x = first ? at * slot : half + SPACE + (at - split) * slot;
+    } else {
+      slot = row / Math.max(1, items.length);
+      x = at * slot;
+    }
+    const span = Math.min(slot - WASH_INSET * 2, WASH_MAX);
+    const l = x + (slot - span) / 2;
+    return [l, l + span];
+  };
+
+  // The slab rises into place once, when its screen first appears.
   useEffect(() => {
     if (reduce) return;
     Animated.spring(arrive, {
       toValue: 1,
-      delay: 120,
+      delay: 0,
       useNativeDriver: true,
-      speed: 10,
+      speed: 4,
       bounciness: 5,
     }).start();
   }, [arrive, reduce]);
 
   /*
    * The wash's two edges, each on its own spring: whichever edge faces the way it is going leads,
-   * the other lags, so the pill stretches across and settles. `left` and `width` cannot ride the
-   * native driver; three views on a spring is not the work that drops frames.
+   * the other lags, so the wash stretches across — over the key, between the halves — and settles.
    */
   useEffect(() => {
-    if (!target) return;
+    if (width === 0 || index < 0) return;
+    const [l, r] = washAt(index);
     const from = placed.current;
-    placed.current = target;
-    if (reduce || !from) {
-      left.setValue(target.x);
-      right.setValue(target.x + target.width);
+    placed.current = index;
+    if (reduce || from === null) {
+      left.setValue(l);
+      right.setValue(r);
       return;
     }
-    const goingRight = target.x > from.x;
-    const lead = { useNativeDriver: false, speed: 24, bounciness: 4 } as const;
-    const lag = { useNativeDriver: false, speed: 11, bounciness: 6 } as const;
+    const goingRight = index > from;
+    const lead = { useNativeDriver: false, speed: 14, bounciness: 4 } as const;
+    const lag = { useNativeDriver: false, speed: 2, bounciness: 6 } as const;
     const settle = Animated.parallel([
-      Animated.spring(left, { toValue: target.x, ...(goingRight ? lag : lead) }),
-      Animated.spring(right, { toValue: target.x + target.width, ...(goingRight ? lead : lag) }),
+      Animated.spring(left, { toValue: l, ...(goingRight ? lag : lead) }),
+      Animated.spring(right, { toValue: r, ...(goingRight ? lead : lag) }),
     ]);
     settle.start();
     return () => settle.stop();
-  }, [target, reduce, left, right]);
-
-  /**
-   * The label's arrival changes the dock's width, and the dock re-centres: both are a layout
-   * change, asked for before the press lands so they glide rather than jump.
-   */
-  const easeLabels = () => {
-    if (reduce) return;
-    LayoutAnimation.configureNext({
-      duration: 280,
-      create: { type: 'easeOut', property: 'opacity' },
-      update: { type: 'spring', springDamping: 0.85 },
-      delete: { type: 'easeIn', property: 'opacity', duration: 90 },
-    });
-  };
-
-  const measure = (key: string) => (event: LayoutChangeEvent) => {
-    const { x, width } = event.nativeEvent.layout;
-    setBoxes((previous) => {
-      const known = previous[key];
-      return known?.x === x && known.width === width
-        ? previous
-        : { ...previous, [key]: { x, width } };
-    });
-  };
+    // `washAt` reads only the slab's width, the layout and the places' count, all listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, width, centred, items.length, reduce, left, right]);
 
   const pressKey = () => {
     haptic.light();
@@ -191,91 +264,151 @@ export function Dock({
     else add.onPress();
   };
 
+  const place = (item: DockItem) => {
+    const focused = item.key === activeKey;
+    return (
+      <PressableScale
+        key={item.key}
+        onPress={() => {
+          if (focused) return;
+          haptic.selection();
+          onSelect(item.key);
+        }}
+        accessibilityRole="tab"
+        accessibilityState={{ selected: focused }}
+        accessibilityLabel={item.a11yLabel ?? item.label}
+        scaleTo={0.9}
+        style={styles.tab}
+      >
+        <TabIcon item={item} focused={focused} />
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
+          allowFontScaling={false}
+          style={[
+            styles.tabLabel,
+            focused
+              ? { color: theme.foreground, fontWeight: '700' }
+              : { color: theme.mutedForeground },
+          ]}
+        >
+          {item.label}
+        </Text>
+      </PressableScale>
+    );
+  };
+
   return (
     <View
-      // Nothing is drawn around the capsule, so a tap there belongs to the page behind.
+      // Nothing is drawn around the slab, so a tap there belongs to the page behind.
       pointerEvents="box-none"
       style={[styles.bar, { paddingBottom: bottom }]}
     >
       <Animated.View
-        onLayout={(event) => setDockWidth(event.nativeEvent.layout.width)}
+        pointerEvents="box-none"
+        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
         style={[
-          styles.dock,
-          { backgroundColor: theme.popover },
-          rimmed(theme),
-          lift(theme),
+          styles.slab,
+          // Centred, the slab is as wide as its places and the key; at the end, the screen's width.
+          centred
+            ? { width: items.length * SLOT + SPACE, maxWidth: '100%' }
+            : { width: '100%', maxWidth: MAX_WIDTH },
           {
             transform: [
-              { translateY: arrive.interpolate({ inputRange: [0, 1], outputRange: [90, 0] }) },
+              { translateY: arrive.interpolate({ inputRange: [0, 1], outputRange: [110, 0] }) },
             ],
           },
         ]}
       >
-        {/* The wash measures against this row, which has no padding of its own. */}
-        <View accessibilityRole="tablist" style={styles.track}>
-          {target ? (
-            <Animated.View
+        {/*
+         * The bar's shadow, cast by a plain view of its shape — a view with no fill of its own casts
+         * none on Android — and the outline drawn over it, boss and all.
+         */}
+        <View style={[styles.cast, { backgroundColor: theme.popover }, lift(theme)]} />
+        {/*
+         * Everything drawn on the slab, raised over the shadow's view. Android stacks siblings by
+         * elevation before order: under the caster's, the bar, the places and the key were all
+         * painted over by a plain white bar. No fill, so this casts nothing itself.
+         */}
+        <View pointerEvents="box-none" style={styles.face}>
+          {width > 0 ? (
+            <Svg
+              width={width}
+              height={HEIGHT + 1}
+              style={styles.ground}
               pointerEvents="none"
-              style={[
-                styles.pill,
-                {
-                  left,
-                  width: Animated.subtract(right, left),
-                  backgroundColor: theme.primarySoft,
-                },
-              ]}
-            />
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Path
+                d={outline(width, keyX)}
+                fill={theme.popover}
+                stroke={theme.dark ? theme.rim : theme.hairline}
+                strokeWidth={1}
+              />
+              {/* A copper glow in the boss, round the key: where it came out of the bar. */}
+              <Circle cx={keyX} cy={KEY_Y} r={KEY / 2 + 3} fill={theme.primary} opacity={0.14} />
+            </Svg>
           ) : null}
 
-          {items.map((item) => {
-            const focused = item.key === activeKey;
-            return (
-              <PressableScale
-                key={item.key}
-                onPress={() => {
-                  if (focused) return;
-                  haptic.selection();
-                  easeLabels();
-                  onSelect(item.key);
-                }}
-                onLayout={measure(item.key)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: focused }}
-                // The label is drawn only where you are, so every place names itself here.
-                accessibilityLabel={item.a11yLabel ?? item.label}
-                scaleTo={0.86}
-                style={[styles.tab, focused && styles.tabActive]}
+          {/* The places, in the bar under the boss's shoulders. */}
+          <View
+            style={[styles.track, centred ? null : { right: width - keyX + REACH + 4 }]}
+            accessibilityRole="tablist"
+          >
+            {width > 0 && index >= 0 ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.wash,
+                  {
+                    left,
+                    width: Animated.subtract(right, left),
+                    backgroundColor: theme.primarySoft,
+                  },
+                ]}
               >
-                <TabIcon item={item} focused={focused} />
-                {focused ? (
-                  <Text numberOfLines={1} style={[styles.tabLabel, { color: theme.foreground }]}>
-                    {item.label}
-                  </Text>
-                ) : null}
-              </PressableScale>
-            );
-          })}
-        </View>
+                <View style={[styles.needle, { backgroundColor: theme.primary }]} />
+              </Animated.View>
+            ) : null}
+            {centred ? (
+              <>
+                <View style={styles.half}>{halves[0].map(place)}</View>
+                <View style={{ width: SPACE }} />
+                <View style={styles.half}>{halves[1].map(place)}</View>
+              </>
+            ) : (
+              items.map(place)
+            )}
+          </View>
 
-        <Key
-          onPress={pressKey}
-          onLongPress={add.onLongPress}
-          delayLongPress={300}
-          radius={KEY / 2}
-          accessibilityLabel={add.a11yLabel}
-          accessibilityHint="Hold to take a photo"
-          accessibilityState={{ expanded: add.open || fanned }}
-          faceStyle={styles.keyFace}
-        >
-          <AddGlyph open={add.open || fanned} color={theme.primaryForeground} size={22} />
-        </Key>
+          <View
+            pointerEvents="box-none"
+            style={centred ? styles.keyCentre : [styles.keyEnd, { left: keyX - KEY / 2 }]}
+          >
+            <Key
+              onPress={pressKey}
+              onLongPress={add.onLongPress}
+              delayLongPress={100}
+              radius={KEY / 2}
+              accessibilityLabel={add.a11yLabel}
+              accessibilityHint="Hold to take a photo"
+              accessibilityState={{ expanded: add.open || fanned }}
+              faceStyle={styles.keyFace}
+            >
+              <KeyFace open={add.open || fanned} />
+            </Key>
+          </View>
+        </View>
       </Animated.View>
 
       {fanned && actions ? (
         <Fan
           actions={actions}
-          bottom={bottom}
-          keyRight={keyRight}
+          keyBottom={bottom + HEIGHT - (RING + KEY)}
+          keyX={(screenWidth - width) / 2 + keyX}
+          centred={centred}
           onClose={() => setFanned(false)}
           onPick={(action) => {
             setFanned(false);
@@ -287,6 +420,45 @@ export function Dock({
 
       {children}
     </View>
+  );
+}
+
+/**
+ * The key's face: light falling across the copper from above, a bezel ring a little in from its
+ * edge like a dial's, and the + (× while what it opened is open).
+ */
+function KeyFace({ open }: { open: boolean }) {
+  const theme = useTheme();
+  const tall = KEY - LIP;
+  return (
+    <>
+      <Svg
+        width={KEY}
+        height={tall}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        <Defs>
+          <LinearGradient id="dockKeyLight" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#FFFFFF" stopOpacity={theme.dark ? 0.24 : 0.32} />
+            <Stop offset="0.6" stopColor="#FFFFFF" stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Circle cx={KEY / 2} cy={tall / 2} r={tall / 2} fill="url(#dockKeyLight)" />
+        <Circle
+          cx={KEY / 2}
+          cy={tall / 2}
+          r={tall / 2 - 7}
+          fill="none"
+          stroke={theme.primaryForeground}
+          strokeOpacity={0.2}
+          strokeWidth={1.25}
+        />
+      </Svg>
+      <AddGlyph open={open} color={theme.primaryForeground} size={26} />
+    </>
   );
 }
 
@@ -353,32 +525,35 @@ const CARD_GAP = 10;
 
 /**
  * The hand the key deals: each card flies out of the key and lands in a stack above it, nearest
- * first, every one a little more turned and a little further left than the one below — a hand of
- * cards held from the key. The page dims behind them, and the key stays where it was, as their ×.
+ * first, each turned a little, alternately, like cards dealt from the middle. The page dims behind
+ * them, and the key stays where it was, as their ×.
  *
  * Positioned from the dock's own geometry rather than measured on screen, so a modal that starts
  * its own window under the status bar and one that does not land the hand in the same place.
  */
 function Fan({
   actions,
-  bottom,
-  keyRight,
+  keyBottom,
+  keyX,
+  centred,
   onClose,
   onPick,
 }: {
   actions: readonly DockAction[];
-  /** The dock's distance from the bottom of the screen. */
-  bottom: number;
-  /** The key's distance from the right of the screen. */
-  keyRight: number;
+  /** The key's distance from the bottom of the screen. */
+  keyBottom: number;
+  /** The key's centre, from the screen's left. */
+  keyX: number;
+  /** Dealt straight up from a key in the middle; held from the right over one at the end. */
+  centred: boolean;
   onClose: () => void;
   onPick: (action: DockAction) => void;
 }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
+  const { width: screenWidth } = useWindowDimensions();
   const [dim] = useState(() => new Animated.Value(reduce ? 1 : 0));
   const [deal] = useState(() => actions.map(() => new Animated.Value(reduce ? 1 : 0)));
-  const keyBottom = bottom + PAD;
   const base = keyBottom + KEY + spacing.md;
 
   useEffect(() => {
@@ -411,7 +586,16 @@ function Fan({
   };
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={() => fold(onClose)}>
+    // Under the status and navigation bars too, so the dim covers the whole screen and the hand's
+    // `bottom` is measured from the same edge as the dock's.
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      onRequestClose={() => fold(onClose)}
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
       <Animated.View
         style={[StyleSheet.absoluteFill, { backgroundColor: theme.scrim, opacity: dim }]}
       >
@@ -427,14 +611,21 @@ function Fan({
         const progress = deal[index]!;
         // From the key's centre to where this card lands.
         const rise = base - keyBottom - KEY / 2 + index * (CARD + CARD_GAP) + CARD / 2;
-        const turn = -(index + 1) * 1.6;
+        const turn = centred ? (index % 2 === 0 ? -1 : 1) * (1 + index * 0.5) : -(index + 1) * 1.6;
         return (
           <Animated.View
             key={action.key}
+            pointerEvents="box-none"
             style={[
               styles.cardSlot,
+              centred
+                ? styles.cardCentre
+                : {
+                    right: screenWidth - keyX - KEY / 2 + index * 5,
+                    alignItems: 'flex-end',
+                    transformOrigin: 'right bottom',
+                  },
               {
-                right: keyRight + index * 5,
                 bottom: base + index * (CARD + CARD_GAP),
                 opacity: progress.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 1, 1] }),
                 transform: [
@@ -444,11 +635,11 @@ function Fan({
                       outputRange: [rise, 0],
                     }),
                   },
-                  { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }) },
+                  { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) },
                   {
                     rotate: progress.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [`${18 + index * 4}deg`, `${turn}deg`],
+                      outputRange: [`${(index % 2 === 0 ? 1 : -1) * 14}deg`, `${turn}deg`],
                     }),
                   },
                 ],
@@ -485,14 +676,14 @@ function Fan({
       })}
 
       {/* The key, where it stood, as the hand's ×. */}
-      <View style={[styles.keySlot, { right: keyRight, bottom: keyBottom }]}>
+      <View style={[styles.fanKey, { left: keyX - KEY / 2, bottom: keyBottom }]}>
         <Key
           onPress={() => fold(onClose)}
           radius={KEY / 2}
           accessibilityLabel="Close"
           faceStyle={styles.keyFace}
         >
-          <AddGlyph open color={theme.primaryForeground} size={22} />
+          <KeyFace open />
         </Key>
       </View>
     </Modal>
@@ -509,31 +700,46 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingHorizontal: GUTTER,
   },
-  dock: {
-    maxWidth: '100%',
+  slab: { height: HEIGHT },
+  ground: { position: 'absolute', top: 0, left: 0 },
+  cast: { position: 'absolute', top: RISE, left: 0, right: 0, height: BAR, ...leaf('md') },
+  // Over the caster's elevation (`lift`'s 12), so Android draws the slab's face on top of it.
+  face: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, elevation: 13 },
+  // The bar's own band, under the boss: where the places sit.
+  track: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: RISE,
+    height: BAR,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    height: DOCK,
-    borderRadius: DOCK / 2,
-    padding: PAD,
   },
-  track: { flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 2 },
-  pill: { position: 'absolute', top: 0, bottom: 0, borderRadius: 999 },
+  half: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  wash: {
+    position: 'absolute',
+    top: 3,
+    bottom: 3,
+    alignItems: 'center',
+    ...leaf('sm'),
+  },
+  // The pointer on the wash's top edge: where you are, read like a gauge.
+  needle: { width: 16, height: 3, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 },
   tab: {
-    flexShrink: 1,
-    flexDirection: 'row',
+    flex: 1,
+    minWidth: 0,
+    height: BAR,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    height: TAB,
-    minWidth: TAB,
-    paddingHorizontal: 11,
-    borderRadius: 999,
+    gap: 3,
+    // A little low in the bar, so the needle over the wash has air above the icon.
+    paddingTop: 4,
+    paddingHorizontal: 2,
   },
-  tabActive: { paddingLeft: 12, paddingRight: 15 },
-  tabLabel: { ...typeScale.label, fontSize: 13, flexShrink: 1 },
-  keyFace: { width: KEY, height: KEY - 2 },
+  tabLabel: { ...typeScale.caption, fontSize: 10.5, lineHeight: 13, fontWeight: '600' },
+  keyCentre: { position: 'absolute', top: RING, left: 0, right: 0, alignItems: 'center' },
+  keyEnd: { position: 'absolute', top: RING },
+  keyFace: { width: KEY, height: KEY - LIP, alignItems: 'center', justifyContent: 'center' },
   count: {
     position: 'absolute',
     top: -6,
@@ -556,7 +762,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 2,
   },
-  cardSlot: { position: 'absolute', transformOrigin: 'right bottom' },
+  cardSlot: { position: 'absolute', left: 0 },
+  cardCentre: { right: 0, alignItems: 'center' },
   card: {
     height: CARD,
     minWidth: 196,
@@ -574,5 +781,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  keySlot: { position: 'absolute' },
+  fanKey: { position: 'absolute' },
 });

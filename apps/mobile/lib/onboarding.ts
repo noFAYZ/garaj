@@ -1,43 +1,10 @@
 /**
- * What a first run needs to know: whether this phone has seen the welcome, what the person's
- * region suggests for money and units, and whether the garage setup has been offered this session.
+ * What a first run needs to know: what the person's region suggests for money and units, and
+ * whether the garage setup has been offered this session.
  */
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSyncExternalStore } from 'react';
 import type { DistanceUnit, VolumeUnit } from '@vehicle-os/domain';
 import { CURRENCIES } from './locale-options';
-
-const WELCOME_KEY = 'garaj.welcome-seen';
-let welcomeSeen = false;
-const listeners = new Set<() => void>();
-
-/**
- * Read once at launch, while the launch screen is up (`_layout` waits on it), so the first frame
- * is already the right one: the welcome on a new install, the sign-in form after.
- */
-export const welcomeReady: Promise<void> = AsyncStorage.getItem(WELCOME_KEY)
-  .then((stored) => {
-    welcomeSeen = stored === '1';
-  })
-  // Unreadable storage shows the welcome again, never blocks the way in.
-  .catch(() => undefined);
-
-export function useWelcomeSeen(): boolean {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => welcomeSeen,
-  );
-}
-
-export function markWelcomeSeen(): void {
-  welcomeSeen = true;
-  listeners.forEach((listener) => listener());
-  void AsyncStorage.setItem(WELCOME_KEY, '1').catch(() => undefined);
-}
 
 /*
  * The garage setup opens by itself once per session for someone with no garage — not again on

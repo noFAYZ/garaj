@@ -1,12 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { dashboardQuery } from '@vehicle-os/api-client/react';
 import { AddSheet } from '@/components/add-sheet';
 import { Dock, type DockAction, type DockItem } from '@/components/dock';
 import type { QuickAction } from '@/components/add-activity';
 import { useAddRequests, type AddRequest } from '@/lib/add-request';
-import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { haptic } from '@/lib/motion';
 import { startStore } from '@/lib/store';
@@ -26,7 +23,6 @@ const TABS: readonly DockItem[] = [
   // The web's own icon set. Garage is the dashboard the app opens on, so it wears tiles, not a door.
   { key: 'index', label: 'Garage', icon: 'dashboard' },
   { key: 'vehicles', label: 'Vehicles', icon: 'vehicles' },
-  { key: 'tasks', label: 'Tasks', icon: 'task' },
 ];
 
 export default function TabsLayout() {
@@ -85,18 +81,16 @@ interface TabBarProps {
  * dashboard the Garage tab already holds, so the bar asks for nothing of its own.
  */
 function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
-  const router = useRouter();
   const [sheet, setSheet] = useState<{
     file: PickedFile | null;
     quick?: QuickAction;
     request?: AddRequest;
   } | null>(null);
-  // Home's Up next and the lists' "add" open this drawer on its form.
-  useAddRequests((request) => setSheet({ file: null, request }));
+  // Home's Up next, its quick actions and the lists' "add" open this drawer on its form.
+  useAddRequests(({ quick, ...request }) =>
+    setSheet(quick ? { file: null, quick } : { file: null, request }),
+  );
   const activeName = state.routes[state.index]?.name ?? '';
-  const attention = useQuery(dashboardQuery(api)).data?.attention;
-  const late = attention?.overdueTasks ?? 0;
-  const today = attention?.tasksDueToday ?? 0;
 
   const camera = async () => {
     haptic.success();
@@ -118,8 +112,10 @@ function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
 
   /*
    * What the key deals, in the order a thumb reaches for them at a pump — the vehicle's own dock's
-   * order. The pump-side three open their quick entry in the drawer, which asks which vehicle on
-   * top, so a fill-up never leaves this screen; the rest go to their forms.
+   * order, cut to five that each open something none of the others do. The odometer is left to
+   * a fill-up (which takes it) and the sheet; a new vehicle to the Vehicles tab and the sheet.
+   * Fill-up and service open their quick entry in the drawer, which asks which vehicle on top, so
+   * a fill-up never leaves this screen; the rest go to their forms.
    */
   const quick = (kind: QuickAction) => () => setSheet({ file: null, quick: kind });
   const actions: DockAction[] = [
@@ -129,13 +125,6 @@ function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
       label: 'Fill-up',
       hint: 'Litres, cost, odometer',
       onPress: quick('fuel'),
-    },
-    {
-      key: 'odometer',
-      emoji: '🗺️',
-      label: 'Odometer reading',
-      hint: 'Just the number',
-      onPress: quick('odometer'),
     },
     {
       key: 'service',
@@ -159,12 +148,6 @@ function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
       onPress: () => void camera(),
     },
     {
-      key: 'vehicle',
-      emoji: '🚗',
-      label: 'New vehicle',
-      onPress: () => router.push('/add/vehicle'),
-    },
-    {
       key: 'more',
       emoji: '✨',
       label: 'Everything else',
@@ -175,16 +158,7 @@ function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
 
   return (
     <Dock
-      items={TABS.map((tab) =>
-        tab.key === 'tasks' && late + today > 0
-          ? {
-              ...tab,
-              count: late + today,
-              countTone: late > 0 ? 'destructive' : 'warning',
-              a11yLabel: `Tasks, ${late > 0 ? `${late} late` : `${today} due today`}`,
-            }
-          : tab,
-      )}
+      items={TABS}
       activeKey={activeName}
       onSelect={go}
       actions={actions}
