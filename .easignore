@@ -1,0 +1,29 @@
+# EAS uploads by this file instead of .gitignore: keep the two in step.
+node_modules/
+.turbo/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+.expo/
+.expo-shared/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+playwright-report/
+test-results/
+.DS_Store
+
+# Agent skills: not part of the app, and their directory links cannot be copied on Windows.
+.claude/
+.agents/

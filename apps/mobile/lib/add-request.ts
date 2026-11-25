@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { EventType } from '@vehicle-os/domain';
-import type { ActivityMode } from '@/components/add-activity';
+import type { ActivityMode, QuickAction } from '@/components/add-activity';
 
 /**
  * Opening the + drawer on its add form from anywhere — a reminder's Log, Home's Up next, an empty
@@ -13,6 +13,8 @@ export interface AddRequest {
   readonly kind?: EventType;
   /** A reminder's Log: the form completes this schedule. */
   readonly planId?: string;
+  /** Home's quick actions: the drawer opens on this quick entry instead of the form. */
+  readonly quick?: QuickAction;
 }
 
 /*

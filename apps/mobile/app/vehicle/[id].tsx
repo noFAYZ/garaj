@@ -24,7 +24,7 @@ import {
 import type { MonthlySpend } from '@vehicle-os/contracts';
 import { capabilitiesFor } from '@vehicle-os/domain';
 import { ActivityFeed, nextUp, VehiclePlanned } from '@/components/activity-feed';
-import { VehicleUpkeep } from '@/components/parts-kit';
+import { VehicleParts } from '@/components/parts-kit';
 import { VehicleDocuments } from '@/components/vehicle-documents';
 import { STATS_MONTHS, VehicleStatistics } from '@/components/vehicle-statistics';
 import type { QuickAction } from '@/components/add-activity';
@@ -111,7 +111,7 @@ export default function VehicleScreen() {
   const garages = useQuery(garagesQuery(api));
   const data = vehicle.data;
   /*
-   * The four sections as elements made once per vehicle. React skips a subtree whose element is
+   * The five sections as elements made once per vehicle. React skips a subtree whose element is
    * the very one it rendered last time, so a change of tab re-renders the wrappers that show and
    * hide them, and none of the sections — a report or a ledger is not rebuilt to be hidden.
    */
@@ -120,7 +120,8 @@ export default function VehicleScreen() {
       data
         ? {
             activity: <ActivityFeed vehicle={data} bottom={dockSpace} />,
-            planned: <VehicleUpkeep vehicle={data} reminders={<VehiclePlanned vehicle={data} />} />,
+            planned: <VehiclePlanned vehicle={data} />,
+            parts: <VehicleParts vehicle={data} />,
             statistics: (
               <View
                 onLayout={(event) => {
@@ -305,6 +306,9 @@ export default function VehicleScreen() {
             <Kept shown={tab === 'planned'} built={built.includes('planned')}>
               {sections.planned}
             </Kept>
+            <Kept shown={tab === 'parts'} built={built.includes('parts')}>
+              {sections.parts}
+            </Kept>
             <Kept shown={tab === 'statistics'} built={built.includes('statistics')}>
               {sections.statistics}
             </Kept>
@@ -383,7 +387,7 @@ const lastYear = (spend: MonthlySpend): MonthlySpend => ({
 
 const DOCK_SETTLE = 280;
 /** The sections built ahead, lightest first, and the pause before each. */
-const PREBUILD: readonly VehicleTab[] = ['planned', 'documents', 'statistics'];
+const PREBUILD: readonly VehicleTab[] = ['planned', 'parts', 'documents', 'statistics'];
 const PREBUILD_GAP = 700;
 
 /** A section once built: shown, or kept out of the layout while another is. */

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import {
   Animated,
@@ -15,7 +16,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import type { MonthlySpend, Vehicle, VehiclePhoto } from '@vehicle-os/contracts';
-import { healthBand, vinTail } from '@vehicle-os/ui';
+import { costTrendsQuery } from '@vehicle-os/api-client/react';
+import { efficiencyInWindow, healthBand, vinTail } from '@vehicle-os/ui';
 import type { NextUp } from '@/components/activity-feed';
 import { BayStage } from '@/components/bay-stage';
 import { BrandLogo } from '@/components/brand-logo';
@@ -23,16 +25,19 @@ import {
   DashCard,
   DashCell,
   DashCellSkeleton,
+  DashMini,
   DashNote,
   DashReading,
   DashReadings,
   DashRow,
   DashRows,
+  DashStack,
   DashUnit,
   DashValue,
-  DIAL,
 } from '@/components/dash';
 import { photoKey, RemoteImage } from '@/components/remote-image';
+import { api } from '@/lib/api';
+import { Glyph } from '@/lib/instrument';
 import { pad, DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { ease, Gauge, haptic, PressableScale, useIgnition, useReduceMotion } from '@/lib/motion';
 import { figure, lift, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
@@ -40,6 +45,40 @@ import { Skeleton } from '@/lib/ui';
 
 // UTC, as the spend is bucketed.
 const MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', timeZone: 'UTC' });
+
+/** What a fuel is measured in, as the rate says it — Stats' words. */
+const FUEL_UNIT: Record<string, string> = {
+  LITER: 'L',
+  US_GALLON: 'gal',
+  IMP_GALLON: 'gal',
+  KWH: 'kWh',
+  KG: 'kg',
+};
+
+/**
+ * The vehicle's average consumption over its whole record, as Stats reads it — "8.4 L/100 km",
+ * "30.0 mi/gal" — from the fuel it has used most; null until two fills with readings measure one.
+ */
+function useFuelAverage(vehicle: Vehicle): { value: string; unit: string } | null | undefined {
+  const trends = useQuery(costTrendsQuery(api, vehicle.id));
+  if (trends.isPending) return undefined;
+  const perHundred = vehicle.odometerUnit !== 'MI';
+  const distance = perHundred ? 'km' : 'mi';
+  const [best] = (trends.data?.efficiency ?? [])
+    .flatMap((series) => {
+      const result = efficiencyInWindow(series.points, 0, perHundred);
+      return result
+        ? [{ unit: series.unit, average: result.average, n: series.points.length }]
+        : [];
+    })
+    .sort((a, b) => b.n - a.n);
+  if (!best) return null;
+  const fuel = FUEL_UNIT[best.unit] ?? best.unit;
+  return {
+    value: best.average.toFixed(1),
+    unit: perHundred ? `${fuel}/100${distance}` : `${distance}/${fuel}`,
+  };
+}
 
 /** The page's gutter, which the stage reaches past towards the screen's edges. */
 const GUTTER = spacing.lg;
@@ -426,6 +465,7 @@ function Dash({
   const reading = vehicle.currentOdometer;
   // A small phone's tiles are a third of 288: tighter, a size down, the month left to the label.
   const narrow = useWindowDimensions().width < 360;
+  const fuel = useFuelAverage(vehicle);
 
   return (
     // The lift on a wrapper: a shadow on the view that clips its corners is clipped with them.
@@ -484,26 +524,43 @@ function Dash({
               ) : null}
             </DashReading>
           </DashCell>
-          <DashCell
-            icon="pulse-outline"
-            label="Health"
-            said={
-              health === undefined
-                ? 'Health, loading'
-                : health === null
-                  ? 'Health not yet assessed'
-                  : `Health ${health} out of 100`
-            }
-            index={4}
-            hint="Opens Stats"
-            narrow={narrow}
-            onPress={onOpenStats}
-          >
-            {/* Mounted with its score, so the needle's check runs to the reading, not to a blank. */}
-            <DashReading>
-              {health === undefined ? <RestingDial /> : <HealthDial score={health} />}
-            </DashReading>
-          </DashCell>
+          <DashStack>
+            <DashMini
+              // Mounted with its score, so the needle's check runs to the reading, not to a blank.
+              lead={health === undefined ? <RestingDial /> : <HealthDial score={health} />}
+              value={health === undefined ? undefined : String(health ?? '—')}
+              muted={health === null}
+              word="Health"
+              said={
+                health === undefined
+                  ? 'Health, loading'
+                  : health === null
+                    ? 'Health not yet assessed'
+                    : `Health ${health} out of 100`
+              }
+              index={4}
+              hint="Opens Stats"
+              narrow={narrow}
+              onPress={onOpenStats}
+            />
+            <DashMini
+              lead={<Glyph size={14}>⛽</Glyph>}
+              value={fuel === undefined ? undefined : (fuel?.value ?? '—')}
+              muted={!fuel}
+              word={fuel?.unit ?? 'Avg'}
+              said={
+                fuel === undefined
+                  ? 'Fuel average, loading'
+                  : fuel === null
+                    ? 'Fuel average not yet measured'
+                    : `Fuel average ${fuel.value} ${fuel.unit}`
+              }
+              index={5}
+              hint="Opens Stats"
+              narrow={narrow}
+              onPress={onOpenStats}
+            />
+          </DashStack>
         </DashReadings>
         {next ? (
           <DashRows>
@@ -523,27 +580,28 @@ function Dash({
   );
 }
 
+/** The dial beside the health's score on its small card. */
+const MINI_DIAL = 16;
+
 /** The health: the web's gauge drawn small beside its score, its needle checking itself first. */
 function HealthDial({ score }: { score: number | null }) {
   const theme = useTheme();
   const band = healthBand(score);
   const progress = useIgnition(score === null ? 0 : score / 100);
   return (
-    <>
-      <Gauge progress={progress} size={DIAL} color={band ? theme[band] : undefined} bare label="" />
-      <DashValue muted={score === null}>{score ?? '—'}</DashValue>
-    </>
+    <Gauge
+      progress={progress}
+      size={MINI_DIAL}
+      color={band ? theme[band] : undefined}
+      bare
+      label=""
+    />
   );
 }
 
 function RestingDial() {
   const [still] = useState(() => new Animated.Value(0));
-  return (
-    <>
-      <Gauge progress={still} size={DIAL} bare label="" />
-      <Skeleton width={22} height={16} />
-    </>
-  );
+  return <Gauge progress={still} size={MINI_DIAL} bare label="" />;
 }
 
 /**
@@ -785,7 +843,7 @@ export function VehicleHeaderTitle({
         </View>
       ) : !bare && vehicle?.make ? (
         <View style={[styles.headerBadge, { backgroundColor: theme.muted }]}>
-          <BrandLogo make={vehicle.make} size={22} />
+          <BrandLogo make={vehicle.make} size={32} />
         </View>
       ) : null}
       <View style={{ flexShrink: 1 }}>

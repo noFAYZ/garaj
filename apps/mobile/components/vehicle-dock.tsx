@@ -10,17 +10,20 @@ import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { haptic } from '@/lib/motion';
 
-export type VehicleTab = 'activity' | 'planned' | 'statistics' | 'documents';
+export type VehicleTab = 'activity' | 'planned' | 'parts' | 'statistics' | 'documents';
 
 /**
  * The vehicle's sections, named as the web's strip names them — Logs, Reminders, Stats, Docs — in
- * the order a thumb wants them. Left is what the vehicle is doing: the record behind it and the
- * jobs in front of it. Right is what that adds up to and the paperwork proving it.
+ * the order a thumb wants them, with the phone's Parts beside Reminders: left is what the vehicle
+ * is doing — the record behind it, the jobs in front of it, what is fitted in it. Right is what
+ * that adds up to and the paperwork proving it.
  */
 const TABS = [
   // The web's strip wears the same four icons.
   { key: 'activity', label: 'Logs', icon: 'logbook', activeIcon: 'logbookActive' },
-  { key: 'planned', label: 'Reminders', icon: 'reminder', activeIcon: 'reminderActive' },
+  // "Due", on a calendar: short enough for its slot, and what the section answers.
+  { key: 'planned', label: 'Due', icon: 'due', activeIcon: 'dueActive' },
+  { key: 'parts', label: 'Parts', icon: 'parts', activeIcon: 'partsActive' },
   { key: 'statistics', label: 'Stats', icon: 'analytics', activeIcon: 'analyticsActive' },
   { key: 'documents', label: 'Docs', icon: 'papers', activeIcon: 'papersActive' },
 ] as const satisfies readonly (DockItem & { key: VehicleTab })[];
@@ -112,6 +115,7 @@ export function VehicleDock({
   const counts: Record<VehicleTab, number> = {
     activity: 0,
     planned: late + soon,
+    parts: 0,
     statistics: 0,
     documents: papers.expired + papers.soon,
   };
@@ -179,6 +183,8 @@ export function VehicleDock({
 
   return (
     <Dock
+      // Five sections: the full width, the key after them at the right, under the thumb.
+      keyAt="end"
       items={TABS.map((tab) => ({
         ...tab,
         count: counts[tab.key],

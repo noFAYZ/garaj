@@ -429,7 +429,7 @@ const TaskRow = memo(function TaskRow({
         <View style={styles.vehicle}>
           <View style={[styles.logo, { backgroundColor: theme.muted }]}>
             {make ? (
-              <BrandLogo make={make} size={28} />
+              <BrandLogo make={make} size={32} />
             ) : (
               <Ionicons name="car-sport-outline" size={14} color={theme.mutedForeground} />
             )}

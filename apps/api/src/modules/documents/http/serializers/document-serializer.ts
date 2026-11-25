@@ -15,6 +15,7 @@ export function serializeDocument(
     id: document.id,
     vehicleId: document.vehicleId,
     eventId: document.eventId,
+    partId: document.partId,
 
     documentType: document.documentType,
     title: document.title,
