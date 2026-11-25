@@ -29,4 +29,3 @@ allowBuilds:
 # fail at runtime. Worth knowing before reaching for `use()` or ref-as-a-prop on mobile.
 overrides:
   '@types/react': ^19.2.0
-

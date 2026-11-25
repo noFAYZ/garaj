@@ -208,7 +208,7 @@ That removes a build step between editing a contract and seeing it in every app.
 | Redis client     | **ioredis 5**                                                         | Rate-limit store only, fail-fast settings                                             |
 | Object storage   | **AWS SDK v3** (`client-s3`, `s3-request-presigner`), `@upstash/blob` | Presigned PUT/GET; S3, R2, MinIO or Upstash Blob                                      |
 | Payments         | **Stripe SDK 22**                                                     | Checkout, customer portal, signature-verified webhooks                                |
-| AI               | **Gemini** via REST (`fetch`) behind `AiProviderPort`                 | `gemini-3.1-flash-lite`, falls back to `gemini-3.5-flash-lite`                          |
+| AI               | **Gemini** via REST (`fetch`) behind `AiProviderPort`                 | `gemini-3.1-flash-lite`, falls back to `gemini-3.5-flash-lite`                        |
 | MCP              | **@modelcontextprotocol/sdk 1.30**                                    | Stateless Streamable HTTP server at `/api/v1/mcp`                                     |
 | Logging          | **Pino** (Fastify's logger), `pino-pretty` in dev                     | JSON lines in production, secret redaction                                            |
 | IDs              | **UUIDv7** (`uuidv7`)                                                 | Sortable, generated in app, shared with request ids                                   |
@@ -243,19 +243,19 @@ That removes a build step between editing a contract and seeing it in every app.
 
 ### 4.5 Third-party services
 
-| Service                        | Role                                 | Where                                         |
-| ------------------------------ | ------------------------------------ | --------------------------------------------- |
-| Neon / any Postgres            | Primary database                     | `DATABASE_URL`                                |
-| Upstash Redis                  | Rate-limit counter (optional)        | `REDIS_URL`                                   |
-| Upstash Blob / R2 / S3 / MinIO | Object storage                       | `UPSTASH_BLOB_TOKEN` or `OBJECT_STORAGE_*`    |
-| Google Gemini                  | AI assistant                         | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL`|
-| Stripe                         | Subscriptions                        | `STRIPE_*`                                    |
-| Resend                         | Email                                | `RESEND_API_KEY`, `EMAIL_FROM`                |
-| Expo Push                      | Mobile push                          | `EXPO_ACCESS_TOKEN`                           |
-| NHTSA vPIC / Recalls           | VIN decode, safety recalls           | `VPIC_URL`, `RECALLS_URL` (no key)            |
-| fxratesapi.com                 | Exchange rates for _reporting only_  | `FX_RATES_URL`                                |
-| Pixelcut                       | Background removal for thumbnails    | `BG_REMOVAL_URL`, `BG_REMOVAL_API_KEY`        |
-| logo.dev                       | Manufacturer logos (publishable key) | `NEXT_PUBLIC_LOGO_DEV_TOKEN`, `EXPO_PUBLIC_…` |
+| Service                        | Role                                 | Where                                                        |
+| ------------------------------ | ------------------------------------ | ------------------------------------------------------------ |
+| Neon / any Postgres            | Primary database                     | `DATABASE_URL`                                               |
+| Upstash Redis                  | Rate-limit counter (optional)        | `REDIS_URL`                                                  |
+| Upstash Blob / R2 / S3 / MinIO | Object storage                       | `UPSTASH_BLOB_TOKEN` or `OBJECT_STORAGE_*`                   |
+| Google Gemini                  | AI assistant                         | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL` |
+| Stripe                         | Subscriptions                        | `STRIPE_*`                                                   |
+| Resend                         | Email                                | `RESEND_API_KEY`, `EMAIL_FROM`                               |
+| Expo Push                      | Mobile push                          | `EXPO_ACCESS_TOKEN`                                          |
+| NHTSA vPIC / Recalls           | VIN decode, safety recalls           | `VPIC_URL`, `RECALLS_URL` (no key)                           |
+| fxratesapi.com                 | Exchange rates for _reporting only_  | `FX_RATES_URL`                                               |
+| Pixelcut                       | Background removal for thumbnails    | `BG_REMOVAL_URL`, `BG_REMOVAL_API_KEY`                       |
+| logo.dev                       | Manufacturer logos (publishable key) | `NEXT_PUBLIC_LOGO_DEV_TOKEN`, `EXPO_PUBLIC_…`                |
 
 `POSTHOG_KEY`, `SENTRY_DSN` and `OPENAI_API_KEY` exist in the env schema and `.env.example`
 but are **not wired** to anything yet (§17, §20).
@@ -906,7 +906,7 @@ or a half-configured S3 block fails the boot with a clear message.
 | Auth / URLs | `AUTH_SECRET`, `AUTH_URL`, `WEB_URL`, `ADMIN_URL`, `ADMIN_USER_IDS`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_DOCS_URL` |
 | Redis       | `REDIS_URL`                                                                                                                                                       |
 | Storage     | `UPSTASH_BLOB_TOKEN` **or** `OBJECT_STORAGE_{ENDPOINT,REGION,BUCKET,ACCESS_KEY,SECRET_KEY,FORCE_PATH_STYLE}`                                                      |
-| AI          | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL`                                                                                                     |
+| AI          | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL`                                                                                                      |
 | Billing     | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PLUS`, `STRIPE_PRICE_BUSINESS`, `STRIPE_PORTAL_CONFIGURATION`                                         |
 | Delivery    | `RESEND_API_KEY`, `EMAIL_FROM`, `EXPO_ACCESS_TOKEN`                                                                                                               |
 | Lookups     | `VPIC_URL`, `RECALLS_URL`, `FX_RATES_URL`                                                                                                                         |

@@ -6,5 +6,7 @@ export default {
   printWidth: 100,
   tabWidth: 2,
   arrowParens: 'always',
-  endOfLine: 'lf',
+  // A few files are committed with CRLF (the mobile app's app.json, metro config, two screens);
+  // 'auto' keeps each file's own endings instead of failing them, and rewriting them all.
+  endOfLine: 'auto',
 };

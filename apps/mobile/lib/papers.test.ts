@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { addMonths, countdown, current, urgency, validity } from './papers';
 
 const now = new Date('2026-10-15T09:30:00');
-const paper = (expiresOn: string | null, issuedOn: string | null = null, createdAt = '2026-01-01T00:00:00Z') => ({
+const paper = (
+  expiresOn: string | null,
+  issuedOn: string | null = null,
+  createdAt = '2026-01-01T00:00:00Z',
+) => ({
   expiresOn,
   issuedOn,
   createdAt,
@@ -10,7 +14,11 @@ const paper = (expiresOn: string | null, issuedOn: string | null = null, created
 
 describe('validity', () => {
   it('reads expired, soon, valid and open by the day', () => {
-    expect(validity(paper('2026-10-12'), now)).toMatchObject({ state: 'expired', days: -3, left: 0 });
+    expect(validity(paper('2026-10-12'), now)).toMatchObject({
+      state: 'expired',
+      days: -3,
+      left: 0,
+    });
     expect(validity(paper('2026-10-15'), now)).toMatchObject({ state: 'soon', days: 0 });
     expect(validity(paper('2026-12-14'), now)).toMatchObject({ state: 'soon', days: 60 });
     expect(validity(paper('2026-12-15'), now)).toMatchObject({ state: 'valid', days: 61 });

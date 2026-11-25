@@ -232,10 +232,7 @@ function Kpis({
       )}
     >
       {shown.map((item) => (
-        <div
-          key={item.label}
-          className="min-w-0 bg-(--color-card-rest) px-4 py-3 sm:px-5"
-        >
+        <div key={item.label} className="min-w-0 bg-(--color-card-rest) px-4 py-3 sm:px-5">
           <dt className={`truncate text-muted-foreground ${LABEL}`}>{item.label}</dt>
           {/* A long unit wraps under its figure rather than cutting either. */}
           <dd className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1">
