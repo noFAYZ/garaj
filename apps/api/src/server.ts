@@ -45,6 +45,18 @@ async function main(): Promise<void> {
   }
 
   await app.listen({ host: config.API_HOST, port: config.API_PORT });
+
+  /*
+   * Render's free plan stops an instance after 15 minutes without inbound traffic, and the next
+   * request then waits out a cold boot — measured at 72 s. A request to our own public URL (Render
+   * sets `RENDER_EXTERNAL_URL`) every 10 minutes is inbound traffic, so it never sleeps.
+   * ponytail: one always-on free service is ~744 of the workspace's 750 free hours a month; a
+   * second free service would run the hours out. A paid instance never sleeps; drop this then.
+   */
+  const self = process.env.RENDER_EXTERNAL_URL;
+  if (self) {
+    setInterval(() => void fetch(`${self}/api/v1/health`).catch(() => undefined), 10 * 60_000);
+  }
 }
 
 main().catch((error: unknown) => {

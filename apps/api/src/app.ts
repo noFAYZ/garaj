@@ -159,8 +159,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
    * is the difference a phone on one bar of signal feels. Brotli where the client offers it (at the
    * plugin's fast quality, not the slow default), gzip otherwise; anything under 1 KB, and types
    * that are already compressed (images, PDFs), go as they are.
+   *
+   * Not on Render (it sets `RENDER`): its load balancer already compresses every response, so
+   * doing it here too only spent the free plan's 0.1 CPU on work that was then done again.
    */
-  await app.register(compress);
+  if (!process.env.RENDER) await app.register(compress);
   await app.register(swagger);
   await app.register(storagePlugin, { storage: options.storage });
   await app.register(aiPlugin, { ai: options.ai });

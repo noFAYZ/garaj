@@ -46,7 +46,7 @@ import { Nullable, UpdateUserProfile } from '@vehicle-os/contracts';
 import { schema } from '@vehicle-os/database';
 import { PLAN_TIERS, VEHICLE_STATUSES, VEHICLE_TYPES } from '@vehicle-os/domain';
 import { recordAudit } from '../../../../infrastructure/audit';
-import { onlineCount } from '../../../../plugins/actor-context';
+import { forgetMemberships, onlineCount } from '../../../../plugins/actor-context';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../../../infrastructure/errors';
 
 /** A subscription the provider is still billing, or retrying. */
@@ -599,6 +599,7 @@ export const adminRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         await recordAudit(tx, audit(request, 'user.deleted', 'user', id, { email: account.email }));
         await tx.delete(users).where(eq(users.id, id));
       });
+      forgetMemberships();
       return reply.status(204).send();
     },
   );

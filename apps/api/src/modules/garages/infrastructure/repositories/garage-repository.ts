@@ -2,6 +2,7 @@ import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { schema, type Executor } from '@vehicle-os/database';
 import type { CostReportingMode, GarageRole } from '@vehicle-os/domain';
 import { enqueue } from '../../../../infrastructure/outbox';
+import { forgetMemberships } from '../../../../plugins/actor-context';
 
 export interface GarageRow {
   id: string;
@@ -133,6 +134,7 @@ export async function deleteGarage(db: Executor, garageId: string): Promise<void
   }
   await enqueue(db, jobs);
   await db.delete(schema.garages).where(eq(schema.garages.id, garageId));
+  forgetMemberships();
 }
 
 // --- Members ----------------------------------------------------------------
@@ -253,6 +255,7 @@ export async function insertMember(
     id: schema.garageMembers.id,
   });
   if (!row) throw new Error('Member insert returned no row');
+  forgetMemberships();
   return row.id;
 }
 
@@ -262,10 +265,12 @@ export async function updateMemberRole(
   role: GarageRole,
 ): Promise<void> {
   await db.update(schema.garageMembers).set({ role }).where(eq(schema.garageMembers.id, memberId));
+  forgetMemberships();
 }
 
 export async function deleteMember(db: Executor, memberId: string): Promise<void> {
   await db.delete(schema.garageMembers).where(eq(schema.garageMembers.id, memberId));
+  forgetMemberships();
 }
 
 export async function findUserByEmail(
