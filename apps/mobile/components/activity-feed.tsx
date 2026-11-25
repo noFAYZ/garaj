@@ -16,23 +16,31 @@ import type {
   Vehicle,
   VehicleEvent,
 } from '@vehicle-os/contracts';
-import type { EventType } from '@vehicle-os/domain';
-import { activityQuery, queryKeys } from '@vehicle-os/api-client/react';
+import { positionsForJob, type EventType } from '@vehicle-os/domain';
+import {
+  activityQuery,
+  documentsQuery,
+  photosQuery,
+  queryKeys,
+} from '@vehicle-os/api-client/react';
 import { daysUntil, dueGauge, groupByMonth, odometerDeltas, spanOfDays } from '@vehicle-os/ui';
+import { lastFitted, useParts } from '@/components/parts-kit';
+import { photoKey } from '@/components/remote-image';
 import {
   fillQuantity,
+  type Filed,
   KindIcon,
-  LedgerEnd,
+  LedgerCard,
   LedgerMonth,
   LedgerPlaceholder,
   LedgerRow,
-  LedgerSurface,
 } from '@/components/timeline';
+import { openAdd } from '@/lib/add-request';
 import { api } from '@/lib/api';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
 import { ledgerDate } from '@/lib/ledger';
-import { DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
-import { Chip, Glyph, SectionHeading, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
+import { pad, DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
+import { Chip, Glyph, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
 import { ease, haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import {
   discard,
@@ -42,13 +50,9 @@ import {
   type PendingWrite,
   type SentWrite,
 } from '@/lib/offline';
-import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 
-const pad = (value: number) => String(value).padStart(2, '0');
-/** The logbook sheet's gutter: the page's, kept inside a sheet that runs past it. */
-// Close to the screen's edges: the record has the width, only a pressed row's wash needs room.
-const BOOK = spacing.sm;
 const DATE = new Intl.DateTimeFormat(DATE_LOCALE, {
   month: 'short',
   day: 'numeric',
@@ -86,28 +90,34 @@ function localEvents(
     ) {
       return [];
     }
-    const body = write.body;
-    const isEvent = write.kind === 'event';
-    const scheduleTitle =
-      write.kind === 'maintenance'
-        ? schedules.find((plan) => plan.id === write.planId)?.title
-        : undefined;
-    const title =
-      (isEvent || write.kind === 'maintenance-log' ? body.title : body.workPerformed) ??
-      scheduleTitle ??
-      'Service';
+    // What the entry will be, read off the body each kind actually sends.
+    const shown =
+      write.kind === 'event'
+        ? {
+            eventType: write.body.eventType,
+            title: write.body.title,
+            occurredAt: write.body.occurredAt,
+            cost: money(write.body.costAmountMinor, write.body.costCurrency),
+            description: write.body.description ?? null,
+          }
+        : {
+            eventType: 'MAINTENANCE' as const,
+            title:
+              write.kind === 'maintenance-log'
+                ? write.body.title
+                : (write.body.workPerformed ??
+                  schedules.find((plan) => plan.id === write.planId)?.title ??
+                  'Service'),
+            occurredAt: write.body.performedAt,
+            cost: money(write.body.laborCostAmountMinor, write.body.costCurrency),
+            description: null,
+          };
     return [
       {
         id: `local-${write.id}`,
-        eventType: (isEvent ? body.eventType : 'MAINTENANCE') as VehicleEvent['eventType'],
-        title: String(title),
-        occurredAt: String(isEvent ? body.occurredAt : body.performedAt),
-        odometer: typeof body.odometer === 'number' ? body.odometer : null,
-        odometerUnit: (body.odometerUnit as VehicleEvent['odometerUnit']) ?? null,
-        cost: isEvent
-          ? money(body.costAmountMinor, body.costCurrency)
-          : money(body.laborCostAmountMinor, body.costCurrency),
-        description: typeof body.description === 'string' ? body.description : null,
+        ...shown,
+        odometer: write.body.odometer ?? null,
+        odometerUnit: write.body.odometerUnit ?? null,
         provider: null,
         local: { writeId: write.id, error: write.error },
       } as unknown as LocalEvent,
@@ -116,11 +126,6 @@ function localEvents(
 }
 
 const isLocal = (event: VehicleEvent): event is LocalEvent => 'local' in event;
-
-function isLate(item: PlannedItem): boolean {
-  if (item.kind === 'SCHEDULE') return item.schedule.status === 'OVERDUE';
-  return item.task.dueDate !== null && daysUntil(item.task.dueDate) < 0;
-}
 
 /**
  * How many of the not-yet-urgent jobs are listed before the rest fold away. Three is a glance;
@@ -137,21 +142,20 @@ function needsYou(item: PlannedItem): boolean {
 }
 
 /**
- * A vehicle's logbook, as the web's Logs draws it: the record only, newest first and straight in —
- * no heading over it, the dock already says where you are — month by month, each month a chapter
- * under its leaf, each day on the road, each entry a card, down to where it starts. Every entry
- * opens. What is coming up is Reminders' alone, so the two never repeat.
+ * A vehicle's logbook: the record only, newest first and straight in — no heading over it, the dock
+ * already says where you are — month by month, each month on a card of its own under its heading
+ * (user asked: as Home's recent activity), each day on the road, down to where it starts. Every
+ * entry opens. What is coming up is Reminders' alone, so the two never repeat.
  */
 export function ActivityFeed({
   vehicle,
   bottom = 0,
 }: {
   vehicle: Vehicle;
-  /** Room under the last entry — what floats over the page's foot — kept inside the sheet. */
+  /** Room under the last entry, for what floats over the page's foot. */
   bottom?: number;
 }) {
   const theme = useTheme();
-  const router = useRouter();
   const [filter, setFilter] = useState<EventType | null>(null);
   const [showOlder, setShowOlder] = useState(false);
   const filters = filter ? { eventType: [filter] } : {};
@@ -189,6 +193,33 @@ export function ActivityFeed({
     if (!showOlder || older.isFetching || !older.hasNextPage) return;
     if (loadedPages > 0 && loadedPages < olderPages) void older.fetchNextPage();
   }, [showOlder, older, loadedPages, olderPages]);
+
+  /*
+   * What is filed against each entry, for its thumbnail: the vehicle page already reads both, so
+   * this is the cache, not two more requests. A photo is the preferred picture, then a paper's.
+   */
+  const photos = useQuery(photosQuery(api, vehicle.id));
+  const papers = useQuery(documentsQuery(api, vehicle.id));
+  const filed = useMemo(() => {
+    const byEvent = new Map<string, Filed>();
+    const add = (eventId: string | null, uri: string | null, cacheKey: string) => {
+      if (!eventId) return;
+      const seen = byEvent.get(eventId);
+      byEvent.set(
+        eventId,
+        seen
+          ? { ...(seen.uri || !uri ? seen : { uri, cacheKey }), count: seen.count + 1 }
+          : { uri, cacheKey, count: 1 },
+      );
+    };
+    for (const photo of photos.data ?? []) {
+      add(photo.eventId, photo.thumbnailUrl, photoKey(photo, 'thumb'));
+    }
+    for (const paper of papers.data?.data ?? []) {
+      add(paper.eventId, paper.thumbnailUrl, `document:${paper.id}`);
+    }
+    return byEvent;
+  }, [photos.data, papers.data]);
 
   const planned = activity.data?.planned;
   const writes = usePendingWrites();
@@ -260,141 +291,119 @@ export function ActivityFeed({
     setOlderPages(1);
   };
 
-  const logFirst = () => router.push({ pathname: '/add/done', params: { vehicleId: vehicle.id } });
+  const logFirst = () => openAdd({ vehicleId: vehicle.id });
 
   return (
-    <View style={{ flexGrow: 1, gap: spacing.md }}>
+    <View style={{ flexGrow: 1, gap: spacing.md, paddingBottom: spacing.sm + bottom }}>
       {waiting > 0 ? <SyncStrip count={waiting} /> : null}
 
-      {/*
-       * The record on a sheet of its own, the screen's width and white by day, as the admin
-       * console's Logbook sits; it runs on to the page's end, under the dock.
-       */}
-      <View
-        style={[
-          styles.book,
-          {
-            backgroundColor: theme.cardRaised,
-            paddingBottom: spacing.sm + bottom,
-          },
-        ]}
-      >
-        <LedgerSurface.Provider value={theme.cardRaised}>
-          {kinds.length >= 2 || filter ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ marginHorizontal: -BOOK }}
-              contentContainerStyle={{ gap: 6, paddingHorizontal: BOOK }}
+      {kinds.length >= 2 || filter ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginHorizontal: -spacing.lg }}
+          contentContainerStyle={{ gap: 6, paddingHorizontal: spacing.lg }}
+        >
+          <Chip compact label="All" selected={filter === null} onPress={() => choose(null)} />
+          {kinds.map(([kind, count]) => (
+            <Chip
+              key={kind}
+              compact
+              label={humanise(kind)}
+              selected={filter === kind}
+              onPress={() => choose(filter === kind ? null : kind)}
+              leading={<Glyph size={13}>{eventEmoji(kind)}</Glyph>}
+              count={countsComplete ? count : undefined}
+            />
+          ))}
+        </ScrollView>
+      ) : null}
+
+      {activity.isPending ? (
+        <LedgerCard>
+          <LedgerPlaceholder />
+        </LedgerCard>
+      ) : activity.isError && !activity.data ? (
+        <LedgerCard>
+          <View style={styles.empty}>
+            <Glyph size={28}>📡</Glyph>
+            <Text style={[typeScale.headline, { color: theme.foreground }]}>
+              The record did not load
+            </Text>
+            <Text
+              style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}
             >
-              <Chip compact label="All" selected={filter === null} onPress={() => choose(null)} />
-              {kinds.map(([kind, count]) => (
-                <Chip
-                  key={kind}
-                  compact
-                  label={humanise(kind)}
-                  selected={filter === kind}
-                  onPress={() => choose(filter === kind ? null : kind)}
-                  leading={<Glyph size={13}>{eventEmoji(kind)}</Glyph>}
-                  count={countsComplete ? count : undefined}
-                />
-              ))}
-            </ScrollView>
-          ) : null}
+              {(activity.error as Error).message}
+            </Text>
+            <Button label="Try again" onPress={() => void activity.refetch()} />
+          </View>
+        </LedgerCard>
+      ) : done.length === 0 ? (
+        <LedgerCard>
+          <View style={styles.empty}>
+            <Glyph size={30}>📝</Glyph>
+            <Text style={[typeScale.headline, { color: theme.foreground }]}>
+              {filter ? `No ${humanise(filter).toLowerCase()} yet` : 'Nothing recorded yet'}
+            </Text>
+            <Text style={[typeScale.label, styles.emptyText, { color: theme.mutedForeground }]}>
+              Every service, fill-up, repair, payment and note you add becomes part of this
+              vehicle's activity.
+            </Text>
+            <Button label="Log the first entry" icon="add" variant="primary" onPress={logFirst} />
+          </View>
+        </LedgerCard>
+      ) : (
+        <View style={{ gap: spacing.md, opacity: activity.isPlaceholderData ? 0.6 : 1 }}>
+          {/* Each month on a card of its own under its heading, as Home's recent activity sits. */}
+          {groups.map((group) => (
+            <View key={group.key} style={styles.month}>
+              <LedgerMonth group={group} />
+              <LedgerCard>
+                {group.items.map((event, place) => (
+                  <DoneRow
+                    key={event.id}
+                    event={event}
+                    previousAt={place > 0 ? group.items[place - 1]!.occurredAt : undefined}
+                    nextAt={group.items[place + 1]?.occurredAt}
+                    delta={deltas.get(event.id) ?? null}
+                    filed={filed.get(event.id) ?? null}
+                    index={row++}
+                  />
+                ))}
+              </LedgerCard>
+            </View>
+          ))}
 
-          <View>
-            {activity.isPending ? (
-              <LedgerPlaceholder />
-            ) : activity.isError && !activity.data ? (
-              <View style={styles.empty}>
-                <Glyph size={28}>📡</Glyph>
-                <Text style={[typeScale.headline, { color: theme.foreground }]}>
-                  The record did not load
-                </Text>
-                <Text
-                  style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}
-                >
-                  {(activity.error as Error).message}
-                </Text>
-                <Button label="Try again" onPress={() => void activity.refetch()} />
-              </View>
+          {/* Under the last month: the way into older pages, or where the record starts. */}
+          <View style={styles.end}>
+            {hasMore ? (
+              <Button
+                label="Load older entries"
+                size="sm"
+                icon="chevron-down"
+                loading={older.isFetching}
+                onPress={() => {
+                  if (!showOlder) return setShowOlder(true);
+                  setOlderPages(loadedPages + 1);
+                  void older.fetchNextPage();
+                }}
+              />
             ) : (
-              <View style={{ opacity: activity.isPlaceholderData ? 0.6 : 1 }}>
-                {done.length === 0 ? (
-                  <View style={styles.empty}>
-                    <Glyph size={30}>📝</Glyph>
-                    <Text style={[typeScale.headline, { color: theme.foreground }]}>
-                      {filter ? `No ${humanise(filter).toLowerCase()} yet` : 'Nothing recorded yet'}
-                    </Text>
-                    <Text
-                      style={[typeScale.label, styles.emptyText, { color: theme.mutedForeground }]}
-                    >
-                      Every service, fill-up, repair, payment and note you add becomes part of this
-                      vehicle's activity.
-                    </Text>
-                    <Button
-                      label="Log the first entry"
-                      icon="add"
-                      variant="primary"
-                      onPress={logFirst}
-                    />
-                  </View>
-                ) : (
-                  groups.map((group) => (
-                    <View key={group.key}>
-                      <LedgerMonth group={group} />
-                      {group.items.map((event, place) => (
-                        <DoneRow
-                          key={event.id}
-                          event={event}
-                          previousAt={place > 0 ? group.items[place - 1]!.occurredAt : undefined}
-                          nextAt={group.items[place + 1]?.occurredAt}
-                          delta={deltas.get(event.id) ?? null}
-                          index={row++}
-                        />
-                      ))}
-                    </View>
-                  ))
-                )}
-
-                {/* The road ends at the record's first entry, or runs on into the rest of it. */}
-                {done.length === 0 ? null : (
-                  <LedgerEnd>
-                    {hasMore ? (
-                      <View style={styles.older}>
-                        <Button
-                          label="Load older entries"
-                          size="sm"
-                          icon="chevron-down"
-                          loading={older.isFetching}
-                          onPress={() => {
-                            if (!showOlder) return setShowOlder(true);
-                            setOlderPages(loadedPages + 1);
-                            void older.fetchNextPage();
-                          }}
-                        />
-                      </View>
-                    ) : (
-                      <Text style={[figure, styles.end, { color: theme.mutedForeground }]}>
-                        START OF THE RECORD ·{' '}
-                        {DATE.format(new Date(done.at(-1)!.occurredAt)).toUpperCase()}
-                      </Text>
-                    )}
-                  </LedgerEnd>
-                )}
-                {older.isError ? (
-                  <Text
-                    accessibilityRole="alert"
-                    style={[typeScale.caption, { color: theme.destructive, textAlign: 'center' }]}
-                  >
-                    {(older.error as Error).message}
-                  </Text>
-                ) : null}
-              </View>
+              <Text style={[figure, styles.endText, { color: theme.mutedForeground }]}>
+                START OF THE RECORD · {DATE.format(new Date(done.at(-1)!.occurredAt)).toUpperCase()}
+              </Text>
             )}
           </View>
-        </LedgerSurface.Provider>
-      </View>
+          {older.isError ? (
+            <Text
+              accessibilityRole="alert"
+              style={[typeScale.caption, { color: theme.destructive, textAlign: 'center' }]}
+            >
+              {(older.error as Error).message}
+            </Text>
+          ) : null}
+        </View>
+      )}
     </View>
   );
 }
@@ -425,7 +434,7 @@ interface GaugeReading {
  * A schedule's due, in words, a tone and a gauge — the web's `readDue`, so "Overdue by 580 km"
  * is worded one way on both platforms and the gauge has the same cells.
  */
-function readDue(
+export function readDue(
   plan: MaintenancePlan,
   unit: Vehicle['odometerUnit'],
 ): { headline: string; tone: Tone; gauge: GaugeReading | null } {
@@ -580,8 +589,13 @@ function PlannedRow({
  */
 function ScheduleRow({ plan, vehicle }: { plan: MaintenancePlan; vehicle: Vehicle }) {
   const theme = useTheme();
-  const router = useRouter();
   const { headline, tone, gauge } = readDue(plan, vehicle.odometerUnit);
+  // What the job put in last time — what to buy before doing it again.
+  const { current, positions } = useParts(vehicle);
+  const last = lastFitted(
+    current,
+    positionsForJob(plan.title).filter((position) => positions.includes(position)),
+  );
   const overdue = plan.status === 'OVERDUE';
   const color =
     tone === 'destructive'
@@ -628,6 +642,14 @@ function ScheduleRow({ plan, vehicle }: { plan: MaintenancePlan; vehicle: Vehicl
           <Text numberOfLines={1} style={[styles.reminderHeadline, { color }]}>
             {headline}
           </Text>
+          {last ? (
+            <Text
+              numberOfLines={1}
+              style={[styles.reminderAside, { color: theme.mutedForeground }]}
+            >
+              Last: {last}
+            </Text>
+          ) : null}
         </View>
         <Button
           label="Log"
@@ -635,12 +657,8 @@ function ScheduleRow({ plan, vehicle }: { plan: MaintenancePlan; vehicle: Vehicl
           icon="checkmark"
           size="xs"
           variant={overdue ? 'primary' : 'secondary'}
-          onPress={() =>
-            router.push({
-              pathname: '/add/done',
-              params: { vehicleId: vehicle.id, kind: 'MAINTENANCE' },
-            })
-          }
+          // The reminder itself, so the form opens on completing it rather than on a list.
+          onPress={() => openAdd({ vehicleId: vehicle.id, kind: 'MAINTENANCE', planId: plan.id })}
         />
       </View>
 
@@ -788,6 +806,7 @@ const DoneRow = memo(function DoneRow({
   previousAt,
   nextAt,
   delta,
+  filed,
   index,
 }: {
   event: VehicleEvent;
@@ -795,6 +814,7 @@ const DoneRow = memo(function DoneRow({
   previousAt: string | undefined;
   nextAt: string | undefined;
   delta: number | null;
+  filed: Filed | null;
   index: number;
 }) {
   const theme = useTheme();
@@ -828,6 +848,8 @@ const DoneRow = memo(function DoneRow({
               up: delta > 0,
             }
       }
+      note={note}
+      filed={filed}
       state={local ? (local.error ? 'failed' : 'waiting') : undefined}
       // Not one still queued: it has no id on the server yet.
       onPress={
@@ -845,6 +867,7 @@ const DoneRow = memo(function DoneRow({
         event.cost ? formatMoney(event.cost) : null,
         event.odometer !== null ? `at ${formatDistance(event.odometer, unit)}` : null,
         note || null,
+        filed ? `${filed.count} ${filed.count === 1 ? 'attachment' : 'attachments'}` : null,
       ]
         .filter(Boolean)
         .join(', ')}
@@ -943,7 +966,6 @@ function RowPlaceholders({ count }: { count: number }) {
  */
 export function VehiclePlanned({ vehicle }: { vehicle: Vehicle }) {
   const theme = useTheme();
-  const router = useRouter();
   const [showAllLater, setShowAllLater] = useState(false);
 
   // The same query the feed and the dock read: one request, three readers.
@@ -951,30 +973,11 @@ export function VehiclePlanned({ vehicle }: { vehicle: Vehicle }) {
   const planned = activity.data?.planned ?? [];
   const urgent = planned.filter(needsYou);
   const later = planned.filter((item) => !needsYou(item));
-  const late = planned.filter(isLate).length;
 
-  const addPlanned = () =>
-    router.push({ pathname: '/add/planned', params: { vehicleId: vehicle.id } });
+  const addPlanned = () => openAdd({ vehicleId: vehicle.id, mode: 'planned' });
 
   return (
     <View style={{ gap: spacing.sm }}>
-      <SectionHeading
-        title="Reminders"
-        count={activity.isPending ? undefined : planned.length}
-        trailing={
-          activity.isPending || planned.length === 0 ? null : urgent.length === 0 ? (
-            <StatusDot tone="success" label="All on track" />
-          ) : (
-            <View style={{ flexDirection: 'row', gap: spacing.md }}>
-              {late > 0 ? <StatusDot tone="destructive" label={`${pad(late)} late`} /> : null}
-              {urgent.length > late ? (
-                <StatusDot tone="warning" label={`${pad(urgent.length - late)} soon`} />
-              ) : null}
-            </View>
-          )
-        }
-      />
-
       {activity.isPending ? (
         <RowPlaceholders count={2} />
       ) : planned.length === 0 ? (
@@ -1033,23 +1036,13 @@ export function VehiclePlanned({ vehicle }: { vehicle: Vehicle }) {
 }
 
 const styles = StyleSheet.create({
-  // Past the page's gutter to the screen's edges, its top rounded like the stage's foot.
-  book: {
-    flexGrow: 1,
-    gap: spacing.sm,
-    marginHorizontal: -spacing.lg,
-    paddingHorizontal: BOOK,
-    paddingTop: spacing.md,
-    borderTopLeftRadius: radius.xxxl,
-    borderTopRightRadius: radius.xxxl,
-    overflow: 'hidden',
-  },
-  older: { alignItems: 'flex-start' },
-  end: { fontSize: 11, letterSpacing: 0.8 },
+  month: { gap: spacing.sm },
+  end: { alignItems: 'center', paddingTop: spacing.xs },
+  endText: { fontSize: 11, letterSpacing: 0.8 },
   empty: {
     alignItems: 'center',
     gap: spacing.sm,
-    borderRadius: radius.xxl,
+    ...leaf('md'),
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.xxl,
   },
@@ -1058,7 +1051,7 @@ const styles = StyleSheet.create({
 
   emptyCompact: { paddingVertical: spacing.xl },
 
-  reminder: { borderRadius: radius.xl, padding: 10 },
+  reminder: { ...leaf('md'), padding: 10 },
   reminderTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   reminderTitle: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
   reminderAside: { fontSize: 11, lineHeight: 15, fontWeight: '400' },
@@ -1082,7 +1075,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    borderRadius: radius.xl,
+    ...leaf('sm'),
     paddingVertical: 6,
     paddingHorizontal: 4,
     paddingRight: 10,
@@ -1101,7 +1094,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    borderRadius: radius.xxl,
+    ...leaf('md'),
     paddingVertical: spacing.sm,
     paddingLeft: spacing.md,
     paddingRight: spacing.sm,

@@ -5,8 +5,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  AppState,
-  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,14 +12,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ApiError } from '@vehicle-os/api-client';
-import { pricesQuery, vehiclesQuery } from '@vehicle-os/api-client/react';
-import type { PlanPrice } from '@vehicle-os/contracts';
+import { vehiclesQuery } from '@vehicle-os/api-client/react';
 import {
   ENTITLEMENT_COPY,
   ENTITLEMENTS,
   entitlementsFor,
-  formatPlanPrice,
   limitsFor,
   PLAN_NAMES,
   PLAN_RANK,
@@ -32,15 +27,32 @@ import {
 } from '@vehicle-os/domain';
 import { BrandLogo } from '@/components/brand-logo';
 import { api } from '@/lib/api';
-import { onBillingReturn } from '@/lib/billing-return';
 import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
-import { PlanPass, TierMark } from '@/lib/plan-kit';
-import { BILLING_RETURN, FEATURE_ICON, priceLabel, usePlan } from '@/lib/upgrade';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { PlanBadge, PlanPass, PlanTag } from '@/lib/plan-kit';
+import {
+  buy,
+  CADENCE_LABEL,
+  isCancelled,
+  isPending,
+  loadOffers,
+  openStoreManagement,
+  restore,
+  storeAvailable,
+  storeBilled,
+  storeName,
+  webBilled,
+  type Cadence,
+  type PaidTier,
+  type StoreOffer,
+} from '@/lib/store';
+import { FEATURE_ICON, usePlan } from '@/lib/upgrade';
+import { useProfile } from '@/lib/vehicle-units';
+import { figure, leaf, lift, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { RoundKey } from '@/components/onboarding-kit';
+import { pad } from '@/lib/format';
 
-type PaidTier = 'PLUS' | 'BUSINESS';
 type Limit = keyof PlanLimits;
-/** Choosing; back from Stripe and waiting for the webhook; waited too long; upgraded. */
+/** Choosing; bought and waiting for the server to see it; waited too long; upgraded. */
 type Phase = 'choose' | 'confirming' | 'slow' | 'done';
 
 const LIMIT_TITLE: Record<Limit, string> = {
@@ -61,23 +73,9 @@ const LIMIT_ICON: Record<Limit, keyof typeof Ionicons.glyphMap> = {
   members: 'people',
 };
 
-const LIMIT_ROWS = [
-  ['Vehicles', 'vehicles'],
-  ['Garages', 'garages'],
-  ['People', 'members'],
-] as const;
-
-const CADENCE: Record<string, string> = {
-  day: 'daily',
-  week: 'weekly',
-  month: 'monthly',
-  year: 'yearly',
-};
-
 const POLL_MS = 2_000;
 const PATIENCE_MS = 30_000;
 
-const pad = (value: number) => String(value).padStart(2, '0');
 const clock = (seconds: number) => `${pad(Math.floor(seconds / 60))}:${pad(seconds % 60)}`;
 const noun = (limit: Limit, count: number) => LIMIT_NOUN[limit][count === 1 ? 0 : 1];
 const isEntitlement = (value: string | undefined): value is Entitlement =>
@@ -87,17 +85,11 @@ const isLimit = (value: string | undefined): value is Limit =>
 const gainedFeatures = (from: PlanTier, to: PlanTier) =>
   entitlementsFor(to).filter((entitlement) => !entitlementsFor(from).includes(entitlement));
 
-function cadence(price: PlanPrice): string {
-  return price.intervalCount === 1
-    ? `Billed ${CADENCE[price.interval] ?? `every ${price.interval}`}`
-    : `Billed every ${price.intervalCount} ${price.interval}s`;
-}
-
 /**
  * The upgrade (GAPS §10, §17): one screen that decides, instead of a pointer to settings.
  *
- * A picture of the reason, a headline, a choice of plan, the order as a ticket — price above the
- * tear, what changes below it — and one button that says what happens next. The picture is the
+ * A picture of the reason, a headline, a choice of plan, what it adds, and one button that says
+ * what happens next — compact enough to fit a small phone without scrolling. The picture is the
  * person's garage: their vehicles in the bays, and the dashed bays the next plan adds. The colour
  * is ink, because the logo is the only colour this product has.
  *
@@ -105,9 +97,10 @@ function cadence(price: PlanPrice): string {
  * replaying an offline write — with the reason in its params, so it leads with what was hit.
  * Opened from settings with no reason, it leads with room.
  *
- * It never decides a plan changed. Checkout happens in the browser and the webhook changes the
- * plan; Stripe's return link reaches this screen as an event (`lib/billing-return`), and it waits
- * for the plan in plain sight — the new bays breathe until the plan is real, then settle.
+ * It never decides a plan changed. The purchase happens in the phone's store (`lib/store`), the
+ * server reads it from RevenueCat, and this screen waits for the plan in plain sight — the new bays
+ * breathe until the plan is real, then settle. A plan paid for on the web is not sold or managed
+ * here: the store's rules keep the app to its own billing, so it only says where that plan lives.
  */
 export default function UpgradeScreen() {
   const theme = useTheme();
@@ -123,8 +116,17 @@ export default function UpgradeScreen() {
 
   const { data, plan } = usePlan();
   const { refetch } = plan;
-  const prices = useQuery(pricesQuery(api));
   const vehicles = useQuery(vehiclesQuery(api));
+  const userId = useProfile().data?.id;
+  // Not persisted (its root is not in the cache's list): store packages are live objects.
+  const offers = useQuery({
+    queryKey: ['store', 'offers', userId],
+    queryFn: () => loadOffers(userId!),
+    enabled: Boolean(userId) && storeAvailable(),
+    staleTime: 10 * 60_000,
+  });
+  const elsewhere = webBilled(data);
+  const inStore = storeBilled(data);
 
   const [phase, setPhase] = useState<Phase>('choose');
   const [seconds, setSeconds] = useState(0);
@@ -135,13 +137,12 @@ export default function UpgradeScreen() {
   }, [phase]);
   const [notice, setNotice] = useState<string | null>(null);
   const [picked, setPicked] = useState<PaidTier | null>(null);
+  const [pickedCadence, setPickedCadence] = useState<Cadence | null>(null);
   /*
    * The order in flight: which plan, bought from which. Kept apart from the live plan so the
    * screen goes on describing the purchase after the plan itself has changed underneath it.
    */
   const [order, setOrder] = useState<{ from: PlanTier; to: PaidTier } | null>(null);
-  const orderRef = useRef(order);
-  orderRef.current = order;
 
   const current: PlanTier = order?.from ?? data?.plan ?? 'FREE';
   const required: PaidTier | null =
@@ -157,38 +158,24 @@ export default function UpgradeScreen() {
       tier !== 'FREE' && PLAN_RANK[tier] > PLAN_RANK[current] && PLAN_RANK[tier] >= floor,
   );
   const chosen = order?.to ?? options.find((tier) => tier === picked) ?? options[0] ?? null;
-  // Paying already: the button changes that subscription rather than starting another.
+  // Paying already: the store replaces that subscription rather than starting another.
   const switching = current !== 'FREE';
-  const price = chosen ? (prices.data?.[chosen] ?? null) : null;
-  // Loaded, and Stripe has no price for it: say so now rather than fail on the press.
-  const unavailable = Boolean(chosen && prices.isSuccess && !price);
-
-  // Stripe's answer, heard through the return link.
-  useEffect(
-    () =>
-      onBillingReturn((outcome) => {
-        if (!orderRef.current) return;
-        if (outcome === 'cancelled') {
-          setOrder(null);
-          setNotice('Checkout cancelled. Nothing was charged.');
-        } else if (outcome === 'done') {
-          setNotice(null);
-          setPhase('confirming');
-        }
-      }),
-    [],
-  );
-
-  // Back by the app switcher instead of the link: ask once, in case it already landed.
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && orderRef.current) void refetch();
-    });
-    return () => subscription.remove();
-  }, [refetch]);
+  // The ways the chosen tier is sold, and the one picked — monthly unless another was chosen.
+  const ways = (offers.data ?? []).filter((offer) => offer.tier === chosen);
+  const offer =
+    ways.find((way) => way.cadence === pickedCadence) ??
+    ways.find((way) => way.cadence === 'monthly') ??
+    ways[0] ??
+    null;
+  const offersLoading = offers.isPending && offers.fetchStatus !== 'idle';
+  // Nothing to sell in this build, or the store has no price for it: say so now, not on the press.
+  const unavailable =
+    !storeAvailable() || Boolean(chosen && (offers.isError || (offers.isSuccess && !offer)));
+  /** The cheapest way to pay for a tier, for its row in the choice. */
+  const fromPrice = (tier: PaidTier) => (offers.data ?? []).find((way) => way.tier === tier);
 
   // While confirming, ask every two seconds for half a minute — then say so, and stop. The
-  // first ask goes to the provider itself, not only to a webhook that may never arrive.
+  // first ask goes to RevenueCat through the server, not only to a webhook that may never arrive.
   useEffect(() => {
     if (phase !== 'confirming') return;
     void api.billing
@@ -211,30 +198,43 @@ export default function UpgradeScreen() {
     }
   }, [data?.plan, order, phase]);
 
-  const checkout = useMutation({
-    mutationFn: async (tier: PaidTier) => {
-      const { url } = await api.billing.checkout({ plan: tier, returnPath: BILLING_RETURN });
-      setOrder({ from: data?.plan ?? 'FREE', to: tier });
+  /*
+   * The store's sheet does the paying. Backing out of it is not a failure — nothing was charged —
+   * so it says so quietly; a purchase that went through waits for the server to see it.
+   */
+  const purchase = useMutation({
+    mutationFn: async (way: StoreOffer) => {
       setNotice(null);
-      await Linking.openURL(url);
+      setOrder({ from: data?.plan ?? 'FREE', to: way.tier });
+      try {
+        await buy(userId!, way);
+      } catch (error) {
+        setOrder(null);
+        if (isCancelled(error)) {
+          setNotice('Purchase cancelled. Nothing was charged.');
+          return;
+        }
+        if (isPending(error)) {
+          setNotice(
+            `Payment pending. Your plan starts once ${storeName(data?.store)} confirms the payment.`,
+          );
+          return;
+        }
+        throw error;
+      }
+      setPhase('confirming');
     },
   });
-  const portal = useMutation({
+  const restoring = useMutation({
     mutationFn: async () => {
-      const { url } = await api.billing.portal({ returnPath: BILLING_RETURN });
-      await Linking.openURL(url);
+      await restore(userId!);
+      await refetch();
+      setNotice('Purchases restored.');
     },
   });
 
-  const failure = checkout.error ?? portal.error;
-  const failureText =
-    failure instanceof ApiError && failure.code === 'NO_BILLING'
-      ? 'Upgrades aren’t available yet.'
-      : failure instanceof ApiError && failure.code === 'NO_PRICE'
-        ? 'This plan isn’t on sale yet.'
-        : failure instanceof Error
-          ? failure.message
-          : null;
+  const failure = purchase.error ?? restoring.error;
+  const failureText = failure instanceof Error ? failure.message : null;
 
   const marks: ReactNode[] = (vehicles.data?.data ?? []).map((vehicle) => (
     <BrandLogo key={vehicle.id} make={vehicle.make} size={26} />
@@ -261,7 +261,7 @@ export default function UpgradeScreen() {
   const heroInner = width - spacing.md * 2 - spacing.md * 2;
   const bay = Math.max(
     34,
-    Math.min(48, Math.floor((heroInner - bayGap * (bayCount - 1)) / bayCount)),
+    Math.min(38, Math.floor((heroInner - bayGap * (bayCount - 1)) / bayCount)),
   );
   const baySize = { width: bay, height: bay, borderRadius: Math.round(bay * 0.3) };
 
@@ -293,122 +293,123 @@ export default function UpgradeScreen() {
                       `You’re on ${PLAN_NAMES[current]}.`,
                     ];
 
+  const store = storeName(data?.store);
   const footnote = unavailable
     ? 'Upgrades aren’t available yet.'
-    : switching
-      ? 'Stripe shows the prorated charge before you confirm.'
-      : 'You pay on Stripe’s page next. Cancel anytime from Billing.';
+    : offer?.cadence === 'lifetime'
+      ? inStore
+        ? `Paid once. Cancel your current subscription in ${store} so it stops renewing.`
+        : 'Paid once. No renewals, nothing to cancel.'
+      : switching
+        ? `${store} credits the time left on your current plan.`
+        : `Renews automatically, billed by ${store}. Cancel anytime in ${store}.`;
 
-  const hasBilling = Boolean(data && (data.plan !== 'FREE' || data.currentPeriodEnd));
+  // The stamp: the one number the upgrade is about, or a tick once it is yours.
+  const stamp = chosen ? (
+    <View
+      style={[styles.badge, { backgroundColor: theme.background, borderColor: theme.primary }]}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {phase === 'done' ? (
+        <Ionicons name="checkmark" size={30} color={theme.foreground} />
+      ) : (
+        <>
+          <Text style={[figure, styles.badgeFigure, { color: theme.foreground }]}>
+            +{heroLimit ? room : featuresGained.length}
+          </Text>
+          <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+            {heroLimit ? 'more' : featuresGained.length === 1 ? 'feature' : 'features'}
+          </Text>
+        </>
+      )}
+    </View>
+  ) : null;
 
   return (
-    <View style={[styles.screen, { backgroundColor: theme.background }]}>
+    <View style={[styles.screen, { backgroundColor: 'transparent' }]}>
       <ScrollView
         contentContainerStyle={[styles.page, { paddingTop: insets.top + spacing.sm }]}
         showsVerticalScrollIndicator={false}
       >
-        <PressableScale
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          hitSlop={8}
-          scaleTo={0.9}
-          style={[styles.close, { backgroundColor: theme.card }]}
-        >
-          <Ionicons name="close" size={22} color={theme.foreground} />
-        </PressableScale>
+        <RoundKey icon="close" label="Close" onPress={() => router.back()} />
 
-        {/* --- the picture: what was hit, and what the plan adds ---------------------------- */}
-        <Rise style={[styles.hero, { backgroundColor: theme.card }]}>
-          {heroLimit ? (
-            <View
-              style={styles.bays}
-              accessible
-              accessibilityRole="image"
-              accessibilityLabel={
-                chosen
-                  ? `${used} ${noun(heroLimit, used)} now; ${PLAN_NAMES[chosen]} has room for ${room} more`
-                  : `${used} ${noun(heroLimit, used)}`
-              }
-            >
-              {Array.from({ length: takenShown }, (_, index) => (
-                <View
-                  key={`taken-${index}`}
-                  style={[styles.bay, baySize, { backgroundColor: theme.muted }]}
-                >
-                  {heroLimit === 'vehicles' && marks[index] ? (
-                    marks[index]
-                  ) : (
-                    <Ionicons name={LIMIT_ICON[heroLimit]} size={20} color={theme.foreground} />
-                  )}
-                </View>
-              ))}
-              {Array.from({ length: freshShown }, (_, index) => (
-                <Rise key={`fresh-${chosen}-${index}`} index={index + 2} distance={8}>
-                  <Breathe active={phase === 'confirming'}>
-                    {/* Dashed while bought-not-built; a solid outline once the plan is real. */}
-                    <View
-                      style={[
-                        styles.bay,
-                        baySize,
-                        phase === 'done' ? styles.built : styles.fresh,
-                        { borderColor: theme.borderStrong },
-                      ]}
-                    />
-                  </Breathe>
-                </Rise>
-              ))}
-            </View>
-          ) : entitlement ? (
-            <View style={[styles.featureTile, { backgroundColor: theme.muted }]}>
-              <Ionicons
-                name={`${FEATURE_ICON[entitlement]}-outline`}
-                size={44}
-                color={theme.foreground}
-              />
+        {/*
+         * --- the picture: what was hit, and what the plan adds — while it is being bought, and
+         * once it is yours. While choosing, the stamp alone stands by the headline.
+         */}
+        {phase === 'choose' ? null : (
+          <Rise style={[styles.hero, { backgroundColor: theme.card }]}>
+            {heroLimit ? (
               <View
-                style={[styles.lock, { backgroundColor: theme.primary, borderColor: theme.card }]}
+                style={styles.bays}
+                accessible
+                accessibilityRole="image"
+                accessibilityLabel={
+                  chosen
+                    ? `${used} ${noun(heroLimit, used)} now; ${PLAN_NAMES[chosen]} has room for ${room} more`
+                    : `${used} ${noun(heroLimit, used)}`
+                }
               >
-                <Ionicons
-                  name={phase === 'done' ? 'lock-open' : 'lock-closed'}
-                  size={14}
-                  color={theme.primaryForeground}
-                />
+                {Array.from({ length: takenShown }, (_, index) => (
+                  <View
+                    key={`taken-${index}`}
+                    style={[styles.bay, baySize, { backgroundColor: theme.muted }]}
+                  >
+                    {heroLimit === 'vehicles' && marks[index] ? (
+                      marks[index]
+                    ) : (
+                      <Ionicons name={LIMIT_ICON[heroLimit]} size={20} color={theme.foreground} />
+                    )}
+                  </View>
+                ))}
+                {Array.from({ length: freshShown }, (_, index) => (
+                  <Rise key={`fresh-${chosen}-${index}`} index={index + 2} distance={8}>
+                    <Breathe active={phase === 'confirming'}>
+                      {/* Dashed while bought-not-built; a solid outline once the plan is real. */}
+                      <View
+                        style={[
+                          styles.bay,
+                          baySize,
+                          phase === 'done' ? styles.built : styles.fresh,
+                          { borderColor: theme.borderStrong },
+                        ]}
+                      />
+                    </Breathe>
+                  </Rise>
+                ))}
               </View>
-            </View>
-          ) : null}
+            ) : entitlement ? (
+              <View style={[styles.featureTile, { backgroundColor: theme.muted }]}>
+                <Ionicons
+                  name={`${FEATURE_ICON[entitlement]}-outline`}
+                  size={44}
+                  color={theme.foreground}
+                />
+                <View
+                  style={[styles.lock, { backgroundColor: theme.primary, borderColor: theme.card }]}
+                >
+                  <Ionicons
+                    name={phase === 'done' ? 'lock-open' : 'lock-closed'}
+                    size={14}
+                    color={theme.primaryForeground}
+                  />
+                </View>
+              </View>
+            ) : null}
 
-          {/* The stamp: the one number the upgrade is about, or a tick once it is yours. */}
-          {chosen ? (
-            <View
-              style={[
-                styles.badge,
-                { backgroundColor: theme.background, borderColor: theme.primary },
-              ]}
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-            >
-              {phase === 'done' ? (
-                <Ionicons name="checkmark" size={30} color={theme.foreground} />
-              ) : (
-                <>
-                  <Text style={[figure, styles.badgeFigure, { color: theme.foreground }]}>
-                    +{heroLimit ? room : featuresGained.length}
-                  </Text>
-                  <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                    {heroLimit ? 'more' : featuresGained.length === 1 ? 'feature' : 'features'}
-                  </Text>
-                </>
-              )}
-            </View>
-          ) : null}
-        </Rise>
+            {stamp}
+          </Rise>
+        )}
 
-        <Rise index={1} style={{ gap: 6 }}>
-          <Text accessibilityRole="header" style={[typeScale.display, { color: theme.foreground }]}>
-            {title}
-          </Text>
-          <Text style={[typeScale.body, { color: theme.mutedForeground }]}>{subtitle}</Text>
+        <Rise index={1} style={styles.titleRow}>
+          <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+            <Text accessibilityRole="header" style={[styles.title, { color: theme.foreground }]}>
+              {title}
+            </Text>
+            <Text style={[styles.subtitle, { color: theme.mutedForeground }]}>{subtitle}</Text>
+          </View>
+          {phase === 'choose' ? stamp : null}
         </Rise>
 
         {plan.isPending ? (
@@ -421,7 +422,7 @@ export default function UpgradeScreen() {
             <View accessibilityRole="radiogroup" style={{ gap: spacing.sm }}>
               {options.map((tier, index) => {
                 const selected = tier === chosen;
-                const tierPrice = prices.data?.[tier] ?? null;
+                const tierPrice = fromPrice(tier);
                 const limits = limitsFor(tier);
                 return (
                   <PressableScale
@@ -433,39 +434,34 @@ export default function UpgradeScreen() {
                     }}
                     accessibilityRole="radio"
                     accessibilityState={{ checked: selected }}
-                    accessibilityLabel={`${PLAN_NAMES[tier]}${tierPrice ? `, ${priceLabel(tierPrice)}` : ''}`}
+                    accessibilityLabel={`${PLAN_NAMES[tier]}${tierPrice ? `, from ${tierPrice.price} ${CADENCE_LABEL[tierPrice.cadence].short}` : ''}`}
                     scaleTo={0.98}
                     style={[
                       styles.tier,
-                      {
-                        backgroundColor: selected ? theme.primarySoft : theme.card,
-                        borderColor: selected ? theme.primary : theme.card,
-                      },
+                      { backgroundColor: selected ? theme.primarySoft : theme.cardRaised },
                     ]}
                   >
-                    {index === 0 ? (
-                      <View style={[styles.tierBadge, { backgroundColor: theme.primary }]}>
-                        <Text style={[typeScale.overline, { color: theme.primaryForeground }]}>
-                          Cheapest
-                        </Text>
-                      </View>
-                    ) : null}
                     <View
                       style={[
                         styles.radio,
-                        { borderColor: selected ? theme.primary : theme.borderStrong },
+                        { backgroundColor: selected ? theme.primary : theme.muted },
                       ]}
                     >
                       {selected ? (
-                        <View style={[styles.radioDot, { backgroundColor: theme.primary }]} />
+                        <Ionicons name="checkmark" size={14} color={theme.primaryForeground} />
                       ) : null}
                     </View>
                     <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                      {/* The plan as Settings shows it: its own badge, and the tag the first wears. */}
                       <View style={styles.optionName}>
-                        <TierMark tier={tier} color={theme.foreground} />
-                        <Text style={[typeScale.headline, { color: theme.foreground }]}>
-                          {PLAN_NAMES[tier]}
-                        </Text>
+                        <PlanBadge tier={tier} />
+                        {index === 0 ? (
+                          <PlanTag
+                            label="Recommended"
+                            fill={theme.primarySoft}
+                            ink={theme.primary}
+                          />
+                        ) : null}
                       </View>
                       <Text
                         numberOfLines={1}
@@ -474,13 +470,48 @@ export default function UpgradeScreen() {
                         {pad(limits.vehicles)} vehicles · {pad(limits.garages)} garages
                       </Text>
                     </View>
-                    {prices.isPending ? (
+                    {offersLoading ? (
                       <ActivityIndicator size="small" color={theme.mutedForeground} />
                     ) : tierPrice ? (
                       <Text style={[typeScale.label, figure, { color: theme.foreground }]}>
-                        {priceLabel(tierPrice)}
+                        {tierPrice.price} {CADENCE_LABEL[tierPrice.cadence].short}
                       </Text>
                     ) : null}
+                  </PressableScale>
+                );
+              })}
+            </View>
+          </Rise>
+        ) : null}
+
+        {phase === 'choose' && !elsewhere && ways.length > 1 ? (
+          <Rise index={2}>
+            <View accessibilityRole="radiogroup" style={styles.cadences}>
+              {ways.map((way) => {
+                const selected = way === offer;
+                return (
+                  <PressableScale
+                    key={way.cadence}
+                    onPress={() => {
+                      if (selected) return;
+                      haptic.selection();
+                      setPickedCadence(way.cadence);
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    accessibilityLabel={`${CADENCE_LABEL[way.cadence].long}, ${way.price}`}
+                    scaleTo={0.97}
+                    style={[
+                      styles.cadence,
+                      { backgroundColor: selected ? theme.primarySoft : theme.cardRaised },
+                    ]}
+                  >
+                    <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+                      {CADENCE_LABEL[way.cadence].long}
+                    </Text>
+                    <Text style={[typeScale.label, figure, { color: theme.foreground }]}>
+                      {way.price}
+                    </Text>
                   </PressableScale>
                 );
               })}
@@ -493,7 +524,7 @@ export default function UpgradeScreen() {
           <View style={{ gap: spacing.sm }} accessibilityLabel="Now included">
             {data ? (
               <Rise index={2}>
-                <PlanPass plan={data} price={prices.data?.[order.to] ?? null} />
+                <PlanPass plan={data} price={null} />
               </Rise>
             ) : null}
             {gainedFeatures(order.from, order.to).map((gain, index) => (
@@ -522,28 +553,16 @@ export default function UpgradeScreen() {
           </View>
         ) : waiting && chosen ? (
           <Rise index={2}>
-            <Steps tier={chosen} slow={phase === 'slow'} seconds={seconds} />
+            <Steps tier={chosen} store={store} slow={phase === 'slow'} seconds={seconds} />
           </Rise>
         ) : chosen ? (
-          <Rise index={3}>
-            <Ticket
-              from={current}
-              to={chosen}
-              price={price}
-              loading={prices.isPending}
-              switching={switching}
-            />
-          </Rise>
+          // Keyed by the plan, so switching plans deals its tiles in again.
+          <Perks key={chosen} from={current} to={chosen} />
         ) : null}
       </ScrollView>
 
       {/* --- the one action, pinned where the thumb is ------------------------------------ */}
-      <View
-        style={[
-          styles.footer,
-          { paddingBottom: Math.max(insets.bottom, spacing.md), backgroundColor: theme.background },
-        ]}
-      >
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
         {failureText ? (
           <Text
             accessibilityRole="alert"
@@ -560,7 +579,12 @@ export default function UpgradeScreen() {
           </Text>
         ) : null}
 
-        {phase === 'done' ? (
+        {elsewhere && phase === 'choose' ? (
+          <Text style={[typeScale.body, { color: theme.mutedForeground, textAlign: 'center' }]}>
+            Your plan is billed through the Garaj website. Change it there, signed in to this
+            account.
+          </Text>
+        ) : phase === 'done' ? (
           <Cta label="Done" onPress={() => router.back()} />
         ) : phase === 'confirming' ? (
           <View
@@ -569,7 +593,7 @@ export default function UpgradeScreen() {
           >
             <ActivityIndicator color={theme.foreground} />
             <Text style={[typeScale.label, { color: theme.foreground }]}>
-              Waiting for Stripe to confirm
+              Confirming your purchase
             </Text>
           </View>
         ) : phase === 'slow' ? (
@@ -578,16 +602,17 @@ export default function UpgradeScreen() {
           <Cta
             label={`${switching ? 'Switch' : 'Upgrade'} to ${PLAN_NAMES[chosen]}`}
             icon="arrow-forward"
-            busy={checkout.isPending}
-            disabled={unavailable}
+            busy={purchase.isPending}
+            disabled={unavailable || !offer || !userId}
             onPress={() => {
+              if (!offer) return;
               haptic.selection();
-              checkout.mutate(chosen);
+              purchase.mutate(offer);
             }}
           />
         ) : null}
 
-        {phase === 'choose' && chosen ? (
+        {phase === 'choose' && chosen && !elsewhere ? (
           <Text style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}>
             {footnote}
           </Text>
@@ -595,24 +620,29 @@ export default function UpgradeScreen() {
 
         {phase !== 'done' ? (
           <View style={styles.links}>
-            {hasBilling && !waiting ? (
+            {waiting || elsewhere ? null : inStore ? (
               <PressableScale
-                onPress={() => portal.mutate()}
+                onPress={() => void openStoreManagement(data)}
                 accessibilityRole="button"
                 hitSlop={8}
               >
                 <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                  Manage billing
+                  Manage in {store}
                 </Text>
               </PressableScale>
-            ) : (
-              <View />
-            )}
-            <PressableScale onPress={() => router.back()} accessibilityRole="button" hitSlop={8}>
-              <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                {waiting || !chosen ? 'Close' : 'Not now'}
-              </Text>
-            </PressableScale>
+            ) : storeAvailable() && userId ? (
+              // A new phone or a reinstall: what this store account already bought.
+              <PressableScale
+                onPress={() => restoring.mutate()}
+                disabled={restoring.isPending}
+                accessibilityRole="button"
+                hitSlop={8}
+              >
+                <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
+                  {restoring.isPending ? 'Restoring…' : 'Restore purchases'}
+                </Text>
+              </PressableScale>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -621,126 +651,70 @@ export default function UpgradeScreen() {
 }
 
 /**
- * The order, as a ticket: the plan and its price above the tear, what it changes below it.
- *
- * A garage hands you a ticket on the way in; this is that, for the bigger garage. The notches are
- * cut in the screen's own colour, so the tear reads as a tear and not as a rule.
+ * What the plan adds, as tiles dealt in one after another: each limit it raises as a big copper
+ * figure — "+3 more vehicles" — then each feature it unlocks, its icon beside its name and marked
+ * new. Two columns.
  */
-function Ticket({
-  from,
-  to,
-  price,
-  loading,
-  switching,
-}: {
-  from: PlanTier;
-  to: PaidTier;
-  price: PlanPrice | null;
-  loading: boolean;
-  switching: boolean;
-}) {
+function Perks({ from, to }: { from: PlanTier; to: PaidTier }) {
   const theme = useTheme();
   const before = limitsFor(from);
   const after = limitsFor(to);
-  const gained = gainedFeatures(from, to);
-  const reading = price ? formatPlanPrice(price) : null;
-
+  const perks = [
+    ...(['vehicles', 'garages', 'members'] as const)
+      .filter((limit) => after[limit] > before[limit])
+      .map((limit) => ({
+        key: limit,
+        icon: LIMIT_ICON[limit],
+        figure: `+${after[limit] - before[limit]}`,
+        label: `${noun(limit, after[limit] - before[limit])}${limit === 'members' ? ' per garage' : ''}`,
+      })),
+    ...gainedFeatures(from, to).map((gain) => ({
+      key: gain,
+      icon: `${FEATURE_ICON[gain]}-outline` as keyof typeof Ionicons.glyphMap,
+      figure: null,
+      label: ENTITLEMENT_COPY[gain].name,
+    })),
+  ];
+  if (perks.length === 0) return null;
   return (
-    <View
-      style={[styles.ticket, { backgroundColor: theme.card }]}
-      accessible
-      accessibilityLabel={`${switching ? 'Switch' : 'Upgrade'} to ${PLAN_NAMES[to]}${
-        price ? `, ${priceLabel(price)}, ${cadence(price).toLowerCase()}` : ''
-      }. ${LIMIT_ROWS.map(([label, key]) => `${after[key]} ${label.toLowerCase()}`).join(', ')}${
-        gained.length
-          ? `. Adds ${gained.map((gain) => ENTITLEMENT_COPY[gain].name).join(', ')}`
-          : ''
-      }`}
-    >
-      <View style={styles.ticketTop}>
-        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <Text
-            style={[
-              typeScale.overline,
-              { color: theme.mutedForeground, textTransform: 'uppercase' },
-            ]}
-          >
-            {switching ? 'Switch' : 'Upgrade'} from {PLAN_NAMES[from]}
-          </Text>
-          <View style={styles.optionName}>
-            <Text style={[styles.ticketName, { color: theme.foreground }]}>{PLAN_NAMES[to]}</Text>
-            <TierMark tier={to} color={theme.foreground} />
-          </View>
-          {price ? (
-            <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-              {cadence(price)}
-              {switching ? ' · prorated today' : ''}
-            </Text>
-          ) : null}
-        </View>
-        {loading ? (
-          <ActivityIndicator color={theme.mutedForeground} />
-        ) : reading ? (
-          <Text style={[figure, { color: theme.foreground }]}>
-            <Text style={styles.priceAmount}>{reading.amount}</Text>
-            <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-              /{reading.per}
-            </Text>
-          </Text>
-        ) : (
-          <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>No price yet</Text>
-        )}
-      </View>
-
-      <View style={styles.tear}>
-        <View style={[styles.notch, { left: -10, backgroundColor: theme.background }]} />
-        <View style={styles.dashes}>
-          {Array.from({ length: 26 }, (_, index) => (
-            <View key={index} style={[styles.dash, { backgroundColor: theme.border }]} />
-          ))}
-        </View>
-        <View style={[styles.notch, { right: -10, backgroundColor: theme.background }]} />
-      </View>
-
-      <View style={styles.ticketBottom}>
-        <View style={styles.figures}>
-          {LIMIT_ROWS.map(([label, key]) => {
-            const more = after[key] - before[key];
-            return (
-              <View key={key} style={{ flex: 1, gap: 2 }}>
-                <Text style={[typeScale.overline, { color: theme.mutedForeground }]}>{label}</Text>
-                <View style={styles.figureRow}>
-                  <Text
-                    style={[
-                      figure,
-                      styles.figureValue,
-                      { color: more > 0 ? theme.foreground : theme.mutedForeground },
-                    ]}
-                  >
-                    {pad(after[key])}
-                  </Text>
-                  {more > 0 ? (
-                    <Text style={[typeScale.caption, figure, { color: theme.mutedForeground }]}>
-                      +{more}
-                    </Text>
-                  ) : null}
-                </View>
+    <View style={{ gap: 6 }}>
+      <Text style={[figure, styles.perksTitle, { color: theme.primary }]}>
+        {PLAN_NAMES[to].toUpperCase()} ADDS
+      </Text>
+      <View
+        accessible
+        style={styles.perks}
+        accessibilityLabel={`${PLAN_NAMES[to]} adds ${perks
+          .map((perk) => (perk.figure ? `${perk.figure} ${perk.label}` : perk.label))
+          .join(', ')}`}
+      >
+        {perks.map((perk, index) => (
+          <Rise key={perk.key} index={index + 3} distance={10} style={styles.perkCell}>
+            <View style={[styles.perk, { backgroundColor: theme.cardRaised }, lift(theme, 'low')]}>
+              <View style={[styles.perkIcon, { backgroundColor: theme.primarySoft }]}>
+                <Ionicons name={perk.icon} size={14} color={theme.primary} />
               </View>
-            );
-          })}
-        </View>
-        {gained.length > 0 ? (
-          <View style={styles.chips}>
-            {gained.map((gain) => (
-              <View key={gain} style={[styles.chip, { backgroundColor: theme.muted }]}>
-                <Ionicons name="checkmark" size={13} color={theme.success} />
-                <Text style={[typeScale.caption, { color: theme.foreground }]}>
-                  {ENTITLEMENT_COPY[gain].name}
+              <View style={styles.perkWords}>
+                {perk.figure ? (
+                  <Text style={[figure, styles.perkFigure, { color: theme.foreground }]}>
+                    {perk.figure}
+                  </Text>
+                ) : (
+                  <Text style={[styles.perkNew, { color: theme.primary }]}>NEW</Text>
+                )}
+                <Text
+                  numberOfLines={perk.figure ? 1 : 2}
+                  style={[
+                    perk.figure ? styles.perkLabel : styles.perkName,
+                    { color: perk.figure ? theme.mutedForeground : theme.foreground },
+                  ]}
+                >
+                  {perk.label}
                 </Text>
               </View>
-            ))}
-          </View>
-        ) : null}
+            </View>
+          </Rise>
+        ))}
       </View>
     </View>
   );
@@ -748,19 +722,29 @@ function Ticket({
 
 /**
  * What has happened so far, as the web's confirmation draws it: paid, confirming (with how long
- * it has been), unlocked. Real states only — the first is true because Stripe sent us back.
+ * it has been), unlocked. Real states only — the first is true because the store said yes.
  */
-function Steps({ tier, slow, seconds }: { tier: PaidTier; slow: boolean; seconds: number }) {
+function Steps({
+  tier,
+  store,
+  slow,
+  seconds,
+}: {
+  tier: PaidTier;
+  store: string;
+  slow: boolean;
+  seconds: number;
+}) {
   const theme = useTheme();
   const rows: {
     state: 'done' | 'active' | 'waiting' | 'pending';
     label: string;
     aside?: string;
   }[] = [
-    { state: 'done', label: 'Paid at Stripe' },
+    { state: 'done', label: `Paid in ${store}` },
     {
       state: slow ? 'waiting' : 'active',
-      label: slow ? 'Still confirming' : 'Confirming with Stripe',
+      label: slow ? 'Still confirming' : 'Confirming your purchase',
       aside: clock(seconds),
     },
     { state: 'pending', label: `${PLAN_NAMES[tier]} unlocked` },
@@ -881,23 +865,19 @@ function Cta({
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  page: { paddingHorizontal: spacing.md, paddingBottom: spacing.lg, gap: spacing.md + 2 },
-  close: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  page: { paddingHorizontal: spacing.md, paddingBottom: spacing.md, gap: 10 },
+  title: { fontSize: 22, lineHeight: 27, fontWeight: '700', letterSpacing: -0.6 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  subtitle: { fontSize: 14, lineHeight: 20, fontWeight: '400' },
+  // The bays and the stamp side by side, the stamp on the hero's own edge rather than over it.
   hero: {
-    borderRadius: radius.xl + 6,
-    // Room above the bays for the badge to hang into, so it never sits on one.
-    paddingTop: 58,
-    paddingBottom: spacing.lg,
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.sm,
+    ...leaf('lg'),
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
   },
   bays: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
   bay: {
@@ -908,9 +888,9 @@ const styles = StyleSheet.create({
   fresh: { borderWidth: 1.5, borderStyle: 'dashed' },
   built: { borderWidth: 1.5 },
   featureTile: {
-    width: 92,
-    height: 92,
-    borderRadius: 26,
+    width: 64,
+    height: 64,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -926,46 +906,64 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   badge: {
-    position: 'absolute',
-    top: -22,
-    right: 10,
-    width: 76,
-    height: 76,
+    width: 50,
+    height: 50,
     borderRadius: 999,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
     transform: [{ rotate: '-8deg' }],
   },
-  badgeFigure: { fontSize: 20, lineHeight: 24, fontWeight: '700' },
+  badgeFigure: { fontSize: 15, lineHeight: 18, fontWeight: '700' },
   tier: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    borderRadius: radius.xl,
-    borderWidth: 2,
+    ...leaf('md'),
     paddingHorizontal: spacing.md,
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
-  tierBadge: {
-    position: 'absolute',
-    top: -10,
-    left: spacing.md,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 2,
+  cadences: { flexDirection: 'row', gap: spacing.sm },
+  cadence: {
+    flex: 1,
+    gap: 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...leaf('sm'),
   },
   radio: {
     width: 22,
     height: 22,
     borderRadius: 999,
-    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radioDot: { width: 10, height: 10, borderRadius: 999 },
-  optionName: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  ticketName: { fontSize: 24, lineHeight: 29, fontWeight: '700', letterSpacing: -0.5 },
+  optionName: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  perksTitle: { fontSize: 10.5, lineHeight: 13, fontWeight: '600', letterSpacing: 1.4 },
+  perks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
+  perkCell: { width: '48.5%' },
+  perk: {
+    ...leaf('sm'),
+    flexGrow: 1,
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  perkWords: { flex: 1, minWidth: 0 },
+  perkIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  perkNew: { fontSize: 9, lineHeight: 12, fontWeight: '800', letterSpacing: 0.8 },
+  perkFigure: { fontSize: 17, lineHeight: 20, fontWeight: '700', letterSpacing: -0.4 },
+  perkLabel: { fontSize: 11.5, lineHeight: 15, fontWeight: '500' },
+  perkName: { fontSize: 12, lineHeight: 15, fontWeight: '700' },
   step: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -983,34 +981,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepRing: { width: 12, height: 12, borderRadius: 999, borderWidth: 2 },
-  ticket: { borderRadius: radius.xl },
-  ticketTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    paddingBottom: 12,
-  },
-  priceAmount: { fontSize: 30, lineHeight: 36, fontWeight: '700' },
-  tear: { height: 20, justifyContent: 'center' },
-  notch: { position: 'absolute', top: 0, width: 20, height: 20, borderRadius: 10 },
-  dashes: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginHorizontal: spacing.md,
-    overflow: 'hidden',
-  },
-  dash: { width: 6, height: 2, borderRadius: 1 },
-  ticketBottom: {
-    gap: 12,
-    paddingHorizontal: spacing.md,
-    paddingTop: 12,
-    paddingBottom: spacing.md,
-  },
-  figures: { flexDirection: 'row', gap: 12 },
-  figureRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
-  figureValue: { fontSize: 18, lineHeight: 22, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: {
     flexDirection: 'row',
@@ -1036,16 +1006,16 @@ const styles = StyleSheet.create({
   },
   footer: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   status: {
-    height: 56,
-    borderRadius: 18,
+    height: 48,
+    borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
   },
   cta: {
-    height: 56,
-    borderRadius: 18,
+    height: 48,
+    borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1058,5 +1028,5 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
   },
-  links: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
+  links: { flexDirection: 'row', justifyContent: 'center' },
 });

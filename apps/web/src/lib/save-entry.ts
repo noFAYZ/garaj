@@ -83,6 +83,8 @@ export interface DoneEntry {
   place?: string;
   note?: string;
   trip?: CreateEvent['trip'];
+  /** What went in, saved with the entry. */
+  parts?: CreateEvent['parts'];
 }
 
 /** Returns the entry's event, for files to attach to, and any warning the save came back with. */
@@ -105,6 +107,7 @@ export async function saveDone(
       ...(entry.amountMinor !== undefined
         ? { laborCostAmountMinor: entry.amountMinor, costCurrency: entry.currency }
         : {}),
+      ...(entry.parts?.length ? { parts: entry.parts } : {}),
     });
     return { eventId: done.record.eventId, warnings: [] };
   }
@@ -120,6 +123,7 @@ export async function saveDone(
       ? { costAmountMinor: entry.amountMinor, costCurrency: entry.currency }
       : {}),
     ...(entry.trip ? { trip: entry.trip } : {}),
+    ...(entry.parts?.length ? { parts: entry.parts } : {}),
   });
   return {
     eventId: result.event.id,

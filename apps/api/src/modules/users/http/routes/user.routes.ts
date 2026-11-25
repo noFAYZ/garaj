@@ -18,6 +18,9 @@ import { getCurrentUser } from '../../application/queries/get-current-user';
 import { updateUserPreferences } from '../../application/commands/update-user-preferences';
 import { deleteAccount } from '../../application/commands/delete-account';
 import { serializeUser } from '../serializers/user-serializer';
+import { syncFromProvider, syncStoreAccess } from '../../../billing/http/routes/billing.routes';
+import { stripe } from '../../../../infrastructure/stripe';
+import { deleteStoreCustomer, revenuecatConfigured } from '../../../../infrastructure/revenuecat';
 
 export const userRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
   fastify.get(
@@ -52,17 +55,49 @@ export const userRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     },
     async (request) => {
       const actor = await fastify.requireAuth(request);
-      const plan = await fastify.planFor(request, actor.userId);
+      const read = () =>
+        fastify.db
+          .select({
+            status: schema.subscriptions.status,
+            currentPeriodEnd: schema.subscriptions.currentPeriodEnd,
+            cancelAtPeriodEnd: schema.subscriptions.cancelAtPeriodEnd,
+            provider: schema.subscriptions.provider,
+            store: schema.subscriptions.store,
+            managementUrl: schema.subscriptions.managementUrl,
+            stripeCustomerId: schema.subscriptions.stripeCustomerId,
+            stripeSubscriptionId: schema.subscriptions.stripeSubscriptionId,
+          })
+          .from(schema.subscriptions)
+          .where(eq(schema.subscriptions.userId, actor.userId))
+          .limit(1);
+      let [subscription] = await read();
 
-      const [subscription] = await fastify.db
-        .select({
-          status: schema.subscriptions.status,
-          currentPeriodEnd: schema.subscriptions.currentPeriodEnd,
-          cancelAtPeriodEnd: schema.subscriptions.cancelAtPeriodEnd,
-        })
-        .from(schema.subscriptions)
-        .where(eq(schema.subscriptions.userId, actor.userId))
-        .limit(1);
+      /*
+       * A paid period that has run out with no word since — a renewal or an expiry whose
+       * webhook never came. The provider is asked once, here, so the plan heals on the next
+       * look instead of staying paid (or unpaid) until somebody notices. A renewal moves the
+       * period on, so this runs once per lapse, not on every read.
+       */
+      if (
+        subscription?.currentPeriodEnd &&
+        subscription.currentPeriodEnd.getTime() < Date.now() &&
+        subscription.status !== 'CANCELED'
+      ) {
+        try {
+          const client = stripe();
+          if (subscription.provider === 'REVENUECAT' && revenuecatConfigured()) {
+            await syncStoreAccess(fastify, actor.userId);
+          } else if (client && subscription.stripeCustomerId) {
+            await syncFromProvider(fastify, client, subscription.stripeCustomerId);
+          }
+          [subscription] = await read();
+          request.planCache?.delete(actor.userId);
+        } catch (error) {
+          // The provider being down is no reason to fail the plan read: it answers as it was.
+          request.log.warn({ err: error }, 'Plan refresh from the provider failed');
+        }
+      }
+      const plan = await fastify.planFor(request, actor.userId);
 
       const [vehicles, garages] = await Promise.all([
         countVehiclesOwnedBy(fastify.db, actor.userId),
@@ -80,6 +115,15 @@ export const userRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         usage: { vehicles, garages },
         currentPeriodEnd: subscription?.currentPeriodEnd?.toISOString() ?? null,
         cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
+        // A Stripe row with no subscription id is a plan given by hand: nobody bills it.
+        provider:
+          subscription?.provider === 'REVENUECAT'
+            ? ('REVENUECAT' as const)
+            : subscription?.stripeSubscriptionId
+              ? ('STRIPE' as const)
+              : null,
+        store: subscription?.provider === 'REVENUECAT' ? subscription.store : null,
+        managementUrl: subscription?.provider === 'REVENUECAT' ? subscription.managementUrl : null,
       };
     },
   );
@@ -121,6 +165,17 @@ export const userRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         ipAddress: request.ip,
         actorEmail: request.actor?.email ?? null,
       });
+      /*
+       * And forgotten at RevenueCat, once the account is gone here. After the fact and not
+       * fatal: the account is already deleted, and a failure there leaves only an id that no
+       * longer names anyone. A store subscription is not cancelled by this — only the store can,
+       * which is why the app asks the person to cancel it first.
+       */
+      if (revenuecatConfigured()) {
+        await deleteStoreCustomer(actor.userId).catch((error: unknown) =>
+          request.log.warn({ err: error }, 'RevenueCat customer not deleted'),
+        );
+      }
       return reply.status(204).send(null);
     },
   );

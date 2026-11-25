@@ -49,7 +49,7 @@ export function SettingsButton({ onOpen }: { onOpen: () => void }) {
       className="group rounded-full"
     >
       <Settings
-        className="size-4 transition-transform duration-500 ease-out group-hover:rotate-90"
+        className="size-4 transition-transform duration-250 ease-out group-hover:rotate-90"
         aria-hidden="true"
       />
     </Button>

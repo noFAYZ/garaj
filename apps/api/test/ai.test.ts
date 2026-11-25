@@ -208,26 +208,29 @@ describe('ai', () => {
 
   it('stops after the round limit rather than looping', async () => {
     const call = { text: null, calls: [{ name: 'list_vehicles', args: {} }] };
-    ai.say(call, call, call, call, call, call);
+    ai.say(call, call, call, call, call, call, call);
 
     const response = await ask('Keep going forever');
 
     expect(response.status).toBe(200);
     expect((response.body as { answer: string }).answer).toContain('lookups allowed');
-    // Four rounds of one call each, and no fifth.
-    expect((response.body as { sources: unknown[] }).sources).toHaveLength(4);
+    // Five rounds of one call each, and no sixth.
+    expect((response.body as { sources: unknown[] }).sources).toHaveLength(5);
   });
 
-  it('offers the model every tool, and only those tools', async () => {
+  it('offers the model every read tool and the question back, and nothing that writes', async () => {
     ai.say({ text: 'Fine.', calls: [] });
     await ask('Anything');
 
+    // No `allow` on the request, so no `propose_*` tool: asking never changes a record.
     expect(ai.seen.at(-1)?.toolNames).toEqual([
       'list_vehicles',
       'get_vehicle_profile',
       'get_vehicle_costs',
       'get_vehicle_timeline',
       'get_attention_required',
+      'list_garages',
+      'ask_to_choose',
     ]);
   });
 

@@ -11,7 +11,6 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { EASE_OUT } from '@/lib/ease';
 import { cn } from '@/lib/utils';
 import { useStableReducedMotion } from '@/lib/hooks/use-stable-reduced-motion';
 
@@ -32,13 +31,13 @@ function useTabs() {
   return ctx;
 }
 
-// Weighty spring for the active-tab indicator: a touch of overshoot so it
-// settles with life instead of snapping.
+// Quick, near-critically damped spring for the active-tab indicator: it arrives
+// fast and stops, no overshoot.
 const transition: Transition = {
   type: 'spring',
-  stiffness: 170,
-  damping: 24,
-  mass: 1.2,
+  stiffness: 370,
+  damping: 36,
+  mass: 1,
 };
 
 export function Tabs({
@@ -182,7 +181,6 @@ export function TabsContent({
   className?: string;
 }) {
   const { value: current } = useTabs();
-  const reduce = useStableReducedMotion();
   const active = current === value;
   // Inactive panels stay mounted but hidden, so their content (e.g. source
   // code) is present in the server-rendered HTML for crawlers and assistive
@@ -195,14 +193,8 @@ export function TabsContent({
     );
   }
   return (
-    <motion.div
-      key={value}
-      initial={{ opacity: 0, y: reduce ? 0 : 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, ease: EASE_OUT }}
-      className={cn('mt-4', className)}
-    >
+    <div key={value} className={cn('mt-4', className)}>
       {children}
-    </motion.div>
+    </div>
   );
 }

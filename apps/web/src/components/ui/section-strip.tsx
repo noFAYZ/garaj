@@ -83,7 +83,7 @@ export const STRIP_SCROLLER =
 
 export function stripClass(stuck: boolean) {
   return cn(
-    'flex w-max gap-0.5 rounded-2xl p-1 transition-[background-color,box-shadow] duration-300',
+    'flex w-max gap-0.5 rounded-2xl p-1 transition-[background-color,box-shadow] duration-200',
     stuck ? 'bg-popover shadow-float backdrop-blur-xl' : 'bg-card',
   );
 }
@@ -115,7 +115,7 @@ export function PlusCoin() {
   return (
     <span
       aria-hidden="true"
-      className="grid size-5 place-items-center rounded-full bg-primary-foreground text-primary transition-transform duration-300 group-hover:rotate-90"
+      className="grid size-5 place-items-center rounded-full bg-primary-foreground text-primary transition-transform duration-200 group-hover:rotate-90"
     >
       <Plus className="size-3" strokeWidth={3} />
     </span>

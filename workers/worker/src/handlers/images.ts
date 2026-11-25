@@ -122,3 +122,15 @@ export const deletePhotoObjects: JobHandler = async (job, { db, log }) => {
   }
   log.info({ photoId }, 'Photo objects deleted');
 };
+
+/**
+ * Stored files whose rows are already gone — a deleted garage's photos and papers, a deleted
+ * account's. Deleting a missing key succeeds, so a retry after a partial run is harmless.
+ */
+export const deleteObjects: JobHandler = async (job, { log }) => {
+  const { keys } = job.data as { keys: string[] };
+  const storage = createStorage();
+  if (!storage) return;
+  for (const key of keys) await storage.delete(key);
+  log.info({ count: keys.length }, 'Stored objects deleted');
+};

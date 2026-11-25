@@ -6,8 +6,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useStableReducedMotion } from '@/lib/hooks/use-stable-reduced-motion';
 
-// Heavy, deliberate thumb — high mass keeps the travel weighty without wobble.
-const THUMB_SPRING = { type: 'spring', stiffness: 800, damping: 80, mass: 4 } as const;
+// Fast thumb, damped just short of critical so it lands without a wobble.
+const THUMB_SPRING = { type: 'spring', stiffness: 1200, damping: 90, mass: 2 } as const;
 
 export interface SwitchProps {
   checked: boolean;
@@ -36,7 +36,7 @@ export function Switch({
   useEffect(() => {
     if (!thumbRef.current || reduce) return;
     if (disabled && isPressed) {
-      animate(thumbRef.current, { x: [0, -2, 2, -1, 0] }, { delay: 0.2, duration: 0.6 });
+      animate(thumbRef.current, { x: [0, -2, 2, -1, 0] }, { duration: 0.3 });
     }
   }, [disabled, isPressed, reduce]);
 

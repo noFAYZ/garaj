@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { CurrencyCode, DistanceUnit, IsoDate, Nullable, Uuid, VehicleTypeSchema } from './common';
+import { PARTS_PER_ENTRY, PartPositionSchema, PartUnitSchema } from './parts';
 
 /**
  * Natural-language questions about the caller's own vehicles (PRD §35, Architecture.md §41).
@@ -194,6 +195,21 @@ export const EntryDraft = Type.Object({
   odometer: Type.Optional(Type.Integer()),
   /** What was done or bought, in a few words: "Oil and filter change". */
   note: Type.Optional(Type.String()),
+  /** On an invoice or a part's label: what went in, line by line, ready for the form's lines. */
+  parts: Type.Optional(
+    Type.Array(
+      Type.Object({
+        position: PartPositionSchema,
+        brand: Type.Optional(Type.String()),
+        name: Type.Optional(Type.String()),
+        spec: Type.Optional(Type.String()),
+        partNumber: Type.Optional(Type.String()),
+        quantity: Type.Optional(Type.Number()),
+        unit: Type.Optional(PartUnitSchema),
+      }),
+      { maxItems: PARTS_PER_ENTRY },
+    ),
+  ),
 });
 export type EntryDraft = Static<typeof EntryDraft>;
 

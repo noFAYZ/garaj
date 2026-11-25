@@ -594,7 +594,7 @@ function Panel({
                 <motion.div
                   initial={{ x: -40, opacity: 0 }}
                   animate={{ x: 0, opacity: 1 }}
-                  transition={{ type: 'spring', bounce: 0.35, visualDuration: 0.55 }}
+                  transition={{ type: 'spring', bounce: 0.12, visualDuration: 0.32 }}
                 >
                   <GarajMark className="w-28" />
                 </motion.div>

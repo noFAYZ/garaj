@@ -283,7 +283,7 @@ export function AddMenu({ vehicles }: { vehicles: readonly Vehicle[] }) {
             <Plus
               aria-hidden="true"
               strokeWidth={2.5}
-              className="size-5 transition-transform duration-300 ease-out group-data-[state=open]:rotate-45"
+              className="size-5 transition-transform duration-200 ease-out group-data-[state=open]:rotate-45"
             />
           </button>
         </PopoverTrigger>
@@ -338,7 +338,7 @@ export function AddMenu({ vehicles }: { vehicles: readonly Vehicle[] }) {
                   >
                     <span
                       aria-hidden="true"
-                      className="grid size-11 place-items-center rounded-xl bg-card transition-transform duration-300 ease-out group-hover:-translate-y-0.5 group-hover:-rotate-6"
+                      className="grid size-11 place-items-center rounded-xl bg-card transition-transform duration-200 ease-out group-hover:-translate-y-0.5 group-hover:-rotate-6"
                     >
                       <Emoji name={tile.emoji} size={26} />
                     </span>

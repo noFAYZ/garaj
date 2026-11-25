@@ -142,7 +142,7 @@ export function MonthHeading({
  * every card in the app.
  */
 export const ENTRY_CARD =
-  'relative flex min-w-0 flex-col gap-3 rounded-2xl bg-card/50 p-3.5 transition-[background-color,translate,box-shadow] duration-200 hover:-translate-y-0.5 hover:bg-card hover:shadow-float';
+  'relative flex min-w-0 flex-col gap-3 rounded-2xl bg-card/50 p-3.5 transition-colors duration-50 hover:bg-card';
 
 /** One line of the logbook: the day on the rail, and the entry (`children`). */
 export function TimelineRow({
@@ -176,7 +176,7 @@ export function TimelineRow({
         {/* Under anything that sticks above the record — the low z-index is the point. */}
         {firstOfDay ? (
           <span className="relative z-[1] flex w-11 flex-col overflow-hidden rounded-xl bg-card text-center ring-4 ring-background">
-            <span className="bg-muted text-[0.625rem] font-semibold uppercase leading-4 tracking-wider text-muted-foreground">
+            <span className="bg-muted text-[0.525rem] font-semibold uppercase leading-4 tracking-wider text-muted-foreground">
               {WEEKDAY.format(date)}
             </span>
             <span className="py-1.5 font-mono text-lg font-semibold leading-none tabular-nums text-foreground">
@@ -200,7 +200,7 @@ export function TimelineRow({
  */
 export function KindIcon({
   eventType,
-  size = 26,
+  size = 22,
   className,
 }: {
   eventType: EventType;
@@ -210,7 +210,7 @@ export function KindIcon({
   return (
     <span
       aria-hidden="true"
-      className={cn('grid shrink-0 place-items-center rounded-xl bg-muted', className)}
+      className={cn('grid shrink-0 place-items-center rounded-lg bg-muted', className)}
     >
       <Emoji name={eventEmoji(eventType)} size={size} />
     </span>
@@ -243,7 +243,7 @@ export function EntryHead({
     <div className="flex gap-3">
       <KindIcon
         eventType={eventType}
-        className="size-11 transition-transform duration-300 ease-out group-hover/row:-rotate-6 group-hover/row:scale-105"
+        className="size-10 transition-transform duration-50 ease-out group-hover/row:-rotate-6 group-hover/row:scale-105"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
         <div className="flex min-h-11 items-center gap-3">
@@ -257,7 +257,7 @@ export function EntryHead({
             {titled ? (
               <>
                 <span className="sr-only">: </span>
-                <span className="mt-0.5 line-clamp-2 text-sm text-foreground">{title}</span>
+                <span className="mt-0.5 line-clamp-2 text-xs text-foreground">{title}</span>
               </>
             ) : null}
           </h4>

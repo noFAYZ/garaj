@@ -102,6 +102,14 @@ export default function SignInPage() {
         </form>
 
         <p className="mt-6 text-sm text-muted-foreground">
+          <Link
+            href="/forgot-password"
+            className="rounded text-foreground underline underline-offset-4"
+          >
+            Forgot your password?
+          </Link>
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
           No account?{' '}
           <Link href="/sign-up" className="rounded text-foreground underline underline-offset-4">
             Create one

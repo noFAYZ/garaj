@@ -10,6 +10,7 @@ import {
   UpdateEvent,
   VehicleEvent,
   VehicleIdParam,
+  LEDGER_PAGE_MAX,
 } from '@vehicle-os/contracts';
 import type { EventType } from '@vehicle-os/domain';
 import { NotFoundError } from '../../../../infrastructure/errors';
@@ -53,7 +54,7 @@ export const eventRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     async (request) => {
       await fastify.requireVehicleAccess(request, request.params.vehicleId, 'event.read');
 
-      const limit = normaliseLimit(request.query.limit);
+      const limit = normaliseLimit(request.query.limit, LEDGER_PAGE_MAX);
       const cursor = request.query.cursor ? decodeKeysetCursor(request.query.cursor) : undefined;
 
       const rows = await listEvents(fastify.db, {

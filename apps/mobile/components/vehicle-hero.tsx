@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -19,34 +19,38 @@ import { healthBand, vinTail } from '@vehicle-os/ui';
 import type { NextUp } from '@/components/activity-feed';
 import { BayStage } from '@/components/bay-stage';
 import { BrandLogo } from '@/components/brand-logo';
-import { photoKey, RemoteImage } from '@/components/remote-image';
-import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
-import { Glyph, useToneColors } from '@/lib/instrument';
 import {
-  ease,
-  Gauge,
-  haptic,
-  PressableScale,
-  Rise,
-  useIgnition,
-  useReduceMotion,
-} from '@/lib/motion';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+  DashCard,
+  DashCell,
+  DashCellSkeleton,
+  DashNote,
+  DashReading,
+  DashReadings,
+  DashRow,
+  DashRows,
+  DashUnit,
+  DashValue,
+  DIAL,
+} from '@/components/dash';
+import { photoKey, RemoteImage } from '@/components/remote-image';
+import { pad, DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
+import { ease, Gauge, haptic, PressableScale, useIgnition, useReduceMotion } from '@/lib/motion';
+import { figure, lift, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
-const pad = (value: number) => String(value).padStart(2, '0');
 // UTC, as the spend is bucketed.
 const MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', timeZone: 'UTC' });
 
-/** The stage's foot, rounded, where it meets the page. */
-const FOOT = radius.xxxl + 4;
-/** The page's gutter, which the stage reaches past to the screen's edges. */
+/** The page's gutter, which the stage reaches past towards the screen's edges. */
 const GUTTER = spacing.lg;
+/**
+ * How far the stage stands in from the screen's sides and top: a card on the page, with room round
+ * it, but still wider than the dash that docks onto it (which keeps the page's gutter).
+ */
+const STAGE_INSET = spacing.sm;
 /** The bar's own height under the status bar: room for its two round controls. */
 const BAR = 52;
 const CONTROL = 38;
-/** The health's dial, and so the height every figure on the dash keeps. */
-const DIAL = 24;
 const SPARK = 16;
 /** How far the dash docks up over the stage's foot: one object, the cluster on the showroom floor. */
 const DOCK = 30;
@@ -73,7 +77,15 @@ export function kindOf(vehicle: Vehicle): string {
  */
 export function heroStage(screen: number, top: number) {
   const room = Math.min(320, Math.round(screen * 0.62));
-  return { width: screen, height: room + top, top };
+  // What of the stage is under the status bar, now that it starts STAGE_INSET down the screen.
+  const under = Math.max(0, top - STAGE_INSET);
+  return {
+    width: screen - STAGE_INSET * 2,
+    height: room + under,
+    top: under,
+    /** Where the stage's foot is on the screen, from its top edge. */
+    foot: STAGE_INSET + room + under,
+  };
 }
 
 /**
@@ -143,7 +155,8 @@ export function VehicleHero({
 
   return (
     <View style={styles.hero}>
-      <View style={styles.stageSlot}>
+      {/* The lift on a wrapper: a shadow on the view that clips its corners is clipped with them. */}
+      <View style={[styles.stageSlot, { backgroundColor: theme.background }, lift(theme, 'low')]}>
         <PressableScale
           onPress={openStage}
           onLongPress={frames.length > 0 ? onAddPhoto : undefined}
@@ -162,8 +175,8 @@ export function VehicleHero({
             .filter(Boolean)
             .join('. ')}
           accessibilityHint={frames.length > 0 && onAddPhoto ? 'Hold to add another' : undefined}
-          // Full bleed: a stage that shrank under the thumb would pull its edges off the screen's.
-          scaleTo={1}
+          // A card on the page now, so it gives a little under the thumb like the rest.
+          scaleTo={0.985}
         >
           <BayStage
             id={`hero-${vehicle.id}`}
@@ -176,7 +189,7 @@ export function VehicleHero({
             inset={stage.top}
             number={bay}
             plain
-            style={styles.stage}
+            style={[styles.stage, rimmed(theme)]}
           >
             {/* Over a photo, the status bar and the bar's controls need a darker sky to sit on. */}
             {cover && !cover.isCutout ? <Sky height={stage.top + BAR + 24} /> : null}
@@ -301,10 +314,10 @@ function Sky({ height }: { height: number }) {
 }
 
 /**
- * The page's bar, floating over the stage: back on round glass, the vehicle's name beside it, and
- * its ⋯. As the stage goes under it the bar turns solid behind them — the stage and the bar are
- * one thing until the page needs a bar of its own. `pinned`, with no stage on the page, it is that
- * bar from the start, and the title wears the vehicle's picture and plate too.
+ * The page's bar, floating: back and ⋯ on round glass, the vehicle's name between them. It never
+ * turns into a solid bar (user asked: no floating top bars anywhere) — the name steps aside as the
+ * page scrolls under it, and only the two round keys stay. `pinned`, with no stage on the page,
+ * the title wears the vehicle's picture and plate too.
  */
 export function VehicleTopBar({
   vehicle,
@@ -319,29 +332,22 @@ export function VehicleTopBar({
   onBack: () => void;
   onMore: () => void;
 }) {
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const [shown] = useState(() => new Animated.Value(1));
   const stage = heroStage(width, insets.top);
-  const under = stage.height - insets.top - BAR;
-  const solid = pinned
-    ? shown
-    : y.interpolate({
-        inputRange: [under - 48, under],
-        outputRange: [0, 1],
-        extrapolate: 'clamp',
-      });
+  const under = stage.foot - insets.top - BAR;
+  // Gone before anything scrolls under it: at once on a pinned page, past the stage on Logs.
+  const title = y.interpolate({
+    inputRange: pinned ? [0, 24] : [under - 48, under - 8],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
   return (
     <View pointerEvents="box-none" style={[styles.bar, { paddingTop: insets.top }]}>
-      <Animated.View
-        pointerEvents="none"
-        style={[StyleSheet.absoluteFill, { backgroundColor: theme.cardRaised, opacity: solid }]}
-      />
       <BarButton icon="chevron-back" label="Back" onPress={onBack} />
-      <View pointerEvents="none" style={styles.barTitle}>
+      <Animated.View pointerEvents="none" style={[styles.barTitle, { opacity: title }]}>
         <VehicleHeaderTitle vehicle={vehicle} bare={!pinned} />
-      </View>
+      </Animated.View>
       <BarButton
         icon="ellipsis-horizontal"
         label={`More for ${vehicle?.displayName ?? 'this vehicle'}`}
@@ -424,8 +430,8 @@ function Dash({
   return (
     // The lift on a wrapper: a shadow on the view that clips its corners is clipped with them.
     <View style={[styles.dock, lift(theme)]}>
-      <View style={[styles.dash, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
-        <View style={styles.readings}>
+      <DashCard>
+        <DashReadings>
           <DashCell
             icon="speedometer-outline"
             label="Odometer"
@@ -439,21 +445,14 @@ function Dash({
             narrow={narrow}
             onPress={onLogOdometer}
           >
-            <View style={styles.reading}>
-              <Value muted={reading === null} narrow={narrow}>
+            <DashReading>
+              <DashValue muted={reading === null} narrow={narrow}>
                 {reading === null ? '—' : Math.round(reading).toLocaleString()}
-              </Value>
-              {reading !== null ? (
-                <Text style={[figure, styles.unit, { color: theme.mutedForeground }]}>{unit}</Text>
-              ) : null}
-            </View>
+              </DashValue>
+              {reading !== null ? <DashUnit>{unit}</DashUnit> : null}
+            </DashReading>
             {vehicle.currentEngineHours !== null ? (
-              <Text
-                numberOfLines={1}
-                style={[figure, styles.hours, { color: theme.mutedForeground }]}
-              >
-                {vehicle.currentEngineHours.toLocaleString()} H ENGINE
-              </Text>
+              <DashNote>{vehicle.currentEngineHours.toLocaleString()} H ENGINE</DashNote>
             ) : null}
           </DashCell>
           <DashCell
@@ -472,18 +471,18 @@ function Dash({
             narrow={narrow}
             onPress={onOpenStats}
           >
-            <View style={styles.reading}>
+            <DashReading>
               {spent === undefined ? (
                 <Skeleton width={48} height={16} />
               ) : (
-                <Value muted={!spent} narrow={narrow}>
+                <DashValue muted={!spent} narrow={narrow}>
                   {spent ? formatMoney(spent, true) : '—'}
-                </Value>
+                </DashValue>
               )}
               {monthly && monthly.points.length > 1 ? (
                 <Spark points={monthly.points} month={thisMonth} />
               ) : null}
-            </View>
+            </DashReading>
           </DashCell>
           <DashCell
             icon="pulse-outline"
@@ -501,103 +500,26 @@ function Dash({
             onPress={onOpenStats}
           >
             {/* Mounted with its score, so the needle's check runs to the reading, not to a blank. */}
-            <View style={styles.reading}>
+            <DashReading>
               {health === undefined ? <RestingDial /> : <HealthDial score={health} />}
-            </View>
+            </DashReading>
           </DashCell>
-        </View>
-        {next ? <NextUpRow next={next} onPress={onOpenPlanned} /> : null}
-      </View>
+        </DashReadings>
+        {next ? (
+          <DashRows>
+            <DashRow
+              emoji={next.emoji}
+              title={next.title}
+              status={next.headline}
+              tone={next.tone}
+              onPress={onOpenPlanned}
+              accessibilityLabel={`Next up: ${next.title}, ${next.headline}`}
+              accessibilityHint="Opens Reminders"
+            />
+          </DashRows>
+        ) : null}
+      </DashCard>
     </View>
-  );
-}
-
-/**
- * A reading's figure: the mono at semibold, one line that shrinks to its tile rather than
- * overflowing it — a six-figure odometer or a four-figure month still fits.
- */
-function Value({
-  muted = false,
-  narrow = false,
-  children,
-}: {
-  muted?: boolean;
-  narrow?: boolean;
-  children: ReactNode;
-}) {
-  const theme = useTheme();
-  return (
-    <Text
-      numberOfLines={1}
-      adjustsFontSizeToFit
-      minimumFontScale={0.7}
-      style={[
-        figure,
-        styles.figure,
-        narrow ? styles.figureNarrow : null,
-        { color: muted ? theme.mutedForeground : theme.foreground },
-      ]}
-    >
-      {children}
-    </Text>
-  );
-}
-
-/**
- * A reading on the dash: on its own tile, its icon and word over its figure. The whole tile is the
- * way into its reading, each rising into place in turn like the web's.
- */
-function DashCell({
-  icon,
-  label,
-  basis,
-  said,
-  index,
-  hint,
-  narrow = false,
-  onPress,
-  children,
-}: {
-  icon: ComponentProps<typeof Ionicons>['name'];
-  label: string;
-  basis?: string;
-  /** The reading, as a screen reader says it. */
-  said: string;
-  index: number;
-  hint: string;
-  narrow?: boolean;
-  onPress?: () => void;
-  children: ReactNode;
-}) {
-  const theme = useTheme();
-  return (
-    <Rise index={index} style={styles.cellSlot}>
-      <PressableScale
-        onPress={
-          onPress
-            ? () => {
-                haptic.selection();
-                onPress();
-              }
-            : undefined
-        }
-        disabled={!onPress}
-        accessibilityRole="button"
-        accessibilityLabel={said}
-        accessibilityHint={hint}
-        scaleTo={0.96}
-        style={[styles.cell, narrow ? styles.cellNarrow : null, { backgroundColor: theme.muted }]}
-      >
-        <View style={styles.labelRow}>
-          <Ionicons name={icon} size={11} color={theme.mutedForeground} />
-          <Text numberOfLines={1} style={[styles.label, { color: theme.mutedForeground }]}>
-            {label.toUpperCase()}
-            {basis ? <Text style={[figure, styles.label]}> · {basis.toUpperCase()}</Text> : null}
-          </Text>
-        </View>
-        {children}
-      </PressableScale>
-    </Rise>
   );
 }
 
@@ -609,15 +531,7 @@ function HealthDial({ score }: { score: number | null }) {
   return (
     <>
       <Gauge progress={progress} size={DIAL} color={band ? theme[band] : undefined} bare label="" />
-      <Text
-        style={[
-          figure,
-          styles.figure,
-          { color: score === null ? theme.mutedForeground : theme.foreground },
-        ]}
-      >
-        {score ?? '—'}
-      </Text>
+      <DashValue muted={score === null}>{score ?? '—'}</DashValue>
     </>
   );
 }
@@ -698,49 +612,6 @@ function Spark({
         );
       })}
     </View>
-  );
-}
-
-/**
- * The job the vehicle needs next — late before soon — under the readings: its glyph, what it is,
- * and how it stands as a status in its tone, as Home's Up next card says it; the way to the rest in
- * Reminders. On the dash's own ground — the status carries the tone, not a wash across the row.
- */
-function NextUpRow({ next, onPress }: { next: NextUp; onPress?: () => void }) {
-  const theme = useTheme();
-  const { strong } = useToneColors(next.tone);
-  const quiet = next.tone === 'neutral';
-  const tone = quiet ? theme.mutedForeground : strong;
-  return (
-    <Rise index={5}>
-      <PressableScale
-        onPress={
-          onPress
-            ? () => {
-                haptic.selection();
-                onPress();
-              }
-            : undefined
-        }
-        disabled={!onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`Next up: ${next.title}, ${next.headline}`}
-        accessibilityHint="Opens Reminders"
-        scaleTo={0.98}
-        style={styles.next}
-      >
-        <Glyph size={18}>{next.emoji}</Glyph>
-        <Text numberOfLines={1} style={[styles.nextLine, { color: theme.foreground }]}>
-          {next.title}
-        </Text>
-        <View style={[styles.nextStatus, { backgroundColor: quiet ? theme.muted : `${tone}1F` }]}>
-          <Text numberOfLines={1} style={[styles.nextHeadline, { color: tone }]}>
-            {next.headline}
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={13} color={theme.mutedForeground} />
-      </PressableScale>
-    </Rise>
   );
 }
 
@@ -958,37 +829,27 @@ export function VehicleHeroSkeleton() {
           { height: stage.height, backgroundColor: theme.background },
         ]}
       />
-      <View
-        style={[styles.dock, styles.dash, { backgroundColor: theme.cardRaised }, rimmed(theme)]}
-      >
-        <View style={styles.readings}>
-          {(['ODOMETER', 'SPENT', 'HEALTH'] as const).map((label) => (
-            <View
-              key={label}
-              style={[styles.cellSlot, styles.cell, { backgroundColor: theme.muted }]}
-            >
-              <Text style={[styles.label, { color: theme.mutedForeground }]}>{label}</Text>
-              <View style={styles.reading}>
-                <Skeleton width={label === 'ODOMETER' ? 72 : 44} height={16} />
-              </View>
-            </View>
+      <DashCard style={styles.dock}>
+        <DashReadings>
+          {(['Odometer', 'Spent', 'Health'] as const).map((label) => (
+            <DashCellSkeleton key={label} label={label} width={label === 'Odometer' ? 72 : 44} />
           ))}
-        </View>
-      </View>
+        </DashReadings>
+      </DashCard>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   hero: { gap: spacing.md },
-  // Past the page's gutter to the screen's edges; grows from its foot when pulled.
-  stageSlot: { marginHorizontal: -GUTTER },
-  stage: {
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: FOOT,
-    borderBottomRightRadius: FOOT,
+  // Past the page's gutter, but STAGE_INSET short of the screen's sides and top: a card, rounded all
+  // round, still wider than the dash on its foot.
+  stageSlot: {
+    marginHorizontal: -GUTTER + STAGE_INSET,
+    marginTop: STAGE_INSET,
+    ...leaf('lg'),
   },
+  stage: leaf('lg'),
   sky: { position: 'absolute', top: 0, left: 0 },
   // Above the docked dash, where the floor shows.
   foot: {
@@ -1054,28 +915,7 @@ const styles = StyleSheet.create({
   chipValue: { fontSize: 10.5, fontWeight: '600' },
   chipAdd: { fontSize: 11.5, fontWeight: '600' },
   // Docked up over the stage's foot; the hero's gap is cancelled so the overlap is exactly DOCK.
-  dock: { marginTop: -(DOCK + spacing.md), borderRadius: radius.xxl },
-  dash: { borderRadius: radius.xxl, overflow: 'hidden' },
-  // Three tiles of one width, a little of the dash's white between and round them.
-  readings: { flexDirection: 'row', gap: 6, padding: 6 },
-  cellSlot: { flex: 1, minWidth: 0 },
-  cell: {
-    flexGrow: 1,
-    gap: 6,
-    paddingHorizontal: 11,
-    paddingVertical: 10,
-    borderRadius: radius.lg + 2,
-  },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  cellNarrow: { paddingHorizontal: 8 },
-  label: { flexShrink: 1, fontSize: 7.5, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
-  // Every figure keeps the dial's height, so the three sit on one line.
-  reading: { height: DIAL, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  unit: { fontSize: 8, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
-  hours: { fontSize: 7.5, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
-  // The web's figure: its mono at semibold, untracked.
-  figure: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
-  figureNarrow: { fontSize: 15 },
+  dock: { marginTop: -(DOCK + spacing.md), ...leaf('lg') },
   spark: {
     flexShrink: 0,
     height: SPARK,
@@ -1084,25 +924,6 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   sparkBar: { width: 3, borderRadius: 1, transformOrigin: 'bottom' },
-  next: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingTop: 4,
-    paddingBottom: 10,
-    paddingHorizontal: 14,
-  },
-  nextLine: { flex: 1, minWidth: 0, fontSize: 13.5, lineHeight: 18, fontWeight: '600' },
-  // Its whole width before the title gives way: how late it is is never the part cut.
-  nextStatus: {
-    flexShrink: 0,
-    maxWidth: '55%',
-    height: 20,
-    justifyContent: 'center',
-    paddingHorizontal: 7,
-    borderRadius: 6,
-  },
-  nextHeadline: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
   plate: {
     height: 24,
     flexDirection: 'row',

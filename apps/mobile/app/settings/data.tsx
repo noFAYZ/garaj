@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Alert, Text } from 'react-native';
+import { Text } from 'react-native';
 import { garagesQuery, queryKeys } from '@vehicle-os/api-client/react';
 import type { ExportDataset, Garage } from '@vehicle-os/contracts';
 import { capabilitiesFor } from '@vehicle-os/domain';
-import { Group, pad, Row, SettingsPage } from '@/components/settings-kit';
+import { Group, Row, SettingsPage } from '@/components/settings-kit';
+import { pad } from '@/lib/format';
 import { api } from '@/lib/api';
 import { humanise } from '@/lib/format';
 import { haptic } from '@/lib/motion';
@@ -12,6 +13,7 @@ import { ListPicker } from '@/lib/pickers';
 import { shareGarageExport, type GarageExport } from '@/lib/share-export';
 import { typeScale, useTheme } from '@/lib/theme';
 import { Button, Empty, Skeleton } from '@/lib/ui';
+import { dialog, FAILED } from '@/lib/dialog';
 
 /** Everything as one backup, or one dataset as a spreadsheet — the same choices as the web. */
 const EXPORT_OPTIONS = [
@@ -44,16 +46,15 @@ export default function DataScreen() {
     try {
       await shareGarageExport(garage, choice);
     } catch (error) {
-      Alert.alert('Could not export', (error as Error).message);
+      dialog('Could not export', (error as Error).message, undefined, FAILED);
     } finally {
       setExporting(null);
     }
   };
 
-  // ponytail: the native alert is the confirm. A custom sheet if this ever needs typing the name.
   const confirmDelete = (garage: Garage) => {
     haptic.selection();
-    Alert.alert(
+    dialog(
       `Delete ${garage.name}?`,
       `${garage.vehicleCount} ${garage.vehicleCount === 1 ? 'vehicle' : 'vehicles'} and all their records go, for every member. This cannot be undone.`,
       [
@@ -73,7 +74,7 @@ export default function DataScreen() {
                 void queryClient.invalidateQueries({ queryKey: ['me', 'plan'] });
               })
               .catch((error: unknown) =>
-                Alert.alert('Could not delete the garage', (error as Error).message),
+                dialog('Could not delete the garage', (error as Error).message, undefined, FAILED),
               )
               .finally(() => setRemoving(null));
           },

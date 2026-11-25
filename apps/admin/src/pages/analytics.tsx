@@ -1,7 +1,7 @@
 import { Bot, Mail, Smartphone } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Gauge } from '@/components/ui/instruments';
-import { Readings } from '@/components/ui/overview';
+import { Readings } from '../components/readings';
 import { Button, EmptyState } from '@/components/ui/primitives';
 import { Skeleton } from '@/components/ui/skeleton';
 import { humanise } from '@/lib/format';

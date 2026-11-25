@@ -11,7 +11,7 @@
  *    five times what one does.
  */
 
-import { and, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, notInArray, sql } from 'drizzle-orm';
 import { schema, type Database } from '@vehicle-os/database';
 import type { ActivityItem, Dashboard, DueItem, ExpiringDocument } from '@vehicle-os/contracts';
 import { displayName } from '../../../vehicles/domain/entities/vehicle';
@@ -52,6 +52,62 @@ function sumSameCurrency(
   };
 }
 
+/**
+ * The garages' newest entries, for the logbook on the home screen.
+ *
+ * Each vehicle's own newest rows, read off `(vehicle_id, occurred_at desc)`, then the newest of
+ * those. Sorting the joined table instead let Postgres walk the whole events index from today
+ * backwards until it met eight rows of these garages — every other account's history included.
+ */
+async function recentEvents(db: Database, garageIds: string[]) {
+  const RECENT = 8;
+  type Row = {
+    id: string;
+    event_type: (typeof schema.vehicleEvents.$inferSelect)['eventType'];
+    title: string;
+    occurred_at: Date | string;
+    cost_amount_minor: string | number | null;
+    cost_currency: string | null;
+    vehicle_id: string;
+    nickname: string | null;
+    make: string | null;
+    model: string | null;
+    year: number | null;
+    vehicle_type: (typeof schema.vehicles.$inferSelect)['vehicleType'];
+  };
+  const result = await db.execute<Row>(sql`
+    select e.id, e.event_type, e.title, e.occurred_at, e.cost_amount_minor, e.cost_currency,
+           v.id as vehicle_id, v.nickname, v.make, v.model, v.year, v.vehicle_type
+    from ${schema.vehicles} v
+    cross join lateral (
+      select id, event_type, title, occurred_at, cost_amount_minor, cost_currency
+      from ${schema.vehicleEvents}
+      where vehicle_id = v.id
+      order by occurred_at desc
+      limit ${RECENT}
+    ) e
+    where v.garage_id in ${garageIds} and v.deleted_at is null
+    order by e.occurred_at desc
+    limit ${RECENT}
+  `);
+  // postgres.js answers with the rows themselves; PGlite (the test suite) with `{ rows }`.
+  const rows: Row[] = Array.isArray(result) ? result : (result as unknown as { rows: Row[] }).rows;
+  return rows.map((row) => ({
+    id: row.id,
+    eventType: row.event_type,
+    title: row.title,
+    occurredAt: new Date(row.occurred_at),
+    costAmountMinor: row.cost_amount_minor === null ? null : Number(row.cost_amount_minor),
+    costCurrency: row.cost_currency,
+    vehicleId: row.vehicle_id,
+    nickname: row.nickname,
+    make: row.make,
+    model: row.model,
+    year: row.year,
+    vehicleType: row.vehicle_type,
+  }));
+}
+
 export async function buildDashboard(
   db: Database,
   garageIds: readonly string[],
@@ -69,6 +125,8 @@ export async function buildDashboard(
         ownershipCost: null,
         averageHealth: null,
         worstVehicle: null,
+        spentThisMonth: null,
+        spentLastMonth: null,
       },
       attention: {
         maintenance: [],
@@ -85,10 +143,15 @@ export async function buildDashboard(
   }
 
   const ids = [...garageIds];
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const lastMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const inGarages = and(inArray(schema.vehicles.garageId, ids), isNull(schema.vehicles.deletedAt));
 
   /*
-   * Six independent reads, issued together. Sequentially this would be six times the
-   * latency for exactly the same answer.
+   * Independent reads, issued together — sequentially this would be ten times the latency for
+   * the same answer. Each returns what the page needs and no more: money as sums per vehicle,
+   * condition and valuations as the newest per vehicle. Reading the rows themselves made the
+   * home screen cost more with every fill-up ever recorded.
    */
   const [
     vehicles,
@@ -102,10 +165,7 @@ export async function buildDashboard(
     recallRows,
     garageRows,
   ] = await Promise.all([
-    db
-      .select()
-      .from(schema.vehicles)
-      .where(and(inArray(schema.vehicles.garageId, ids), isNull(schema.vehicles.deletedAt))),
+    db.select().from(schema.vehicles).where(inGarages),
     listDuePlansForGarages(db, ids),
     listExpiringDocuments(db, ids, addDays(today, EXPIRY_HORIZON_DAYS)),
     db
@@ -123,39 +183,33 @@ export async function buildDashboard(
           notInArray(schema.tasks.status, ['COMPLETED', 'CANCELLED']),
         ),
       ),
+    // Lifetime and this month's spend, summed per vehicle, currency and category.
     db
       .select({
         vehicleId: schema.expenses.vehicleId,
-        amountMinor: schema.expenses.amountMinor,
         currency: schema.expenses.currency,
         category: schema.expenses.category,
-        occurredAt: schema.expenses.occurredAt,
+        amountMinor: sql<number>`sum(${schema.expenses.amountMinor})`.mapWith(Number),
+        count: sql<number>`count(*)`.mapWith(Number),
+        // Null when nothing was spent this month in that currency — not the same as zero.
+        monthMinor: sql<number | null>`sum(${schema.expenses.amountMinor}) filter (where ${gte(
+          schema.expenses.occurredAt,
+          monthStart,
+        )})`.mapWith((value: unknown) => (value === null ? null : Number(value))),
+        // Last calendar month's, for the home screen's month-on-month: the same null rule.
+        lastMonthMinor: sql<number | null>`sum(${schema.expenses.amountMinor}) filter (where ${and(
+          gte(schema.expenses.occurredAt, lastMonthStart),
+          lt(schema.expenses.occurredAt, monthStart),
+        )})`.mapWith((value: unknown) => (value === null ? null : Number(value))),
       })
       .from(schema.expenses)
       .innerJoin(schema.vehicles, eq(schema.vehicles.id, schema.expenses.vehicleId))
-      .where(and(inArray(schema.vehicles.garageId, ids), isNull(schema.vehicles.deletedAt))),
+      .where(inGarages)
+      .groupBy(schema.expenses.vehicleId, schema.expenses.currency, schema.expenses.category),
+    recentEvents(db, ids),
+    // The newest score per vehicle and category: all `latestByCategory` keeps of the history.
     db
-      .select({
-        id: schema.vehicleEvents.id,
-        eventType: schema.vehicleEvents.eventType,
-        title: schema.vehicleEvents.title,
-        occurredAt: schema.vehicleEvents.occurredAt,
-        costAmountMinor: schema.vehicleEvents.costAmountMinor,
-        costCurrency: schema.vehicleEvents.costCurrency,
-        vehicleId: schema.vehicles.id,
-        nickname: schema.vehicles.nickname,
-        make: schema.vehicles.make,
-        model: schema.vehicles.model,
-        year: schema.vehicles.year,
-        vehicleType: schema.vehicles.vehicleType,
-      })
-      .from(schema.vehicleEvents)
-      .innerJoin(schema.vehicles, eq(schema.vehicles.id, schema.vehicleEvents.vehicleId))
-      .where(and(inArray(schema.vehicles.garageId, ids), isNull(schema.vehicles.deletedAt)))
-      .orderBy(desc(schema.vehicleEvents.occurredAt))
-      .limit(8),
-    db
-      .select({
+      .selectDistinctOn([schema.conditionAssessments.vehicleId, schema.conditionItems.category], {
         vehicleId: schema.conditionAssessments.vehicleId,
         category: schema.conditionItems.category,
         score: schema.conditionItems.score,
@@ -167,9 +221,15 @@ export async function buildDashboard(
         eq(schema.conditionAssessments.id, schema.conditionItems.assessmentId),
       )
       .innerJoin(schema.vehicles, eq(schema.vehicles.id, schema.conditionAssessments.vehicleId))
-      .where(and(inArray(schema.vehicles.garageId, ids), isNull(schema.vehicles.deletedAt))),
+      .where(inGarages)
+      .orderBy(
+        schema.conditionAssessments.vehicleId,
+        schema.conditionItems.category,
+        desc(schema.conditionAssessments.assessedAt),
+      ),
+    // The newest valuation per vehicle.
     db
-      .select({
+      .selectDistinctOn([schema.valuations.vehicleId], {
         vehicleId: schema.valuations.vehicleId,
         amountMinor: schema.valuations.estimatedValueAmountMinor,
         currency: schema.valuations.estimatedValueCurrency,
@@ -177,8 +237,8 @@ export async function buildDashboard(
       })
       .from(schema.valuations)
       .innerJoin(schema.vehicles, eq(schema.vehicles.id, schema.valuations.vehicleId))
-      .where(and(inArray(schema.vehicles.garageId, ids), isNull(schema.vehicles.deletedAt)))
-      .orderBy(desc(schema.valuations.valuationDate)),
+      .where(inGarages)
+      .orderBy(schema.valuations.vehicleId, desc(schema.valuations.valuationDate)),
     userId
       ? db
           .select({
@@ -332,14 +392,15 @@ export async function buildDashboard(
     }));
   /*
    * "Total estimated value" is what the vehicles are worth now, not what they cost — the
-   * most recent valuation per vehicle, falling back to the purchase price for a vehicle
-   * nobody has valued. The rows arrive newest first, so the first per vehicle wins.
+   * most recent valuation per vehicle (one row each), falling back to the purchase price for a
+   * vehicle nobody has valued.
    */
-  const latestValuation = new Map<string, { amountMinor: number; currency: string }>();
-  for (const row of valuationRows) {
-    if (latestValuation.has(row.vehicleId)) continue;
-    latestValuation.set(row.vehicleId, { amountMinor: row.amountMinor, currency: row.currency });
-  }
+  const latestValuation = new Map(
+    valuationRows.map((row) => [
+      row.vehicleId,
+      { amountMinor: row.amountMinor, currency: row.currency },
+    ]),
+  );
 
   const currentValues = vehicles
     .map(
@@ -370,10 +431,10 @@ export async function buildDashboard(
    */
   const currencyOf = new Map(garageRows.map((garage) => [garage.id, garage.defaultCurrency]));
   const sumsOf = new Map<string, CategorySum[]>();
-  for (const expense of expenses) {
-    const sums = sumsOf.get(expense.vehicleId) ?? [];
-    sums.push({ ...expense, count: 1 });
-    sumsOf.set(expense.vehicleId, sums);
+  for (const sum of expenses) {
+    const sums = sumsOf.get(sum.vehicleId) ?? [];
+    sums.push(sum);
+    sumsOf.set(sum.vehicleId, sums);
   }
   const vehicleSpend: Record<string, { amountMinor: number; currency: string }> = {};
   for (const vehicle of vehicles) {
@@ -390,9 +451,17 @@ export async function buildDashboard(
     };
   }
 
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const spentThisMonth = sumSameCurrency(
-    running.filter((expense) => expense.occurredAt >= monthStart),
+    running.flatMap((sum) =>
+      sum.monthMinor === null ? [] : [{ amountMinor: sum.monthMinor, currency: sum.currency }],
+    ),
+  );
+  const spentLastMonth = sumSameCurrency(
+    running.flatMap((sum) =>
+      sum.lastMonthMinor === null
+        ? []
+        : [{ amountMinor: sum.lastMonthMinor, currency: sum.currency }],
+    ),
   );
 
   // --- activity and briefing ----------------------------------------------------------
@@ -437,6 +506,8 @@ export async function buildDashboard(
       ownershipCost,
       averageHealth,
       worstVehicle,
+      spentThisMonth,
+      spentLastMonth,
     },
     vehicleSpend,
     attention: {

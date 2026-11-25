@@ -7,7 +7,7 @@ import {
   MoneyOutput,
   Nullable,
   Paginated,
-  PaginationQuery,
+  LedgerPaginationQuery,
   Uuid,
 } from './common';
 
@@ -66,7 +66,7 @@ export const IncomeList = Paginated(Income);
 export type IncomeList = Static<typeof IncomeList>;
 
 export const IncomeQuery = Type.Composite([
-  PaginationQuery,
+  LedgerPaginationQuery,
   Type.Object({
     from: Type.Optional(IsoDateTime),
     to: Type.Optional(IsoDateTime),

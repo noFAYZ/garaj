@@ -11,7 +11,8 @@
  */
 
 import type { ExportDataset } from '@vehicle-os/contracts';
-import * as FileSystem from 'expo-file-system';
+// The path-and-string API; SDK 54 moved it under `legacy` when it made the File/Directory one default.
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { API_URL, authHeader } from './api';
 

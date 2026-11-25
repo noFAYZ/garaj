@@ -734,13 +734,13 @@ function Crew({ members, onOpen }: { members: readonly GarageMember[]; onOpen: (
           <span
             key={member.id}
             style={{ zIndex: FACES - index, '--i': index } as CSSProperties}
-            className="relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-full bg-muted font-mono text-[0.625rem] font-semibold text-foreground ring-2 ring-card transition-transform duration-300 ease-out [transition-delay:calc(var(--i)*50ms)] group-hover/crew:-translate-y-1 [&:not(:first-child)]:-ml-2.5"
+            className="relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-full bg-muted font-mono text-[0.625rem] font-semibold text-foreground ring-2 ring-card transition-transform duration-200 ease-out [transition-delay:calc(var(--i)*50ms)] group-hover/crew:-translate-y-1 [&:not(:first-child)]:-ml-2.5"
           >
             <Face member={member} />
           </span>
         ))}
         {rest > 0 ? (
-          <span className="relative -ml-2.5 grid size-8 place-items-center rounded-full bg-primary-soft font-mono text-[0.625rem] font-semibold tabular-nums text-foreground ring-2 ring-card transition-transform duration-300 ease-out [transition-delay:200ms] group-hover/crew:-translate-y-1">
+          <span className="relative -ml-2.5 grid size-8 place-items-center rounded-full bg-primary-soft font-mono text-[0.625rem] font-semibold tabular-nums text-foreground ring-2 ring-card transition-transform duration-200 ease-out [transition-delay:200ms] group-hover/crew:-translate-y-1">
             +{rest}
           </span>
         ) : null}

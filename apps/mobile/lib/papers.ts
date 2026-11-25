@@ -1,3 +1,5 @@
+import { pad } from './format';
+
 /*
  * A vehicle's papers, as the Docs tab reads them: which one of a kind is current, how much of its
  * term is left, and what the day count says in words — apart from the drawing so it can be checked
@@ -89,6 +91,5 @@ export function addMonths(day: string, months: number): string {
   const target = new Date(year, month - 1 + months, 1);
   const last = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
   target.setDate(Math.min(date, last));
-  const pad = (value: number) => String(value).padStart(2, '0');
   return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
 }

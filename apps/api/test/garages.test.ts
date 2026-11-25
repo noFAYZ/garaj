@@ -231,6 +231,20 @@ describe('garages', () => {
     });
 
     it('removes a member and takes their access with it', async () => {
+      // A vehicle route checks the caller's cached memberships, not a join: reading it first
+      // caches Bob's, so the removal must clear them for the 404 below.
+      const vehicle = await as(context, alice).post('/api/v1/vehicles', {
+        garageId,
+        vehicleType: 'CAR',
+        make: 'Mazda',
+        model: 'MX-5',
+        year: 1991,
+        currentOdometer: 120_000,
+        odometerUnit: 'KM',
+      });
+      const vehicleId = (vehicle.body as { id: string }).id;
+      expect((await as(context, bob).get(`/api/v1/vehicles/${vehicleId}`)).status).toBe(200);
+
       const members = await as(context, alice).get(`/api/v1/garages/${garageId}/members`);
       const bobMember = (members.body as { id: string; userId: string }[]).find(
         (m) => m.userId === bob.userId,
@@ -242,6 +256,7 @@ describe('garages', () => {
       expect(removed.status).toBe(204);
 
       expect((await as(context, bob).get(`/api/v1/garages/${garageId}`)).status).toBe(404);
+      expect((await as(context, bob).get(`/api/v1/vehicles/${vehicleId}`)).status).toBe(404);
     });
   });
 

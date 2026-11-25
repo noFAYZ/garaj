@@ -1,0 +1,2 @@
+ALTER TABLE "vehicle_parts" ADD COLUMN "warranty_until" date;--> statement-breakpoint
+CREATE INDEX "vehicle_parts_warranty_idx" ON "vehicle_parts" USING btree ("warranty_until") WHERE "vehicle_parts"."warranty_until" is not null;

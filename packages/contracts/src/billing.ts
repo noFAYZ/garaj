@@ -1,11 +1,20 @@
 import { Type, type Static } from '@sinclair/typebox';
-import { ACCOUNT_KINDS, ENTITLEMENTS, PLAN_TIERS, SUBSCRIPTION_STATUSES } from '@vehicle-os/domain';
+import {
+  ACCOUNT_KINDS,
+  BILLING_PROVIDERS,
+  ENTITLEMENTS,
+  PLAN_TIERS,
+  SUBSCRIPTION_STATUSES,
+} from '@vehicle-os/domain';
 import { IsoDateTime, Nullable } from './common';
 
 export const AccountKind = Type.Union(ACCOUNT_KINDS.map((kind) => Type.Literal(kind)));
 export const PlanTier = Type.Union(PLAN_TIERS.map((tier) => Type.Literal(tier)));
 export const SubscriptionStatus = Type.Union(
   SUBSCRIPTION_STATUSES.map((status) => Type.Literal(status)),
+);
+export const BillingProvider = Type.Union(
+  BILLING_PROVIDERS.map((provider) => Type.Literal(provider)),
 );
 
 /**
@@ -37,6 +46,15 @@ export const PlanState = Type.Object({
   /** When the paid period ends; null on a free plan, which has no period. */
   currentPeriodEnd: Nullable(IsoDateTime),
   cancelAtPeriodEnd: Type.Boolean(),
+  /*
+   * Who bills the plan, so each client offers only what it can do: the phone changes a store
+   * plan and leaves a Stripe one to the web, the web the other way round. Null when nobody bills
+   * it — the free plan, or one given by hand.
+   */
+  provider: Nullable(BillingProvider),
+  /** For a store plan: `PLAY_STORE`, `APP_STORE`… and the store's page for managing it. */
+  store: Nullable(Type.String()),
+  managementUrl: Nullable(Type.String()),
 });
 export type PlanState = Static<typeof PlanState>;
 

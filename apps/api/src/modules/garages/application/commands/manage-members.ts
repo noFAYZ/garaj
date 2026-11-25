@@ -69,6 +69,16 @@ export async function addMember(
         email: `No Garaj account exists for ${input.email}. They need to sign up first.`,
       });
     }
+    /*
+     * An address nobody has proved is theirs could be anyone's: whoever signed up with it first
+     * would be handed this garage. So it must be confirmed — the link is in the email Garaj sent
+     * at sign-up, and a new one is a button away in their account.
+     */
+    if (!user.emailVerified) {
+      throw new ValidationError('Invalid request', {
+        email: `${user.email} hasn't confirmed their email yet. Ask them to open the link Garaj emailed them, or send a new one from their account settings.`,
+      });
+    }
 
     const existing = await listMembers(tx, garageId);
     if (existing.some((member) => member.userId === user.id)) {

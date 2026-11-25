@@ -80,7 +80,7 @@ export function CardGridSkeleton({ cards = 3 }: { cards?: number }) {
   return (
     <div className={VEHICLE_GRID}>
       {Array.from({ length: cards }, (_, index) => (
-        <div key={index} className="flex flex-col gap-3 rounded-2xl bg-card/50 p-2 pb-2.5">
+        <div key={index} className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-card p-2 pb-2.5">
           {/* The same 16/10 stage as a real card, so nothing jumps when the picture arrives. */}
           <Skeleton className="aspect-[16/10] w-full rounded-xl" />
           <div className="flex min-w-0 items-start gap-2 px-1.5">

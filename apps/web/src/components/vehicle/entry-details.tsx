@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { Icon } from '@/components/icons';
 import { PHOTO_TYPES } from '@/components/onboard-uploads';
 import { Amount, KindIcon } from '@/components/timeline';
+import { EntryParts } from '@/components/vehicle/parts-panel';
 import { Modal, MODAL_BAR } from '@/components/ui/modal';
 import { Button } from '@/components/ui/primitives';
 import { ConfirmDelete } from '@/components/ui/row-actions';
@@ -207,6 +208,8 @@ export function EntryDetails({
               </p>
             </section>
           ) : null}
+
+          <EntryParts vehicleId={vehicleId} eventId={event.id} />
 
           <Attachments
             vehicleId={vehicleId}

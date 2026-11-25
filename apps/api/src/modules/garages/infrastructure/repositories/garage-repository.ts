@@ -1,6 +1,8 @@
 import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { schema, type Executor } from '@vehicle-os/database';
 import type { CostReportingMode, GarageRole } from '@vehicle-os/domain';
+import { enqueue } from '../../../../infrastructure/outbox';
+import { forgetMemberships } from '../../../../plugins/actor-context';
 
 export interface GarageRow {
   id: string;
@@ -93,8 +95,46 @@ export async function updateGarage(
   await db.update(schema.garages).set(changes).where(eq(schema.garages.id, garageId));
 }
 
+/** Keys per outbox message: a deletion job stays small enough to retry whole. */
+const KEYS_PER_JOB = 500;
+
+/**
+ * Deletes a garage and everything in it, its stored files included.
+ *
+ * The rows go by cascade; the files they name would not — the collectors only ever see rows
+ * that still exist, so a deleted garage's photos and papers stayed in storage for good. Their
+ * keys are read first and handed to the worker in the same transaction as the delete: both
+ * happen, or neither does.
+ */
 export async function deleteGarage(db: Executor, garageId: string): Promise<void> {
+  const [documents, photos] = await Promise.all([
+    db
+      .select({ key: schema.documents.storageKey })
+      .from(schema.documents)
+      .innerJoin(schema.vehicles, eq(schema.vehicles.id, schema.documents.vehicleId))
+      .where(eq(schema.vehicles.garageId, garageId)),
+    db
+      .select({ key: schema.vehiclePhotos.storageKey, cutout: schema.vehiclePhotos.cutoutKey })
+      .from(schema.vehiclePhotos)
+      .innerJoin(schema.vehicles, eq(schema.vehicles.id, schema.vehiclePhotos.vehicleId))
+      .where(eq(schema.vehicles.garageId, garageId)),
+  ]);
+  const keys = [
+    ...documents.map((row) => row.key),
+    ...photos.flatMap((row) => (row.cutout ? [row.key, row.cutout] : [row.key])),
+  ];
+  const jobs = [];
+  for (let start = 0; start < keys.length; start += KEYS_PER_JOB) {
+    jobs.push({
+      queue: 'image-processing' as const,
+      jobName: 'delete-objects',
+      payload: { keys: keys.slice(start, start + KEYS_PER_JOB) },
+      jobKey: `delete-objects:${garageId}:${start / KEYS_PER_JOB}`,
+    });
+  }
+  await enqueue(db, jobs);
   await db.delete(schema.garages).where(eq(schema.garages.id, garageId));
+  forgetMemberships();
 }
 
 // --- Members ----------------------------------------------------------------
@@ -215,6 +255,7 @@ export async function insertMember(
     id: schema.garageMembers.id,
   });
   if (!row) throw new Error('Member insert returned no row');
+  forgetMemberships();
   return row.id;
 }
 
@@ -224,18 +265,24 @@ export async function updateMemberRole(
   role: GarageRole,
 ): Promise<void> {
   await db.update(schema.garageMembers).set({ role }).where(eq(schema.garageMembers.id, memberId));
+  forgetMemberships();
 }
 
 export async function deleteMember(db: Executor, memberId: string): Promise<void> {
   await db.delete(schema.garageMembers).where(eq(schema.garageMembers.id, memberId));
+  forgetMemberships();
 }
 
 export async function findUserByEmail(
   db: Executor,
   email: string,
-): Promise<{ id: string; email: string } | null> {
+): Promise<{ id: string; email: string; emailVerified: boolean } | null> {
   const [row] = await db
-    .select({ id: schema.users.id, email: schema.users.email })
+    .select({
+      id: schema.users.id,
+      email: schema.users.email,
+      emailVerified: schema.users.emailVerified,
+    })
     .from(schema.users)
     // Addresses are compared case-insensitively; nobody thinks of Alice@ and alice@ as two
     // people, and treating them as two silently creates a duplicate membership attempt.

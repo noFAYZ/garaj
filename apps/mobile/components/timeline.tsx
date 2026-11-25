@@ -6,16 +6,18 @@ import {
   type ComponentProps,
   type ReactNode,
 } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import type { EventType } from '@vehicle-os/domain';
 import type { MonthGroup } from '@vehicle-os/ui';
+import { RemoteImage } from '@/components/remote-image';
 import { eventEmoji } from '@/lib/emoji';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Rect } from 'react-native-svg';
 import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { Glyph } from '@/lib/instrument';
 import { monthSpend, type Dated } from '@/lib/ledger';
 import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
-import { figure, spacing, useTheme } from '@/lib/theme';
+import { cardSurface, figure, spacing, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 /*
@@ -33,29 +35,24 @@ type Money = { amountMinor: number; currency: string };
 
 /** The day's column, at the row's left edge. */
 const DAY = 30;
-/** The rail's column; the glyph is centred in it, on a ground that breaks the road round it. */
-const RAIL = 30;
-const RING = 30;
 /**
- * Between a row's columns. The glyph is 20 in its 30, so its own 5 each side and this make the
- * day → glyph and glyph → title gaps the same 9: one rhythm across the row.
+ * The rail's column, the width of the kind's mark — the notifications' muted ground, made round
+ * (user asked: rounded, and the row less spaced).
  */
-const COLUMN_GAP = 4;
+const RAIL = 36;
+const RING = 36;
+const TILE_RADIUS = RING / 2;
+/** Between a row's columns. */
+const COLUMN_GAP = 6;
 const LINE = 1.5;
-/** The ring's top inside its row, and so where its middle falls: the air between entries. */
-const RING_TOP = 13;
+/** The mark's top inside its row, and so where its middle falls: the air between entries. */
+const RING_TOP = 8;
 const RING_MID = RING_TOP + RING / 2;
 /** Rows reach past the page's gutter by this much, so a pressed row's wash has room round it. */
 const BLEED = spacing.sm;
 
 const MONTH = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short' });
 const WEEKDAY = new Intl.DateTimeFormat(DATE_LOCALE, { weekday: 'short' });
-
-/**
- * What the ledger is drawn on, when it is not the page: a month's node and the road's end are cut
- * out of the road in this colour.
- */
-export const LedgerSurface = createContext<string | null>(null);
 
 /** The road down the rail column, above and below what sits on it. */
 function Segments({
@@ -125,6 +122,15 @@ export function LedgerMonth({ group }: { group: MonthGroup<Dated> }) {
   );
 }
 
+/**
+ * A month's entries on a card, when the ledger is on the page rather than a sheet of its own — as
+ * the notifications' days sit, a hairline between them. The month's heading goes above it.
+ */
+export function LedgerCard({ children }: { children: ReactNode }) {
+  const theme = useTheme();
+  return <View style={[styles.card, cardSurface(theme)]}>{children}</View>;
+}
+
 /** The ring's press, shared with its row: pressing an entry tips its glyph. */
 const Tip = createContext<Animated.Value | null>(null);
 
@@ -184,15 +190,18 @@ export function splitCents(money: Money): [string, string] {
     : [match[1]!, `${match[2]}${match[3]}`];
 }
 
+/** What is filed against an entry, for its row: the first picture there is, and how many in all. */
+export type Filed = { uri: string | null; cacheKey: string; count: number };
+
 /** Two instants on the same calendar day, in the phone's own zone. */
 const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Date(b).toDateString();
 
 /**
  * One entry on the road: its day as a calendar badge at the left edge, the kind's glyph on the
  * road, then what it was over its kind's badge and the place; flush right,
- * what it cost over what went in and how far it had come since the reading before. The mark wears
- * the kind's glyph on its report hue. The reading itself and the note are the entry's own
- * screen's; the whole row opens it, a wash under the thumb.
+ * what it cost over what went in and how far it had come since the reading before. Under both, a
+ * peek at what the entry holds: its first attachment as a thumbnail and the note's opening lines.
+ * The whole row opens it, a wash under the thumb.
  *
  * `state` is for an entry still on this phone: a dashed amber ring while it waits for signal, a
  * red one if the server refused it — the row's `children` say which and offer the way out.
@@ -208,6 +217,8 @@ export function LedgerRow({
   aside,
   trail,
   change,
+  note,
+  filed,
   state,
   onPress,
   accessibilityLabel,
@@ -233,6 +244,10 @@ export function LedgerRow({
   trail?: readonly (string | null | false | undefined)[];
   /** The odometer since the reading before, signed: a rise in green, a drop in red. */
   change?: { text: string; up: boolean } | null;
+  /** The note, cut to two lines under the figures. */
+  note?: string | null;
+  /** Its attachments, as a thumbnail beside the note. */
+  filed?: Filed | null;
   state?: 'waiting' | 'failed';
   onPress?: () => void;
   accessibilityLabel: string;
@@ -247,7 +262,7 @@ export function LedgerRow({
   const [draw] = useState(() => new Animated.Value(reduce ? 1 : 0));
   const [pressed, setPressed] = useState(false);
   const rest = meta.filter(Boolean).join(' · ');
-  const hue = HUE[eventType];
+  const excerpt = note?.replace(/\s+/g, ' ').trim();
   const leadsDay = !previousAt || !sameDay(previousAt, occurredAt);
   const endsDay = !nextAt || !sameDay(occurredAt, nextAt);
   const [whole, cents] = cost ? splitCents(cost) : ['', ''];
@@ -313,20 +328,14 @@ export function LedgerRow({
                 <Text numberOfLines={1} style={[styles.title, { color: theme.foreground }]}>
                   {title}
                 </Text>
-                {/*
-                 * The kind as a dot of its hue — the glyph beside it already names it — then what
-                 * else the entry records; with nothing else, the kind's own word.
-                 */}
+                {/* The kind's badge, as its own screen wears it, then what else it records. */}
                 <View style={styles.facts}>
-                  <View
-                    style={[
-                      styles.kindDot,
-                      { backgroundColor: hue ? theme[hue] : theme.borderStrong },
-                    ]}
-                  />
-                  <Text numberOfLines={1} style={[styles.meta, { color: theme.mutedForeground }]}>
-                    {rest || kindWord(eventType)}
-                  </Text>
+                  <KindBadge eventType={eventType} />
+                  {rest ? (
+                    <Text numberOfLines={1} style={[styles.meta, { color: theme.mutedForeground }]}>
+                      {rest}
+                    </Text>
+                  ) : null}
                 </View>
               </View>
               {/*
@@ -393,6 +402,43 @@ export function LedgerRow({
                 ) : null}
               </View>
             </View>
+            {excerpt || filed ? (
+              <View style={styles.peek}>
+                {filed ? (
+                  <View
+                    style={[
+                      styles.thumb,
+                      { backgroundColor: theme.muted, borderColor: theme.border },
+                    ]}
+                  >
+                    <RemoteImage
+                      uri={filed.uri}
+                      cacheKey={filed.cacheKey}
+                      style={StyleSheet.absoluteFill}
+                      contentFit="cover"
+                      transition={150}
+                      accessibilityIgnoresInvertColors
+                      fallback={
+                        <Ionicons
+                          name="document-text-outline"
+                          size={16}
+                          color={theme.mutedForeground}
+                        />
+                      }
+                    />
+                    {filed.count > 1 ? (
+                      <View style={styles.thumbCount}>
+                        <Text style={[figure, styles.thumbCountText]}>{filed.count}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+                <Text numberOfLines={2} style={[styles.note, { color: theme.mutedForeground }]}>
+                  {excerpt ||
+                    `${filed!.count} ${filed!.count === 1 ? 'attachment' : 'attachments'}`}
+                </Text>
+              </View>
+            ) : null}
             {children}
           </View>
         </PressableScale>
@@ -482,17 +528,21 @@ function DayBadge({ occurredAt }: { occurredAt: string }) {
   );
 }
 
-/** The glyph on the road, in its row's rail; pressing the row tips it. */
+/**
+ * The kind on the road, in its row's rail: its glyph on the notifications' quiet tile, which the
+ * road meets at its top and foot. A state rings the tile — waiting amber and dashed, refused red.
+ * Pressing the row tips it.
+ */
 function Ring({ eventType, state }: { eventType: EventType; state?: 'waiting' | 'failed' }) {
   const theme = useTheme();
   const tip = useContext(Tip);
+  const edge = state === 'failed' ? theme.destructive : state === 'waiting' ? theme.warning : null;
   return (
-    <KindDisc
-      eventType={eventType}
-      state={state}
-      ground={useContext(LedgerSurface) ?? theme.background}
+    <Animated.View
       style={[
         styles.ring,
+        styles.tile,
+        { backgroundColor: theme.muted },
         tip
           ? {
               transform: [
@@ -502,7 +552,24 @@ function Ring({ eventType, state }: { eventType: EventType; state?: 'waiting' | 
             }
           : null,
       ]}
-    />
+    >
+      {edge ? (
+        <Svg style={StyleSheet.absoluteFill} width={RING} height={RING}>
+          <Rect
+            x={0.75}
+            y={0.75}
+            width={RING - 1.5}
+            height={RING - 1.5}
+            rx={TILE_RADIUS - 0.75}
+            fill="none"
+            stroke={edge}
+            strokeWidth={1.5}
+            strokeDasharray={state === 'waiting' ? '3 2.5' : undefined}
+          />
+        </Svg>
+      ) : null}
+      <Glyph size={18}>{eventEmoji(eventType)}</Glyph>
+    </Animated.View>
   );
 }
 
@@ -533,30 +600,6 @@ export function KindBadge({ eventType }: { eventType: EventType }) {
   );
 }
 
-/**
- * Where the road ends: the record's first entry, said with its date — or, while there is more of
- * it on the server, the way to fetch it (`children`), the road running on dashed into it.
- */
-export function LedgerEnd({ children }: { children: ReactNode }) {
-  const theme = useTheme();
-  const surface = useContext(LedgerSurface) ?? theme.background;
-  return (
-    <View style={styles.end}>
-      <View style={styles.dayColumn} />
-      <View
-        style={styles.rail}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
-        <View
-          style={[styles.terminal, { borderColor: theme.borderStrong, backgroundColor: surface }]}
-        />
-      </View>
-      <View style={styles.endBody}>{children}</View>
-    </View>
-  );
-}
-
 /** The logbook before it loads: the same road and rings, only the words waiting. */
 export function LedgerPlaceholder({ rows = 4 }: { rows?: number }) {
   return (
@@ -565,7 +608,7 @@ export function LedgerPlaceholder({ rows = 4 }: { rows?: number }) {
         <View key={index} style={styles.row}>
           <Skeleton width={DAY} height={RING} radius={8} style={styles.daySkeleton} />
           <View style={styles.rail}>
-            <Skeleton width={20} height={20} radius={10} style={{ marginTop: RING_MID - 10 }} />
+            <Skeleton width={RING} height={RING} radius={TILE_RADIUS} style={styles.ring} />
           </View>
           <View style={[styles.body, { gap: 7 }]}>
             <Skeleton width="46%" height={12} />
@@ -620,16 +663,13 @@ export function fillQuantity(eventType: EventType, note: string | null) {
     : { quantity: null, rest: note?.trim() ?? '' };
 }
 
-/** Where the end's marker sits in its row. */
-const END_MID = 22;
-
 const styles = StyleSheet.create({
   rail: { width: RAIL, alignSelf: 'stretch', alignItems: 'center' },
   segment: { position: 'absolute', left: (RAIL - LINE) / 2, width: LINE },
   down: { transformOrigin: 'top' },
   // A slim strip, the sheet's full width; the label lines up with the days' column.
   month: {
-    height: 24,
+    height: 22,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
@@ -642,12 +682,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14,
     fontWeight: '700',
-    letterSpacing: 1.1,
+    letterSpacing: 0.8,
   },
-  monthYear: { fontSize: 11, lineHeight: 14, fontWeight: '600', letterSpacing: 1.1 },
+  monthYear: { fontSize: 11, lineHeight: 14, fontWeight: '500', letterSpacing: 0.8 },
   // A badge: a small filled pill round a quiet figure.
-  stamp: { height: 16, justifyContent: 'center', paddingHorizontal: 6, borderRadius: 999 },
-  stampText: { fontSize: 10, lineHeight: 12, fontWeight: '600', letterSpacing: 0.2 },
+  stamp: { height: 18, justifyContent: 'center', paddingHorizontal: 7, borderRadius: 999 },
+  stampText: { fontSize: 10.5, lineHeight: 13, fontWeight: '600', letterSpacing: 0 },
+  /*
+   * A leaf, so the wash under a pressed row sits inside its card as a shape of its own: the card's
+   * corners less the 4pt the row stands in from it, the curves concentric.
+   */
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -655,8 +699,18 @@ const styles = StyleSheet.create({
     marginHorizontal: -BLEED,
     paddingLeft: BLEED,
     paddingRight: BLEED,
+    ...leaf('md', 4),
   },
   ring: { marginTop: RING_TOP },
+  tile: {
+    width: RING,
+    height: RING,
+    borderRadius: TILE_RADIUS,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Rows bleed BLEED into the side padding: 4pt either side, and 4pt top and bottom to match.
+  card: { ...leaf('md'), paddingHorizontal: spacing.md, paddingVertical: 4 },
   day: {
     alignSelf: 'flex-start',
     width: DAY,
@@ -667,62 +721,70 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  dayMonth: { fontSize: 7.5, lineHeight: 9, fontWeight: '700', letterSpacing: 0.7 },
+  dayMonth: { fontSize: 7.5, lineHeight: 9, fontWeight: '700', letterSpacing: 0.4 },
   dayNumber: { fontSize: 13.5, lineHeight: 16, fontWeight: '600', letterSpacing: -0.4 },
   dayColumn: { width: DAY },
   daySkeleton: { alignSelf: 'flex-start', marginTop: RING_TOP },
   facts: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  kindDot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
+  peek: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 2 },
+  thumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    // A white receipt on the white card still has an edge.
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // On the picture itself, so it reads on any photo in either theme.
+  thumbCount: {
+    position: 'absolute',
+    right: 2,
+    bottom: 2,
+    minWidth: 14,
+    height: 14,
+    paddingHorizontal: 3,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000000A6',
+  },
+  thumbCountText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '700' },
+  note: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '400' },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    height: 17,
+    height: 16,
     paddingHorizontal: 5,
     borderRadius: 5,
     borderWidth: StyleSheet.hairlineWidth,
     flexShrink: 0,
   },
   badgeDot: { width: 5, height: 5, borderRadius: 2.5 },
-  badgeText: { fontSize: 9, lineHeight: 12, fontWeight: '700', letterSpacing: 0.7 },
+  badgeText: { fontSize: 8.5, lineHeight: 11, fontWeight: '700', letterSpacing: 0.6 },
   aside: { fontWeight: '600' },
-  // The two lines (19 + 2 + 16) centred on the mark's middle: RING_MID − 37 ÷ 2.
-  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 18 },
+  // The two lines (19 + 2 + 16) centred on the tile's middle: RING_MID − 37 ÷ 2.
+  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 18.5 },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   left: { flex: 1, minWidth: 0, gap: 2 },
   right: { flexShrink: 0, alignItems: 'flex-end', gap: 1 },
-  change: { fontSize: 11.5, lineHeight: 16, fontWeight: '600', letterSpacing: -0.2 },
+  change: { fontSize: 11, lineHeight: 16, fontWeight: '600', letterSpacing: -0.2 },
+  // The dash's next-up line, a size up: a ledger row is read on its own, the dash's at a glance.
   title: {
     minWidth: 0,
-    fontSize: 14.5,
+    fontSize: 14,
     lineHeight: 19,
     fontWeight: '600',
-    letterSpacing: -0.1,
+    letterSpacing: -0.2,
   },
-  meta: { flexShrink: 1, minWidth: 0, fontSize: 12, lineHeight: 16 },
-  // The web's entry amount: `font-mono text-sm font-semibold tabular-nums`, a size up on a phone.
-  cost: { fontSize: 15, lineHeight: 20, fontWeight: '600', letterSpacing: 0 },
+  meta: { flexShrink: 1, minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '500' },
+  // The web's entry amount: `font-mono text-sm font-semibold tabular-nums`.
+  cost: { fontSize: 14, lineHeight: 19, fontWeight: '600', letterSpacing: -0.3 },
   amount: { flexDirection: 'row', alignItems: 'baseline' },
-  cents: { fontSize: 11.5, lineHeight: 20, fontWeight: '600', letterSpacing: 0 },
+  cents: { fontSize: 10.5, lineHeight: 19, fontWeight: '600', letterSpacing: -0.2 },
   trail: { fontSize: 11, lineHeight: 16, fontWeight: '500', letterSpacing: -0.2 },
   trailRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 },
   trailDot: { width: 3, height: 3, borderRadius: 1.5 },
-  end: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: COLUMN_GAP,
-    minHeight: END_MID * 2,
-    marginHorizontal: -BLEED,
-    paddingLeft: BLEED,
-    paddingRight: BLEED,
-  },
-  terminal: {
-    position: 'absolute',
-    top: END_MID - 6,
-    width: 12,
-    height: 12,
-    borderRadius: 3,
-    borderWidth: 2,
-  },
-  endBody: { flex: 1, minWidth: 0, paddingVertical: spacing.sm },
 });

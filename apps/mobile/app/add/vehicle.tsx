@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -23,7 +23,13 @@ import {
   type DistanceUnit,
   type VehicleType,
 } from '@vehicle-os/domain';
-import type { AiAttachment, LookUpVehicle, VinDecodeResult } from '@vehicle-os/contracts';
+import type {
+  AiAttachment,
+  CreateVehicle,
+  LookUpVehicle,
+  PlanState,
+  VinDecodeResult,
+} from '@vehicle-os/contracts';
 import { ApiError } from '@vehicle-os/api-client';
 import { garagesQuery, queryKeys } from '@vehicle-os/api-client/react';
 import {
@@ -39,7 +45,7 @@ import {
   type VehicleExtras,
 } from '@vehicle-os/ui';
 import { newId } from '@vehicle-os/utils';
-import { Fact, Line } from '@/components/add-kit';
+import { Fact, Line, Rail } from '@/components/add-kit';
 import { BrandLogo } from '@/components/brand-logo';
 import { api } from '@/lib/api';
 import { useDiscardGuard } from '@/lib/discard';
@@ -55,8 +61,9 @@ import { humanise, toMinorUnits } from '@/lib/format';
 import { Eyebrow, Glyph, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { haptic, Odometer, Pop, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
-import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
-import { Button, Ground } from '@/lib/ui';
+import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { Button } from '@/lib/ui';
+import { RoundKey } from '@/components/onboarding-kit';
 import { useOwnPlanGoverns, usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -109,10 +116,11 @@ export default function AddVehicleScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   // A photo taken from the add sheet becomes the new vehicle's cover; a garage's + names its garage.
-  const params = useLocalSearchParams<FileParams & { garageId?: string }>();
+  // `then: 'back'`: opened from a flow that carries on after it (the first-run setup).
+  const params = useLocalSearchParams<FileParams & { garageId?: string; then?: string }>();
   const [arrived] = useState(() => fromParams(params));
   const [photos, setPhotos] = useState<PickedFile[]>(() => (arrived ? [arrived] : []));
-  const [sheet, setSheet] = useState<'photos' | 'type' | 'garage' | null>(null);
+  const [sheet, setSheet] = useState<'photos' | 'garage' | null>(null);
   const [photoBusy, setPhotoBusy] = useState<'camera' | 'library' | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const cover = photos[0] ?? null;
@@ -260,6 +268,7 @@ export default function AddVehicleScreen() {
   const odometerError =
     reading !== null && reading > MAX_ODOMETER ? 'That is past 100,000,000' : undefined;
 
+  const [checking, setChecking] = useState(false);
   const create = useMutation({
     /*
      * Queued, not posted — a vehicle is often added where it is standing, which is as likely to be
@@ -267,7 +276,23 @@ export default function AddVehicleScreen() {
      * so the photos below and every entry afterwards can already name it, and so a replay of this
      * write lands on the vehicle it already made rather than beside it.
      */
-    mutationFn: async () => {
+    mutationFn: async (): Promise<{ id: string | null; plan?: PlanState }> => {
+      /*
+       * The ceiling, read from the server at the press rather than from the cached plan: the cache
+       * can be a vehicle behind, and a vehicle queued past the limit is refused only when the queue
+       * sends it — a paywall surfacing long after the press, with nothing shown meanwhile. Offline,
+       * that refusal is still the backstop.
+       */
+      if (governs && onlineManager.isOnline()) {
+        setChecking(true);
+        // A slow answer gives way to the queue after a few seconds rather than holding the press.
+        const fresh = await Promise.race([
+          api.users.plan().catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+        ]).finally(() => setChecking(false));
+        if (fresh && fresh.usage.vehicles >= fresh.limits.vehicles)
+          return { id: null, plan: fresh };
+      }
       const id = newId();
       const text = (value: string | undefined) => value?.trim() || undefined;
       // Only what this type has fields for and inside their bounds: a figure a look-up got wrong
@@ -301,7 +326,9 @@ export default function AddVehicleScreen() {
       // Absent, not undefined: the queue keeps the body as JSON on disk.
       await enqueue({
         kind: 'vehicle-create',
-        body: Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined)),
+        body: Object.fromEntries(
+          Object.entries(body).filter(([, value]) => value !== undefined),
+        ) as CreateVehicle,
       });
 
       // Each photo is its own queued write, after the vehicle: the queue sends in order, so the
@@ -322,12 +349,21 @@ export default function AddVehicleScreen() {
       return { id };
     },
     onSuccess: (vehicle) => {
+      if (!vehicle.id) {
+        // At the limit: nothing was queued. The fresh plan in the cache raises the wall (`wall`
+        // below replaces this screen with it); the form is let go first so leaving it asks nothing.
+        release();
+        queryClient.setQueryData(queryKeys.plan(), vehicle.plan);
+        return;
+      }
       haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.vehicles() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
-      // Straight into it: the next thing anyone does is record something against it.
+      // Straight into it: the next thing anyone does is record something against it — unless a
+      // flow sent here carries on from where it was.
       release();
-      router.replace({ pathname: '/vehicle/[id]', params: { id: vehicle.id } });
+      if (params.then === 'back') router.back();
+      else router.replace({ pathname: '/vehicle/[id]', params: { id: vehicle.id } });
     },
   });
 
@@ -411,25 +447,37 @@ export default function AddVehicleScreen() {
       },
     });
   }, [wall, router]);
-  if (wall) return <View style={{ flex: 1, backgroundColor: theme.background }} />;
+  if (wall) return <View style={{ flex: 1, backgroundColor: 'transparent' }} />;
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}
-      style={{ flex: 1, backgroundColor: theme.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
     >
-      <Stack.Screen options={{ title: 'Add a vehicle' }} />
+      {/* No navigator bar: the page's own, as Settings and the setup draw it. */}
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
-        contentContainerStyle={styles.page}
+        contentContainerStyle={[styles.page, { paddingTop: insets.top + spacing.sm }]}
         keyboardShouldPersistTaps="handled"
         alwaysBounceVertical={false}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.top}>
+          <RoundKey icon="close" label="Close" onPress={() => router.back()} />
+          <Text accessibilityRole="header" style={[styles.title, { color: theme.foreground }]}>
+            Add a vehicle
+          </Text>
+        </View>
         {/* The vehicle itself: its badge, its name, what it is and where it goes. */}
         <Rise>
-          <View style={[styles.card, { backgroundColor: theme.card }, rimmed(theme)]}>
-            <Ground cx="100%" cy="0%" />
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: theme.cardRaised },
+              rimmed(theme),
+              lift(theme, 'low'),
+            ]}
+          >
             {/* The badge is where photos are added: a press opens them. */}
             <PressableScale
               onPress={() => {
@@ -471,18 +519,18 @@ export default function AddVehicleScreen() {
               <View
                 style={[
                   styles.badgeTag,
-                  { backgroundColor: theme.primary, borderColor: theme.card },
+                  { backgroundColor: theme.foreground, borderColor: theme.cardRaised },
                 ]}
               >
                 {photos.length > 1 ? (
-                  <Text style={[figure, styles.badgeCount, { color: theme.primaryForeground }]}>
+                  <Text style={[figure, styles.badgeCount, { color: theme.background }]}>
                     {photos.length}
                   </Text>
                 ) : (
                   <Ionicons
                     name={photos.length ? 'images' : 'camera'}
                     size={12}
-                    color={theme.primaryForeground}
+                    color={theme.background}
                   />
                 )}
               </View>
@@ -504,28 +552,59 @@ export default function AddVehicleScreen() {
                 accessibilityHint="Optional. Without one it is called by its year, make and model."
                 style={[typeScale.display, styles.name, { color: theme.foreground }]}
               />
-              <View style={styles.chips}>
-                <Fact
-                  glyph={TYPE_GLYPH[vehicleType]}
-                  label={typeLabel(vehicleType)}
-                  marked={marked.has('type')}
-                  onPress={() => setSheet('type')}
-                />
-                {list.length > 1 ? (
+              {/* Where it parks: a choice when there is more than one garage, a word when not. */}
+              {list.length > 1 ? (
+                <View style={styles.chips}>
                   <Fact
                     icon="home-outline"
                     label={garage?.name ?? 'Which garage?'}
                     selected={!garage}
                     onPress={() => setSheet('garage')}
                   />
-                ) : null}
-              </View>
+                </View>
+              ) : garage ? (
+                <View style={styles.parks}>
+                  <Ionicons name="home-outline" size={12} color={theme.mutedForeground} />
+                  <Text
+                    numberOfLines={1}
+                    style={[typeScale.caption, { flex: 1, color: theme.mutedForeground }]}
+                  >
+                    {garage.name}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
         </Rise>
 
+        {/*
+         * What it is, in the open rather than behind a chip: the first thing decided, and the
+         * badge above changes with it. A make or the line below may pick it — marked ✦.
+         */}
+        <Rise index={1}>
+          <Rail
+            label="What is it"
+            inset={spacing.md}
+            items={VEHICLE_TYPES.map((type) => ({
+              key: type,
+              label: typeLabel(type),
+              glyph: TYPE_GLYPH[type],
+              selected: type === vehicleType,
+              marked: type === vehicleType && marked.has('type'),
+              onPress: () => {
+                setChosenType(type);
+                setMarked((now) => {
+                  const next = new Set(now);
+                  next.delete('type');
+                  return next;
+                });
+              },
+            }))}
+          />
+        </Rise>
+
         {/* The line: a description to read, or a VIN to decode — the button says which. */}
-        <Rise index={1} style={{ gap: 6 }}>
+        <Rise index={2} style={{ gap: 6 }}>
           <Line
             value={line}
             onChangeText={(text) => {
@@ -579,8 +658,9 @@ export default function AddVehicleScreen() {
         </Rise>
 
         {/* The five answers, as one panel: what it is, then the plate and the reading on it. */}
-        <Rise index={2}>
+        <Rise index={3}>
           <Panel>
+            {/* Paired by width: make and model, then the four-digit year beside the plate. */}
             <View style={styles.row}>
               <TextCell
                 label={mark('Make', 'make')}
@@ -590,7 +670,7 @@ export default function AddVehicleScreen() {
                 onBlur={() => setMakeFocused(false)}
                 placeholder="Mazda"
                 autoCapitalize="words"
-                grow={1.25}
+                grow={1.1}
               />
               <TextCell
                 label={mark('Model', 'model')}
@@ -599,6 +679,8 @@ export default function AddVehicleScreen() {
                 placeholder="MX-5"
                 grow={1}
               />
+            </View>
+            <View style={styles.row}>
               <TextCell
                 label={mark('Year', 'year')}
                 value={answers.year}
@@ -606,29 +688,30 @@ export default function AddVehicleScreen() {
                 placeholder={String(NEXT_YEAR - 1)}
                 keyboardType="number-pad"
                 mono
-                grow={0.8}
+                grow={0.7}
               />
-            </View>
-
-            {/* The registration, typed onto the plate itself. */}
-            <PanelCell label={mark('Plate', 'plate')}>
-              <View style={styles.plate}>
-                <View style={[styles.plateBand, { backgroundColor: theme.primary }]}>
-                  <Ionicons name="flag" size={11} color={theme.primaryForeground} />
-                </View>
-                <TextInput
-                  value={answers.plate}
-                  onChangeText={(text) => set('plate', text.toUpperCase())}
-                  placeholder="AB12 CDE"
-                  placeholderTextColor={PLATE.hint}
-                  autoCapitalize="characters"
-                  autoCorrect={false}
-                  maxLength={12}
-                  accessibilityLabel="Number plate"
-                  style={[figure, styles.plateInput]}
-                />
+              {/* The registration, typed onto the plate itself. */}
+              <View style={{ flex: 1.7, minWidth: 0 }}>
+                <PanelCell label={mark('Plate', 'plate')}>
+                  <View style={styles.plate}>
+                    <View style={[styles.plateBand, { backgroundColor: PLATE.ink }]}>
+                      <Ionicons name="flag" size={10} color={PLATE.ground} />
+                    </View>
+                    <TextInput
+                      value={answers.plate}
+                      onChangeText={(text) => set('plate', text.toUpperCase())}
+                      placeholder="AB12 CDE"
+                      placeholderTextColor={PLATE.hint}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      maxLength={12}
+                      accessibilityLabel="Number plate"
+                      style={[figure, styles.plateInput]}
+                    />
+                  </View>
+                </PanelCell>
               </View>
-            </PanelCell>
+            </View>
 
             <OdometerCell
               label={mark('Odometer', 'odometer')}
@@ -646,9 +729,7 @@ export default function AddVehicleScreen() {
         style={[
           styles.footer,
           {
-            paddingBottom: Math.max(insets.bottom, spacing.md),
-            borderTopColor: theme.hairline,
-            backgroundColor: theme.background,
+            paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xs,
           },
         ]}
       >
@@ -658,7 +739,7 @@ export default function AddVehicleScreen() {
             horizontal
             keyboardShouldPersistTaps="always"
             showsHorizontalScrollIndicator={false}
-            style={{ marginHorizontal: -spacing.lg }}
+            style={{ marginHorizontal: -spacing.md }}
             contentContainerStyle={styles.suggestions}
           >
             {suggestions.map((option) => (
@@ -692,63 +773,13 @@ export default function AddVehicleScreen() {
         <Button
           label={`Add ${vehicleType === 'OTHER' ? 'vehicle' : typeLabel(vehicleType).toLowerCase()}`}
           variant="primary"
-          size="lg"
           icon="add"
           loading={create.isPending}
+          busyLabel={checking ? 'Checking your plan…' : 'Adding…'}
           disabled={!chosenGarage || yearOff || Boolean(odometerError)}
           onPress={() => create.mutate()}
         />
       </View>
-
-      {sheet === 'type' ? (
-        <MenuSheet title="What is it" onClose={() => setSheet(null)}>
-          <View style={styles.types}>
-            {VEHICLE_TYPES.map((type) => {
-              const selected = type === vehicleType;
-              return (
-                <PressableScale
-                  key={type}
-                  onPress={() => {
-                    haptic.selection();
-                    setChosenType(type);
-                    setMarked((now) => {
-                      const next = new Set(now);
-                      next.delete('type');
-                      return next;
-                    });
-                    setSheet(null);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={typeLabel(type)}
-                  scaleTo={0.92}
-                  style={[
-                    styles.typeTile,
-                    selected
-                      ? { backgroundColor: theme.primarySoft, borderColor: theme.primary }
-                      : { backgroundColor: theme.muted, borderColor: 'transparent' },
-                  ]}
-                >
-                  <Glyph size={26}>{TYPE_GLYPH[type]}</Glyph>
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    style={[
-                      typeScale.caption,
-                      {
-                        fontWeight: '600',
-                        color: selected ? theme.foreground : theme.mutedForeground,
-                      },
-                    ]}
-                  >
-                    {typeLabel(type)}
-                  </Text>
-                </PressableScale>
-              );
-            })}
-          </View>
-        </MenuSheet>
-      ) : null}
 
       {sheet === 'photos' ? (
         <MenuSheet
@@ -1002,24 +1033,24 @@ function TextCell({
 }
 
 const styles = StyleSheet.create({
-  page: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
+  page: { padding: spacing.md, paddingTop: spacing.sm, gap: spacing.md },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    borderRadius: radius.xxxl,
-    padding: spacing.lg,
-    overflow: 'hidden',
+    ...leaf('lg'),
+    padding: spacing.md + 2,
   },
   badge: {
     overflow: 'hidden',
-    width: 68,
-    height: 68,
-    borderRadius: 20,
+    width: 64,
+    height: 64,
+    ...leaf('sm'),
     alignItems: 'center',
     justifyContent: 'center',
   },
-  name: { fontSize: 24, lineHeight: 30, padding: 0, margin: 0 },
+  name: { fontSize: 22, lineHeight: 28, padding: 0, margin: 0, letterSpacing: -0.4 },
+  parks: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   said: { paddingHorizontal: 4 },
   badgeTag: {
@@ -1039,22 +1070,22 @@ const styles = StyleSheet.create({
   plate: {
     flexDirection: 'row',
     alignItems: 'stretch',
-    height: 46,
+    height: 34,
     borderRadius: 10,
     borderWidth: 2,
     borderColor: PLATE.ink,
     backgroundColor: PLATE.ground,
     overflow: 'hidden',
   },
-  plateBand: { width: 24, alignItems: 'center', justifyContent: 'center' },
+  plateBand: { width: 18, alignItems: 'center', justifyContent: 'center' },
   plateInput: {
     flex: 1,
     paddingVertical: 0,
     paddingHorizontal: spacing.sm,
     textAlign: 'center',
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 3,
+    letterSpacing: 1.5,
     color: PLATE.ink,
   },
   odometer: {
@@ -1075,7 +1106,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   caret: { width: 2, height: 22, borderRadius: 1, marginLeft: 3 },
-  suggestions: { gap: 6, paddingHorizontal: spacing.lg },
+  suggestions: { gap: 6, paddingHorizontal: spacing.md },
   suggestion: {
     height: 36,
     flexDirection: 'row',
@@ -1083,18 +1114,6 @@ const styles = StyleSheet.create({
     gap: 7,
     paddingHorizontal: 12,
     borderRadius: 999,
-  },
-  types: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  typeTile: {
-    width: '18.3%',
-    flexGrow: 1,
-    height: 68,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-    paddingHorizontal: 2,
   },
   shots: { gap: spacing.sm, paddingVertical: 2 },
   shot: {
@@ -1122,10 +1141,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm + 2,
-    gap: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
+  footer: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
+  // Part of the page, scrolling away with it.
+  top: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingBottom: spacing.xs },
+  title: { fontSize: 20, lineHeight: 26, fontWeight: '700', letterSpacing: -0.5 },
 });

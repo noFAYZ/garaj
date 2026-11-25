@@ -10,7 +10,12 @@
 import { boolean, index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, primaryId, timestamps, updatedAt } from './_shared';
 import { distanceUnitEnum, volumeUnitEnum } from './_shared';
-import { accountKindEnum, planTierEnum, subscriptionStatusEnum } from './enums';
+import {
+  accountKindEnum,
+  billingProviderEnum,
+  planTierEnum,
+  subscriptionStatusEnum,
+} from './enums';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -134,5 +139,14 @@ export const subscriptions = pgTable('subscriptions', {
   /** When the current paid period ends — what a cancellation counts down to. */
   currentPeriodEnd: timestamp('current_period_end', { withTimezone: true, mode: 'date' }),
   cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+  /*
+   * Who bills it. Every row before the phone sold plans was Stripe's, hence the default. A
+   * RevenueCat row is keyed by the user id (RevenueCat's app user id is ours), so it needs no
+   * provider id of its own; `store` is where it was bought (`PLAY_STORE`, `APP_STORE`) and
+   * `management_url` is that store's page for changing or cancelling it.
+   */
+  provider: billingProviderEnum('provider').notNull().default('STRIPE'),
+  store: text('store'),
+  managementUrl: text('management_url'),
   ...timestamps(),
 });

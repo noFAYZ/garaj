@@ -13,7 +13,7 @@ import {
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
-import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from 'expo-router';
+import { Stack, useRouter, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -24,6 +24,7 @@ import { useSession } from '@/lib/auth';
 import { reportError } from '@/lib/crash';
 import { registerForPush } from '@/lib/push';
 import { appearanceReady } from '@/lib/appearance';
+import { welcomeReady } from '@/lib/onboarding';
 import { useAppFonts } from '@/lib/fonts';
 import { flush, keptFiles, onPlanWall, onSynced } from '@/lib/offline';
 import { showUpgrade } from '@/lib/upgrade';
@@ -31,27 +32,32 @@ import { sweepOrphans } from '@/lib/local-files';
 import { spacing, typeScale, useTheme } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 import { watchForUpdates } from '@/lib/updates';
+import { DialogHost } from '@/lib/dialog';
+import { Backdrop } from '@/components/backdrop';
+import { Launch } from '@/components/launch';
+import { StackHeader } from '@/components/settings-kit';
 
 /*
  * The garage is always under whatever opened first. A link that cold-starts the app — the return
  * from a checkout, a shared vehicle — otherwise builds a stack of that one screen: no back button
  * on iOS, and Back on Android closes the app.
  */
-export const unstable_settings = { initialRouteName: '(tabs)' };
+export const unstable_settings = { anchor: '(tabs)' };
 
 watchForUpdates();
 
 /*
- * The native splash stays up until the first frame is the real one — fonts in, session read,
- * the cache back from disk — so a cold start goes from the splash straight to the garage, never
- * through a blank page, a "Starting" spinner and a skeleton on the way.
+ * The native splash stays up until the launch screen (`components/launch`) has drawn its first
+ * frame — the same frame — over it; the launch then plays while fonts, session and cache come in
+ * behind it, and leaves for the garage once they have, never through a blank page, a "Starting"
+ * spinner and a skeleton on the way.
  */
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 try {
-  // A soft fade out rather than a cut. Not every runtime has it, and none needs it to start.
-  SplashScreen.setOptions({ duration: 220, fade: true });
+  // A cut, not a fade: what is under it is the same picture, and a fade would show both at once.
+  SplashScreen.setOptions({ duration: 0, fade: false });
 } catch {
-  // The splash simply cuts.
+  // Not every runtime has it; the splash simply cuts.
 }
 // However long the disk takes, the splash is never what is left on screen.
 const SPLASH_PATIENCE_MS = 3_000;
@@ -181,6 +187,8 @@ function createQueryClient() {
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   const theme = useTheme();
   useEffect(() => reportError(error, { boundary: 'root' }), [error]);
+  // A launch that threw never let the native splash go: this page is not left under it.
+  useEffect(() => void SplashScreen.hideAsync().catch(() => undefined), []);
   return (
     <View style={[styles.fault, { backgroundColor: theme.background }]}>
       <Text style={[typeScale.title, { color: theme.foreground, textAlign: 'center' }]}>
@@ -197,7 +205,8 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 export default function RootLayout() {
   const theme = useTheme();
   const fontsLoaded = useAppFonts();
-  const { loading } = useSession();
+  const { loading, token } = useSession();
+  const signedIn = Boolean(token);
   // In state rather than at module scope so a fast refresh does not hand the app a client
   // whose cache belongs to the previous module instance.
   const [queryClient] = useState(createQueryClient);
@@ -207,103 +216,162 @@ export default function RootLayout() {
   useEffect(() => {
     void appearanceReady.then(() => setSchemed(true));
   }, []);
-
-  const ready = fontsLoaded && !loading && restored && schemed;
+  // Whether this phone has seen the welcome: read under the launch screen, so a new install opens
+  // straight onto it rather than flashing the sign-in form first.
+  const [welcomeRead, setWelcomeRead] = useState(false);
   useEffect(() => {
-    if (ready) void SplashScreen.hideAsync().catch(() => undefined);
-  }, [ready]);
+    void welcomeReady.then(() => setWelcomeRead(true));
+  }, []);
+
+  const ready = fontsLoaded && !loading && restored && schemed && welcomeRead;
+  // The launch screen over everything until the app behind is ready and it has driven off.
+  const [launching, setLaunching] = useState(true);
   useEffect(() => {
     const timer = setTimeout(() => setRestored(true), SPLASH_PATIENCE_MS);
     return () => clearTimeout(timer);
   }, []);
 
   /*
-   * Nothing renders until the font is in memory. RN has no `font-display: swap` — text drawn
-   * before the file loads is drawn in the system font and then re-laid-out, which moves the
-   * whole screen under the reader on every cold start. The splash is still up meanwhile.
+   * The launch screen needs no font, so it is mounted at once and takes over from the native
+   * splash (in Expo Go, from Expo Go's own loading page) while the fonts are still on their way.
+   * It is always the fragment's second child, so nothing that arrives in front of it remounts it.
+   *
+   * Nothing else renders until the font is in memory. RN has no `font-display: swap` — text
+   * drawn before the file loads is drawn in the system font and then re-laid-out, which moves
+   * the whole screen under the reader on every cold start. The launch screen covers the wait.
    */
-  if (!fontsLoaded) return null;
-
   return (
-    <PersistQueryClientProvider
-      client={queryClient}
-      persistOptions={{
-        persister,
-        maxAge: DAY_MS,
-        buster: BUSTER,
-        dehydrateOptions: { shouldDehydrateQuery: persists },
-      }}
-      onSuccess={() => setRestored(true)}
-      onError={() => setRestored(true)}
-    >
-      {/* The app's scheme, not the phone's: they differ once one is chosen in Settings. */}
-      <StatusBar style={theme.dark ? 'light' : 'dark'} />
-      <AuthGate>
-        <Stack
-          screenOptions={{
-            /*
-             * The header is part of the page: the page's own colour, no shadow or hairline, and
-             * never transparent — content scrolls under a fixed edge, not beneath a floating bar.
-             */
-            headerStyle: { backgroundColor: theme.background },
-            headerShadowVisible: false,
-            headerTransparent: false,
-            headerTintColor: theme.foreground,
-            // Named outright: the navigator sets its own family, which the font patch leaves alone.
-            headerTitleStyle: {
-              fontFamily: 'AlbertSans_700Bold',
-              fontSize: 16,
-              color: theme.foreground,
-            },
-            // A push slides with the platform's own curve; the content inside does the rest.
-            animation: 'ios_from_right',
-            headerBackButtonDisplayMode: 'minimal',
-            contentStyle: { backgroundColor: theme.background },
-            /*
-             * A screen under another stops re-rendering until it is back on top: the garage
-             * behind a vehicle, the vehicle behind an entry. Its state is kept; a query that
-             * changed meanwhile draws once, as it returns.
-             */
-            freezeOnBlur: true,
+    <>
+      {fontsLoaded ? (
+        <PersistQueryClientProvider
+          client={queryClient}
+          persistOptions={{
+            persister,
+            maxAge: DAY_MS,
+            buster: BUSTER,
+            dehydrateOptions: { shouldDehydrateQuery: persists },
           }}
+          onSuccess={() => setRestored(true)}
+          onError={() => setRestored(true)}
         >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="sign-in" options={{ headerShown: false }} />
-          <Stack.Screen name="vehicle/[id]" options={{ title: 'Vehicle' }} />
-          <Stack.Screen name="garage/[id]" options={{ title: 'Garage' }} />
-          <Stack.Screen name="vehicle/edit" options={{ title: 'Edit details' }} />
-          <Stack.Screen name="add/vehicle" options={{ title: 'Add a vehicle' }} />
-          <Stack.Screen name="add/garage" options={{ title: 'New garage' }} />
-          <Stack.Screen name="add/done" options={{ title: 'Something done' }} />
-          <Stack.Screen name="add/planned" options={{ title: 'Something planned' }} />
-          <Stack.Screen name="add/document" options={{ title: 'Add a document' }} />
-          <Stack.Screen name="add/photo" options={{ title: 'Add a photo' }} />
-          <Stack.Screen name="event/[id]" options={{ title: 'Entry' }} />
-          <Stack.Screen name="document/[id]" options={{ title: 'Document' }} />
-          <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
-          {/* The branches of You: the root is a map, each control one level down. */}
-          <Stack.Screen name="settings/account" options={{ title: 'Account' }} />
-          <Stack.Screen name="settings/plan" options={{ title: 'Plan' }} />
-          <Stack.Screen name="settings/units" options={{ title: 'Units & region' }} />
-          <Stack.Screen name="settings/device" options={{ title: 'This phone' }} />
-          <Stack.Screen name="settings/data" options={{ title: 'Data & garages' }} />
+          {/* The app's scheme, not the phone's: they differ once one is chosen in Settings. */}
+          <StatusBar style={theme.dark ? 'light' : 'dark'} />
           {/*
-           * A modal, so it rises over the screen that hit the wall and closing it returns there —
-           * the add form, the vehicle, the tab — rather than to wherever settings sat.
+           * No navigator until the keystore has been read. Mounted any sooner, its first frame is a
+           * signed-out one — only sign-in exists — and the token arriving a moment later swaps the
+           * whole stack under it: the garage mounts mid-change, and its tabs' history is reconciled
+           * against a state that has already been replaced ('ROUTE_NAMES_CHANGED … was not handled').
+           * The launch screen covers the wait.
            */}
-          <Stack.Screen
-            name="upgrade"
-            options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom' }}
-          />
-          {/* Moving to a smaller plan: the diff, over the plan screen that asked for it. */}
-          <Stack.Screen
-            name="plan-change"
-            options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom' }}
-          />
-          <Stack.Screen name="+not-found" options={{ title: 'Not found' }} />
-        </Stack>
-      </AuthGate>
-    </PersistQueryClientProvider>
+          {loading ? null : (
+            <AuthGate>
+              <Stack
+                /*
+                 * Every screen on the app's grained copper backdrop. Each keeps an opaque layer of its
+                 * own (the page colour under the gradient), so a screen pushed over another never shows
+                 * the one beneath through it.
+                 *
+                 * The header is drawn here, on that backdrop, rather than in the navigator's slot: the
+                 * slot sits above this layer on the plain page colour, a white band over the gradient
+                 * (user asked it gone). The app's header, not the platform's: back in a round key, the
+                 * title large beside it, actions round at the side — Settings' own. Fixed above the
+                 * screen, so content scrolls under an edge, not beneath a floating bar.
+                 */
+                screenLayout={({ children, options }) => (
+                  <View style={{ flex: 1, backgroundColor: theme.background }}>
+                    <Backdrop />
+                    {options.headerShown === false ? null : <StackHeader options={options} />}
+                    {children}
+                  </View>
+                )}
+                screenOptions={{
+                  // The navigator draws no header of its own: `screenLayout` above draws the app's.
+                  header: () => null,
+                  headerTransparent: false,
+                  // A push slides with the platform's own curve; the content inside does the rest.
+                  animation: 'ios_from_right',
+                  contentStyle: { backgroundColor: theme.background },
+                  /*
+                   * A screen under another stops re-rendering until it is back on top: the garage
+                   * behind a vehicle, the vehicle behind an entry. Its state is kept; a query that
+                   * changed meanwhile draws once, as it returns.
+                   */
+                  freezeOnBlur: true,
+                }}
+              >
+                {/*
+                 * The session decides which screens exist at all. Signed out, the garage and everything
+                 * under it are not in the stack — nothing mounts, nothing fetches, and a link into it
+                 * lands on sign-in; signed in, sign-in is not there to go back to. A session that ends
+                 * (signed out, or refused by the server) moves the person the moment it changes.
+                 */}
+                <Stack.Protected guard={!signedIn}>
+                  <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+                </Stack.Protected>
+                <Stack.Protected guard={signedIn}>
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  {/*
+                   * The first-run garage setup: over everything, full screen, and not swiped away — it
+                   * closes from its own key, or by finishing.
+                   */}
+                  <Stack.Screen
+                    name="onboarding"
+                    options={{
+                      headerShown: false,
+                      presentation: 'fullScreenModal',
+                      animation: 'fade_from_bottom',
+                      gestureEnabled: false,
+                    }}
+                  />
+                  <Stack.Screen name="vehicle/[id]" options={{ title: 'Vehicle' }} />
+                  <Stack.Screen name="garage/[id]" options={{ title: 'Garage' }} />
+                  <Stack.Screen name="vehicle/edit" options={{ title: 'Edit details' }} />
+                  <Stack.Screen name="add/vehicle" options={{ title: 'Add a vehicle' }} />
+                  <Stack.Screen name="add/garage" options={{ title: 'New garage' }} />
+                  <Stack.Screen name="add/document" options={{ title: 'Add a document' }} />
+                  <Stack.Screen name="add/photo" options={{ title: 'Add a photo' }} />
+                  <Stack.Screen name="event/[id]" options={{ title: 'Entry' }} />
+                  <Stack.Screen name="document/[id]" options={{ title: 'Document' }} />
+                  <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
+                  {/* The branches of You: the root is a map, each control one level down. */}
+                  <Stack.Screen name="settings/account" options={{ title: 'Account' }} />
+                  <Stack.Screen name="settings/plan" options={{ title: 'Plan' }} />
+                  <Stack.Screen name="settings/currency" options={{ headerShown: false }} />
+                  <Stack.Screen name="settings/timezone" options={{ headerShown: false }} />
+                  <Stack.Screen name="settings/device" options={{ title: 'This phone' }} />
+                  <Stack.Screen name="settings/data" options={{ title: 'Data & garages' }} />
+                  {/*
+                   * A modal, so it rises over the screen that hit the wall and closing it returns there —
+                   * the add form, the vehicle, the tab — rather than to wherever settings sat.
+                   */}
+                  <Stack.Screen
+                    name="upgrade"
+                    options={{
+                      headerShown: false,
+                      presentation: 'modal',
+                      animation: 'slide_from_bottom',
+                    }}
+                  />
+                  {/* Moving to a smaller plan: the diff, over the plan screen that asked for it. */}
+                  <Stack.Screen
+                    name="plan-change"
+                    options={{
+                      headerShown: false,
+                      presentation: 'modal',
+                      animation: 'slide_from_bottom',
+                    }}
+                  />
+                </Stack.Protected>
+                <Stack.Screen name="+not-found" options={{ title: 'Not found' }} />
+              </Stack>
+            </AuthGate>
+          )}
+          {/* The app's own pop-up, over every screen. */}
+          <DialogHost />
+        </PersistQueryClientProvider>
+      ) : null}
+      {launching ? <Launch ready={ready} onDone={() => setLaunching(false)} /> : null}
+    </>
   );
 }
 
@@ -311,26 +379,13 @@ export default function RootLayout() {
 const opened = new Set<string>();
 
 /**
- * Sends people to the sign-in screen, and drains the write queue.
- *
- * The redirect runs in an effect rather than by rendering `<Redirect>`: Expo Router cannot
- * navigate until the root layout has mounted, and doing it during render throws. The session is
- * one store (`lib/api`), so signing in, signing out and a session the server ended all move this
- * gate the moment they happen.
+ * What a signed-in session runs in the background: notification taps, push registration, and the
+ * write queue draining. Which screens exist is the stack's own `Stack.Protected` guard, above.
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { token, loading } = useSession();
-  const segments = useSegments();
+  const { token } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
-
-  const onSignIn = segments[0] === 'sign-in';
-
-  useEffect(() => {
-    if (loading) return;
-    if (!token && !onSignIn) router.replace('/sign-in');
-    if (token && onSignIn) router.replace('/');
-  }, [token, loading, onSignIn, router]);
 
   /*
    * A reminder tapped on the lock screen opens what it is about — the vehicle, or the list when

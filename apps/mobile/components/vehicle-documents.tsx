@@ -10,11 +10,20 @@ import { documentsQuery } from '@vehicle-os/api-client/react';
 import { spanOfDays } from '@vehicle-os/ui';
 import { RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
-import { DATE_LOCALE, humanise } from '@/lib/format';
+import { DATE_LOCALE, fileSize, humanise } from '@/lib/format';
 import { SectionHeading } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
 import { countdown, current, urgency, validity, type PaperState } from '@/lib/papers';
-import { cardSurface, figure, radius, spacing, typeScale, useTheme, type Theme } from '@/lib/theme';
+import {
+  cardSurface,
+  figure,
+  radius,
+  spacing,
+  typeScale,
+  useTheme,
+  type Theme,
+  leaf,
+} from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 /*
@@ -82,12 +91,6 @@ function stateLine(state: PaperState, expiresOn: string | null): string {
   if (state === 'expired') return `Expired ${dayOf(expiresOn)}`;
   if (state === 'soon') return `Renew by ${dayOf(expiresOn)}`;
   return `Valid until ${dayOf(expiresOn)}`;
-}
-
-function fileSize(bytes: number): string {
-  // From a thousand KB it is a megabyte: "1008 KB" reads worse than "1.0 MB".
-  if (bytes < 1000 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** A file's kind as its tile says it when there is no page to show: "PDF", "DOCX". */
@@ -615,12 +618,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
   },
-  failed: { alignItems: 'center', gap: spacing.sm, borderRadius: radius.xl, padding: spacing.lg },
+  failed: { alignItems: 'center', gap: spacing.sm, ...leaf('md'), padding: spacing.lg },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    borderRadius: radius.xl + 2,
+    ...leaf('md'),
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
@@ -629,7 +632,7 @@ const styles = StyleSheet.create({
   ringFigure: { fontSize: 15, lineHeight: 18, fontWeight: '700' },
   ringOf: { fontSize: 10, lineHeight: 18, fontWeight: '600' },
   headline: { fontSize: 15, lineHeight: 20, fontWeight: '600', letterSpacing: -0.15 },
-  pass: { borderRadius: radius.xl, paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
+  pass: { ...leaf('md'), paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
   passTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   passText: { flex: 1, minWidth: 0, gap: 3 },
   nameLine: { flexDirection: 'row', alignItems: 'baseline', gap: 6, minWidth: 0 },
@@ -666,7 +669,7 @@ const styles = StyleSheet.create({
   listHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
   listTitle: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
   listCount: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
-  list: { borderRadius: radius.xl },
+  list: leaf('md'),
   rule: { height: StyleSheet.hairlineWidth, marginLeft: 66 },
   paper: {
     flexDirection: 'row',

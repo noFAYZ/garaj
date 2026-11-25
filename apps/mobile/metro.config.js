@@ -1,10 +1,11 @@
-const { getDefaultConfig } = require('expo/metro-config');
+// Expo's default config plus Sentry's serializer, which stamps bundles and source maps with debug IDs.
+const { getSentryExpoConfig } = require('@sentry/react-native/metro');
 const path = require('node:path');
 
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, '../..');
 
-const config = getDefaultConfig(projectRoot);
+const config = getSentryExpoConfig(projectRoot);
 
 /*
  * Metro does not understand a pnpm workspace on its own: the `@vehicle-os/*` packages live
@@ -28,9 +29,6 @@ config.resolver.nodeModulesPaths = [
  */
 config.resolver.disableHierarchicalLookup = false;
 
-// The symlinks pnpm's layout is made of. Metro follows them only when told to.
-config.resolver.unstable_enableSymlinks = true;
-
 /*
  * `@vehicle-os/api-client/react` is a subpath in that package's `exports` map. Metro reads
  * `exports` only when this is on — without it the workspace packages resolve at their root
@@ -48,11 +46,51 @@ config.resolver.unstable_enablePackageExports = true;
  * not valid as a React child" — including the ones the error overlay itself renders.
  */
 const reactRoot = path.join(projectRoot, 'index.js');
+
+/*
+ * Every Text and TextInput in the app's fonts (Albert Sans, Cascadia Mono for figures).
+ *
+ * React Native has no cascade, and since 0.88 its Text and TextInput are plain functions: nothing
+ * to patch at run time. So whatever loads RN's own files (the `react-native` index, Animated.Text,
+ * any library) is handed the app's wrappers in `lib/`, which add the font to the style. Only the
+ * wrappers themselves get the originals.
+ */
+const FONT_WRAPPERS = [
+  ['/react-native/Libraries/Text/Text.js', path.join(projectRoot, 'lib', 'font-text.tsx')],
+  [
+    '/react-native/Libraries/Components/TextInput/TextInput.js',
+    path.join(projectRoot, 'lib', 'font-text-input.tsx'),
+  ],
+];
+const samePath = (a, b) => path.normalize(a).toLowerCase() === path.normalize(b).toLowerCase();
+function dressText(context, resolution) {
+  if (resolution.type !== 'sourceFile') return resolution;
+  const file = resolution.filePath.replace(/\\/g, '/');
+  for (const [original, wrapper] of FONT_WRAPPERS) {
+    if (file.endsWith(original) && !samePath(context.originModulePath, wrapper)) {
+      return { type: 'sourceFile', filePath: wrapper };
+    }
+  }
+  return resolution;
+}
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'react' || moduleName.startsWith('react/')) {
     return context.resolveRequest({ ...context, originModulePath: reactRoot }, moduleName, platform);
   }
-  return context.resolveRequest(context, moduleName, platform);
+  /*
+   * TypeBox through its CommonJS build. Its ESM build declares `export var Object`, and the
+   * CommonJS shim Metro wraps ESM in calls `Object.defineProperty` before that hoisted `var` is
+   * set: "Cannot read property 'defineProperty' of undefined" on launch. Metro picks the ESM
+   * build for `import` statements since SDK 58.
+   */
+  // Sentry probes this expo-router internal inside a try/catch; SDK 58 removed it, and Metro
+  // warns about the dead `exports` entry on every bundle. Empty reads to Sentry as "no store".
+  if (moduleName === 'expo-router/build/global-state/router-store') return { type: 'empty' };
+  if (moduleName === '@sinclair/typebox' || moduleName.startsWith('@sinclair/typebox/')) {
+    return context.resolveRequest({ ...context, isESMImport: false }, moduleName, platform);
+  }
+  return dressText(context, context.resolveRequest(context, moduleName, platform));
 };
 
 module.exports = config;

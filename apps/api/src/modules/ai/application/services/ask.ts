@@ -13,9 +13,9 @@ import { checkProposal, guardGuess, runTool, type ToolContext } from './tool-run
 /**
  * How many times the model may call tools before it has to answer.
  *
- * Four is enough for the deepest real chain — list vehicles, read the profile, read the
- * costs, read the timeline — and it is a hard ceiling on what one question can spend. A
- * loop with no bound is a model that can bill indefinitely on one request.
+ * Five covers the deepest real chain — list the garages or the vehicles, read the profile, the
+ * costs and the timeline, then propose — and it is a hard ceiling on what one question can
+ * spend. A loop with no bound is a model that can bill indefinitely on one request.
  */
 const MAX_ROUNDS = 5;
 

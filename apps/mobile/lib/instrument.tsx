@@ -16,7 +16,7 @@ import { EMOJI_ART } from './emoji-art';
 import { ICON_ART, type IconName } from './icon-art';
 import { haptic, PressableScale, Pulse, spring, useReduceMotion } from './motion';
 import { Skeleton } from './ui';
-import { figure, radius, spacing, typeScale, useTheme } from './theme';
+import { figure, radius, spacing, typeScale, useTheme, leaf } from './theme';
 
 /**
  * The instrument pieces, as the web draws them: the uppercase label, a section heading with its
@@ -197,7 +197,13 @@ export function Segmented<T extends string>({
   small = false,
 }: {
   value: T;
-  options: readonly { readonly value: T; readonly label: string; readonly said?: string }[];
+  options: readonly {
+    readonly value: T;
+    readonly label: string;
+    readonly said?: string;
+    /** Ahead of the label, in its colour: a tab that names a place. */
+    readonly icon?: keyof typeof Ionicons.glyphMap;
+  }[];
   onChange: (value: T) => void;
   small?: boolean;
 }) {
@@ -256,14 +262,25 @@ export function Segmented<T extends string>({
             accessibilityState={{ selected }}
             accessibilityLabel={option.said ?? option.label}
             scaleTo={0.95}
-            style={[styles.segment, small ? styles.segmentSmall : null]}
+            style={[
+              styles.segment,
+              small ? styles.segmentSmall : null,
+              option.icon ? styles.segmentIconed : null,
+            ]}
           >
+            {option.icon ? (
+              <Ionicons
+                name={option.icon}
+                size={small ? 14 : 16}
+                color={selected ? theme.primary : theme.mutedForeground}
+              />
+            ) : null}
             <Text
               numberOfLines={1}
               style={[
                 typeScale.label,
                 small ? styles.segmentSmallLabel : null,
-                { color: selected ? theme.foreground : theme.mutedForeground },
+                { flexShrink: 1, color: selected ? theme.foreground : theme.mutedForeground },
               ]}
             >
               {option.label}
@@ -292,7 +309,7 @@ export function Panel({
       style={{
         flexDirection: direction,
         gap: StyleSheet.hairlineWidth,
-        borderRadius: radius.xxl,
+        ...leaf('md'),
         overflow: 'hidden',
         backgroundColor: theme.border,
       }}
@@ -446,7 +463,9 @@ export function FigureInput({ unit, ...props }: TextInputProps & { unit?: string
         style={[
           figure,
           {
+            // Shrinks in a half-width cell rather than pushing its unit out.
             flex: 1,
+            minWidth: 0,
             fontSize: 22,
             lineHeight: 28,
             fontWeight: '600',
@@ -760,6 +779,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   segmentSmall: { minHeight: 30, paddingHorizontal: 4 },
+  segmentIconed: { flexDirection: 'row', gap: 5 },
   segmentSmallLabel: { fontSize: 13, lineHeight: 17 },
   cell: { flex: 1, gap: 4, paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2 },
   inlineCell: {

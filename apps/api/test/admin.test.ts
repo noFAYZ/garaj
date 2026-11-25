@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type * as config from '@vehicle-os/config';
 import { isEnabled, env } from '@vehicle-os/config';
 import { schema } from '@vehicle-os/database';
-import { eq } from 'drizzle-orm';
+import { eq, ne } from 'drizzle-orm';
 import type { AiProviderPort, AiTurn } from '../src/modules/ai/infrastructure/ai-port';
 import { deliverNotification } from '../src/modules/notifications/application/services/deliver';
 import { daysFrom, parseInfo, windowStart } from '../src/modules/admin/http/routes/insights.routes';
@@ -262,7 +262,12 @@ describe('admin', () => {
     expect(await ids('/api/v1/admin/users?plan=PLUS')).toEqual([bob.userId]);
     expect(await ids('/api/v1/admin/users?plan=FREE')).toEqual([free.userId]);
     expect(await ids('/api/v1/admin/users?plan=PAID')).not.toContain(free.userId);
-    // Bob's address was confirmed by hand above; nobody else's has been.
+    // Bob's address was confirmed by hand above; everyone else's is put back to unconfirmed
+    // (the harness confirms every account it signs up).
+    await context.database.db
+      .update(schema.users)
+      .set({ emailVerified: false })
+      .where(ne(schema.users.id, bob.userId));
     expect(await ids('/api/v1/admin/users?verified=true')).toEqual([bob.userId]);
     expect(await ids('/api/v1/admin/users?verified=false')).toContain(free.userId);
     expect((await ids('/api/v1/admin/users?sort=oldest'))[0]).toBe(root.userId);

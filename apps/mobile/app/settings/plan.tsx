@@ -1,25 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  AppState,
-  Linking,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, AppState, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ApiError } from '@vehicle-os/api-client';
-import { pricesQuery, queryKeys } from '@vehicle-os/api-client/react';
-import type { PlanPrice, PlanState, UserProfile } from '@vehicle-os/contracts';
+import type { PlanState, UserProfile } from '@vehicle-os/contracts';
 import {
   ENTITLEMENT_COPY,
   ENTITLEMENTS,
-  formatPlanPrice,
   hasEntitlement,
   limitsFor,
   PLAN_NAMES,
@@ -32,20 +20,31 @@ import {
   groupSurface,
   Row,
   SettingsHeader,
-  SettingsWash,
   useProfileUpdate,
 } from '@/components/settings-kit';
-import { api } from '@/lib/api';
 import { Icon, Segmented } from '@/lib/instrument';
 import { haptic, PressableScale, Rise } from '@/lib/motion';
-import { TierMark } from '@/lib/plan-kit';
-import { BILLING_RETURN, usePlan } from '@/lib/upgrade';
+import { PlanBadge, PlanTag as Tag, tierLook } from '@/lib/plan-kit';
+import {
+  CADENCE_LABEL,
+  loadOffers,
+  openStoreManagement,
+  storeAvailable,
+  storeBilled,
+  storeName,
+  webBilled,
+} from '@/lib/store';
+import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
-import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty, Face, Skeleton } from '@/lib/ui';
+import { shortDate } from '@/lib/format';
 
-const shortDate = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+/** A price as the store shows it, and what it is per. */
+interface Reading {
+  readonly amount: string;
+  readonly per: string;
+}
 
 /** Why each plan, in one line: what it gives that the one below does not. */
 const PITCH: Record<PlanTier, string> = {
@@ -62,34 +61,32 @@ const PITCH: Record<PlanTier, string> = {
  * it, with the reassurance beside it. Running the plan you have — billing, use, cancelling —
  * waits quietly below, in the settings' own rows.
  *
- * It never decides a plan changed. Paying happens in the browser; going down happens on its own
- * confirm screen; either way the plan shown is the one the server read back from the provider, and
- * this screen asks again whenever the app comes back to the front.
+ * It never decides a plan changed. Paying happens in the phone's store, and so does changing or
+ * cancelling what was bought there; the plan shown is the one the server read back, and this
+ * screen asks again whenever the app comes back to the front. A plan billed on the web is shown,
+ * never sold or managed here — the store's rules keep the app to its own billing.
  */
 export default function PlanScreen() {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { data, plan } = usePlan();
-  const prices = useQuery(pricesQuery(api));
   const profile = useProfile();
+  const userId = profile.data?.id;
+  // The same query the upgrade screen reads, so the prices are already there when it opens.
+  const offers = useQuery({
+    queryKey: ['store', 'offers', userId],
+    queryFn: () => loadOffers(userId!),
+    enabled: Boolean(userId) && storeAvailable(),
+    staleTime: 10 * 60_000,
+  });
   const update = useProfileUpdate();
-  const queryClient = useQueryClient();
   // The plan picked; until one is, the one above yours.
   const [picked, setPicked] = useState<PlanTier | null>(null);
-
-  const onChanged = () => {
-    haptic.success();
-    return queryClient.invalidateQueries({ queryKey: queryKeys.plan() });
-  };
-  const failed = (error: unknown) =>
-    Alert.alert('Your plan was not changed', error instanceof Error ? error.message : undefined);
-
-  const resume = useMutation({
-    mutationFn: () => api.billing.resume(),
-    onSuccess: onChanged,
-    onError: failed,
-  });
+  const inStore = storeBilled(data);
+  const elsewhere = webBilled(data);
+  const store = storeName(data?.store);
+  const manage = () => void openStoreManagement(data);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -98,35 +95,21 @@ export default function PlanScreen() {
     return () => subscription.remove();
   }, [plan]);
 
-  const portal = useMutation({
-    mutationFn: async () => {
-      const { url } = await api.billing.portal({ returnPath: BILLING_RETURN });
-      await Linking.openURL(url);
-    },
-    onError: (error) =>
-      Alert.alert(
-        'Could not open billing',
-        error instanceof ApiError && error.code === 'NO_BILLING'
-          ? 'Billing is not switched on yet.'
-          : error instanceof Error
-            ? error.message
-            : undefined,
-      ),
-  });
-
   const current: PlanTier = data?.plan ?? 'FREE';
   const next = PLAN_TIERS.find((tier) => PLAN_RANK[tier] === PLAN_RANK[current] + 1);
   const shown = picked ?? next ?? current;
-  const hasBilling = Boolean(data && (data.plan !== 'FREE' || data.currentPeriodEnd));
-  // Paid through the provider, so there is a subscription to end. A comped plan has no period.
-  const cancellable = Boolean(data && current !== 'FREE' && data.currentPeriodEnd);
-  const priceOf = (tier: PlanTier) => (tier === 'FREE' ? null : (prices.data?.[tier] ?? null));
+  // Bought in the store with a period to run out, so there is a subscription to end there.
+  const cancellable = Boolean(inStore && current !== 'FREE' && data?.currentPeriodEnd);
+  /** A tier's cheapest way to pay, as the store prices it. */
+  const priceOf = (tier: PlanTier): Reading | null => {
+    const offer = (offers.data ?? []).find((way) => way.tier === tier);
+    return offer ? { amount: offer.price, per: CADENCE_LABEL[offer.cadence].short } : null;
+  };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       {/* Its own header, as the settings root draws one: this page is a pitch, not a form. */}
       <Stack.Screen options={{ headerShown: false }} />
-      <SettingsWash />
       <ScrollView
         contentContainerStyle={[
           styles.page,
@@ -136,17 +119,16 @@ export default function PlanScreen() {
           },
         ]}
       >
-        <SettingsHeader title="Plan" />
-
         {plan.isError && !data ? (
           <>
+            <View style={{ height: 40 }} />
             <Empty title="Couldn't load your plan" description={(plan.error as Error).message} />
             <Button label="Try again" onPress={() => void plan.refetch()} />
           </>
         ) : !data ? (
-          <View style={{ gap: spacing.lg }}>
-            <Skeleton width="100%" height={210} radius={radius.xxl} />
-            <Skeleton width="100%" height={300} radius={radius.xxl} />
+          <View style={{ gap: spacing.lg, marginTop: 52 }}>
+            <Skeleton width="100%" height={150} style={leaf('md')} />
+            <Skeleton width="100%" height={250} style={leaf('md')} />
           </View>
         ) : (
           <>
@@ -154,23 +136,23 @@ export default function PlanScreen() {
               <Hero me={profile.data} plan={data} next={next} />
             </Rise>
 
-            {data.status === 'PAST_DUE' ? (
+            {inStore && data.status === 'PAST_DUE' ? (
               <Notice
                 tone="destructive"
                 icon="card-outline"
                 text="Payment failed"
-                action="Update card"
-                busy={portal.isPending}
-                onPress={() => portal.mutate()}
+                action={`Fix in ${store}`}
+                busy={false}
+                onPress={manage}
               />
-            ) : data.cancelAtPeriodEnd ? (
+            ) : inStore && data.cancelAtPeriodEnd ? (
               <Notice
                 tone="warning"
                 icon="time-outline"
                 text={data.currentPeriodEnd ? `Ends ${shortDate(data.currentPeriodEnd)}` : 'Ending'}
-                action={`Keep ${PLAN_NAMES[current]}`}
-                busy={resume.isPending}
-                onPress={() => resume.mutate()}
+                action={`Renew in ${store}`}
+                busy={false}
+                onPress={manage}
               />
             ) : null}
 
@@ -193,11 +175,13 @@ export default function PlanScreen() {
                 shown={shown}
                 price={priceOf(shown)}
                 cancellable={cancellable}
+                elsewhere={elsewhere}
+                store={store}
                 onUpgrade={() => {
                   haptic.selection();
                   router.push({ pathname: '/upgrade', params: { plan: shown } });
                 }}
-                // The second press is a screen of its own: the change drawn as a diff, not an alert.
+                // The second press is a screen of its own: the change drawn as a diff, then the store.
                 onDowngrade={() => {
                   haptic.selection();
                   router.push({ pathname: '/plan-change', params: { to: shown } });
@@ -206,19 +190,18 @@ export default function PlanScreen() {
             </Rise>
 
             <Group title="Manage" index={4}>
-              {hasBilling ? (
+              {inStore ? (
                 <Row
                   icon="card-outline"
-                  label="Billing"
+                  label={`Manage in ${store}`}
                   chevron={false}
-                  onPress={() => portal.mutate()}
+                  onPress={manage}
                 >
-                  {portal.isPending ? (
-                    <ActivityIndicator size="small" color={theme.mutedForeground} />
-                  ) : (
-                    <Ionicons name="open-outline" size={15} color={theme.mutedForeground} />
-                  )}
+                  <Ionicons name="open-outline" size={15} color={theme.mutedForeground} />
                 </Row>
+              ) : elsewhere ? (
+                // Shown, not linked: the app may not send anyone to another way of paying.
+                <Row icon="globe-outline" label="Billed on the Garaj website" chevron={false} />
               ) : null}
               <Row icon="briefcase-outline" label="Use">
                 <View style={styles.use}>
@@ -263,6 +246,11 @@ export default function PlanScreen() {
           </>
         )}
       </ScrollView>
+      {/* No title (user asked): the headline names the page. The way back floats beside the
+          portrait rather than taking a row of its own. */}
+      <View style={[styles.floatingBack, { top: insets.top + spacing.sm }]}>
+        <SettingsHeader />
+      </View>
     </View>
   );
 }
@@ -282,34 +270,18 @@ function Hero({
   next: PlanTier | undefined;
 }) {
   const theme = useTheme();
-  const paid = plan.plan !== 'FREE';
+  const look = tierLook(plan.plan, theme);
   const vehiclesFull = plan.usage.vehicles >= plan.limits.vehicles;
   const garagesFull = plan.usage.garages >= plan.limits.garages;
   return (
     <View style={styles.hero}>
       <View style={styles.portrait}>
-        <View style={[styles.ring, { borderColor: paid ? theme.primary : theme.border }]}>
-          <Face user={me} size={84} />
+        {/* Ringed in the plan's own colour, its badge pinned under the face. */}
+        <View style={[styles.ring, { borderColor: look.edge }]}>
+          <Face user={me} size={60} />
         </View>
-        <View
-          style={[
-            styles.pin,
-            {
-              backgroundColor: paid ? theme.primary : theme.cardRaised,
-              borderColor: theme.background,
-            },
-          ]}
-        >
-          <TierMark tier={plan.plan} color={paid ? theme.primaryForeground : theme.foreground} />
-          <Text
-            style={[
-              figure,
-              styles.pinText,
-              { color: paid ? theme.primaryForeground : theme.foreground },
-            ]}
-          >
-            {PLAN_NAMES[plan.plan].toUpperCase()}
-          </Text>
+        <View style={[styles.pin, { backgroundColor: theme.background }]}>
+          <PlanBadge tier={plan.plan} />
         </View>
       </View>
 
@@ -366,7 +338,7 @@ function Choices({
   current: PlanTier;
   next: PlanTier | undefined;
   shown: PlanTier;
-  priceOf: (tier: PlanTier) => PlanPrice | null;
+  priceOf: (tier: PlanTier) => Reading | null;
   onPick: (tier: PlanTier) => void;
 }) {
   const theme = useTheme();
@@ -395,8 +367,7 @@ function Choices({
     <View style={[styles.card, groupSurface(theme)]}>
       {PLAN_TIERS.map((tier, place) => {
         const on = tier === shown;
-        const price = priceOf(tier);
-        const reading = price ? formatPlanPrice(price) : null;
+        const reading = priceOf(tier);
         const tierLimits = limitsFor(tier);
         return (
           <View key={tier}>
@@ -406,7 +377,7 @@ function Choices({
               accessibilityRole="radio"
               accessibilityState={{ checked: on }}
               accessibilityLabel={`${PLAN_NAMES[tier]}${tier === current ? ', your plan' : ''}${
-                reading ? `, ${reading.amount} per ${reading.per}` : ', free'
+                tier === 'FREE' ? ', free' : reading ? `, ${reading.amount} ${reading.per}` : ''
               }`}
               scaleTo={0.99}
               style={[styles.choice, on ? { backgroundColor: theme.primarySoft } : null]}
@@ -418,13 +389,11 @@ function Choices({
               </View>
               <View style={styles.choiceWords}>
                 <View style={styles.choiceName}>
-                  <Text style={[styles.choiceTitle, { color: theme.foreground }]}>
-                    {PLAN_NAMES[tier]}
-                  </Text>
+                  <PlanBadge tier={tier} />
                   {tier === current ? (
                     <Tag label="Current" fill={theme.muted} ink={theme.mutedForeground} />
                   ) : tier === next ? (
-                    <Tag label="Recommended" fill={theme.primary} ink={theme.primaryForeground} />
+                    <Tag label="Recommended" fill={theme.primarySoft} ink={theme.primary} />
                   ) : null}
                 </View>
                 <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
@@ -434,11 +403,12 @@ function Choices({
               </View>
               <View style={styles.priceRow}>
                 <Text style={[figure, styles.price, { color: theme.foreground }]}>
-                  {reading ? reading.amount : 'Free'}
+                  {tier === 'FREE' ? 'Free' : (reading?.amount ?? '')}
                 </Text>
                 {reading ? (
                   <Text style={[figure, styles.per, { color: theme.mutedForeground }]}>
-                    /{reading.per}
+                    {' '}
+                    {reading.per}
                   </Text>
                 ) : null}
               </View>
@@ -455,7 +425,7 @@ function Choices({
             accessibilityLabel={`${item.text}${item.added ? ', more than you have now' : ''}`}
             style={styles.include}
           >
-            <Ionicons name="checkmark-circle" size={18} color={theme.foreground} />
+            <Ionicons name="checkmark-circle" size={16} color={theme.foreground} />
             <Text style={[styles.includeText, { color: theme.foreground }]}>{item.text}</Text>
             {item.added && shown !== current ? (
               <Tag label="New" fill={theme.primarySoft} ink={theme.primary} />
@@ -468,14 +438,6 @@ function Choices({
 }
 
 /** A small tag in a row: Current, Recommended, New. */
-function Tag({ label, fill, ink }: { label: string; fill: string; ink: string }) {
-  return (
-    <View style={[styles.tag, { backgroundColor: fill }]}>
-      <Text style={[styles.tagText, { color: ink }]}>{label.toUpperCase()}</Text>
-    </View>
-  );
-}
-
 /**
  * The one way to the plan picked: up, as the big copper key with its price on it and the
  * reassurance under it; down, as a plain key that opens the confirm; nothing, when it is yours.
@@ -485,20 +447,32 @@ function Way({
   shown,
   price,
   cancellable,
+  elsewhere,
+  store,
   onUpgrade,
   onDowngrade,
 }: {
   plan: PlanState;
   shown: PlanTier;
-  price: PlanPrice | null;
+  price: Reading | null;
   cancellable: boolean;
+  /** Billed on the web: the app shows it, and leaves changing it to the web. */
+  elsewhere: boolean;
+  store: string;
   onUpgrade: () => void;
   onDowngrade: () => void;
 }) {
   const theme = useTheme();
   const current = plan.plan;
-  const reading = price ? formatPlanPrice(price) : null;
+  const reading = price;
   const above = PLAN_RANK[shown] > PLAN_RANK[current];
+  if (elsewhere && shown !== current) {
+    return (
+      <Text style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}>
+        Your plan is billed through the Garaj website — change it there.
+      </Text>
+    );
+  }
   // A smaller tier is a press away while paying; Free is not, once already cancelled.
   const below =
     cancellable &&
@@ -509,15 +483,15 @@ function Way({
     return (
       <View style={styles.way}>
         <Button
-          label={`Upgrade to ${PLAN_NAMES[shown]}${reading ? ` · ${reading.amount}/${reading.per}` : ''}`}
+          label={`Upgrade to ${PLAN_NAMES[shown]}${reading ? ` · ${reading.amount} ${reading.per}` : ''}`}
           variant="primary"
-          size="lg"
+          size="md"
           onPress={onUpgrade}
         />
         <View style={styles.reassure}>
           <Ionicons name="lock-closed-outline" size={12} color={theme.mutedForeground} />
           <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-            Paid securely in the browser · cancel anytime
+            Renews automatically · cancel anytime in {store}
           </Text>
         </View>
       </View>
@@ -526,7 +500,7 @@ function Way({
   if (below) {
     return (
       <View style={styles.way}>
-        <Button label={`Switch to ${PLAN_NAMES[shown]}`} size="lg" onPress={onDowngrade} />
+        <Button label={`Switch to ${PLAN_NAMES[shown]}`} size="md" onPress={onDowngrade} />
         <Text style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}>
           {PLAN_NAMES[current]} stays until the end of the period.
         </Text>
@@ -574,47 +548,38 @@ function Notice({
 }
 
 const styles = StyleSheet.create({
-  page: { paddingHorizontal: spacing.lg, gap: spacing.lg + 2 },
+  page: { paddingHorizontal: spacing.lg, gap: spacing.md },
+  floatingBack: { position: 'absolute', left: spacing.lg },
 
-  hero: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.sm },
-  portrait: { alignItems: 'center', marginBottom: spacing.md },
-  ring: { borderRadius: 999, borderWidth: 3, padding: 3 },
-  pin: {
-    position: 'absolute',
-    bottom: -12,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 6,
-    borderRadius: 999,
-    borderWidth: 3,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  pinText: { fontSize: 10.5, lineHeight: 14, fontWeight: '700', letterSpacing: 1.2 },
+  hero: { alignItems: 'center', gap: 4 },
+  portrait: { alignItems: 'center', marginBottom: 14 },
+  ring: { borderRadius: 999, borderWidth: 2.5, padding: 2.5 },
+  // The page's colour round the badge, so it cuts cleanly into the ring.
+  pin: { position: 'absolute', bottom: -13, borderRadius: 999, padding: 3 },
   headline: {
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: 21,
+    lineHeight: 26,
     fontWeight: '700',
-    letterSpacing: -0.7,
+    letterSpacing: -0.5,
     textAlign: 'center',
   },
   pitch: {
-    fontSize: 14.5,
-    lineHeight: 21,
+    fontSize: 13,
+    lineHeight: 18,
     textAlign: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xl,
   },
   usage: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: spacing.xs,
+    marginTop: 4,
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  usageText: { fontSize: 13, lineHeight: 17, fontWeight: '700' },
+  usageText: { fontSize: 12, lineHeight: 16, fontWeight: '700' },
   usageRule: { width: StyleSheet.hairlineWidth, height: 14, marginHorizontal: 4 },
 
   notice: {
@@ -624,28 +589,28 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingLeft: spacing.md,
     paddingRight: spacing.sm,
-    borderRadius: radius.xl,
+    ...leaf('sm'),
   },
 
-  card: { borderRadius: radius.xxl, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  card: { ...leaf('md'), borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
   rule: { height: StyleSheet.hairlineWidth, marginHorizontal: spacing.lg },
   choice: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    minHeight: 64,
+    minHeight: 52,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: 9,
   },
   radio: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radioDot: { width: 10, height: 10, borderRadius: 5 },
+  radioDot: { width: 9, height: 9, borderRadius: 4.5 },
   choiceWords: { flex: 1, minWidth: 0, gap: 2 },
   // A narrow phone sends the tag under the name rather than into the price.
   choiceName: {
@@ -655,23 +620,19 @@ const styles = StyleSheet.create({
     columnGap: 8,
     rowGap: 3,
   },
-  choiceTitle: { fontSize: 16, lineHeight: 21, fontWeight: '600', letterSpacing: -0.2 },
   priceRow: { flexDirection: 'row', alignItems: 'baseline' },
-  price: { fontSize: 17, lineHeight: 22, fontWeight: '700', letterSpacing: -0.3 },
+  price: { fontSize: 15.5, lineHeight: 20, fontWeight: '700', letterSpacing: -0.3 },
   per: { fontSize: 12, lineHeight: 16, fontWeight: '500' },
   includes: {
-    gap: 12,
+    gap: 8,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
+    paddingVertical: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  include: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  includeText: { flexShrink: 1, fontSize: 14.5, lineHeight: 20, fontWeight: '500' },
-  tag: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
-  tagText: { fontSize: 9.5, lineHeight: 13, fontWeight: '700', letterSpacing: 0.8 },
+  include: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  includeText: { flexShrink: 1, fontSize: 13.5, lineHeight: 18, fontWeight: '500' },
 
-  way: { gap: 10 },
+  way: { gap: 6 },
   reassure: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
   use: { width: 172 },
 });

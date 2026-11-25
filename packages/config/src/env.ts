@@ -32,6 +32,14 @@ const EnvSchema = Type.Object({
   API_HOST: Type.String({ default: '0.0.0.0' }),
   API_PORT: Type.Integer({ default: 3001, minimum: 1, maximum: 65535 }),
 
+  /*
+   * Proxies between the internet and this process in production (a load balancer is one; a
+   * CDN in front of it is two). The client address is read that many hops back in
+   * `X-Forwarded-For` — trusting every hop would let any caller name their own address and walk
+   * around the per-IP rate limit.
+   */
+  TRUST_PROXY_HOPS: Type.Integer({ default: 1, minimum: 0 }),
+
   DATABASE_URL: Type.String({ minLength: 1 }),
   DATABASE_POOL_MAX: Type.Integer({ default: 10, minimum: 1 }),
 
@@ -105,6 +113,15 @@ const EnvSchema = Type.Object({
    * and then a subscriber cannot move from Plus to Business at all.
    */
   STRIPE_PORTAL_CONFIGURATION: Type.Optional(Type.String()),
+  /*
+   * RevenueCat: the phone's store purchases (Google Play, and the App Store later). The secret
+   * v2 key (`sk_…`) and its project (`proj…`) let the API ask RevenueCat what a person owns;
+   * the webhook secret is the `Authorization` value set on the RevenueCat webhook, so only
+   * RevenueCat can tell the API to look again. Never the app's public SDK key.
+   */
+  REVENUECAT_SECRET_KEY: Type.Optional(Type.String()),
+  REVENUECAT_PROJECT_ID: Type.Optional(Type.String()),
+  REVENUECAT_WEBHOOK_AUTH: Type.Optional(Type.String()),
   /*
    * The AI provider (Architecture.md §41). Named by role rather than by vendor: the model
    * is reached through a port, and the concrete adapter is one file — so a key from a

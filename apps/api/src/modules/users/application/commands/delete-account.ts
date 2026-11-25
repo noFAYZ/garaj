@@ -18,6 +18,7 @@ import { schema, type Database } from '@vehicle-os/database';
 import { recordAudit } from '../../../../infrastructure/audit';
 import { ServiceUnavailableError } from '../../../../infrastructure/errors';
 import { stripe } from '../../../../infrastructure/stripe';
+import { forgetMemberships } from '../../../../plugins/actor-context';
 import { deleteGarage } from '../../../garages/infrastructure/repositories/garage-repository';
 
 /** Still being billed: charging, trialling, or retrying a failed payment. */
@@ -78,4 +79,6 @@ export async function deleteAccount(
     });
     await tx.delete(schema.users).where(eq(schema.users.id, userId));
   });
+  // Their memberships went with the row; so does the cached copy.
+  forgetMemberships();
 }

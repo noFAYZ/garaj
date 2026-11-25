@@ -171,6 +171,29 @@ export function bucketLabel(key: string, style: 'short' | 'long'): string {
   return (style === 'short' ? SHORT_MONTH : LONG_MONTH).format(date);
 }
 
+/* ——— Axis labels ——— */
+
+/**
+ * Which axis labels to draw: each `width` wide, centred under `centres` (ascending), as many as
+ * fit without touching, counted back from the latest so the newest is always named; each kept
+ * inside `[0, span]`. Labels the same width step evenly; uneven moments keep what fits.
+ */
+export function fitLabels(
+  centres: readonly number[],
+  width: number,
+  span: number,
+): { index: number; left: number }[] {
+  const kept: { index: number; left: number }[] = [];
+  let edge = Infinity;
+  for (let index = centres.length - 1; index >= 0; index -= 1) {
+    const left = Math.min(Math.max(centres[index]! - width / 2, 0), Math.max(0, span - width));
+    if (left + width + 2 > edge) continue;
+    kept.push({ index, left });
+    edge = left;
+  }
+  return kept;
+}
+
 /* ——— Ranking ——— */
 
 export interface Ranked {
@@ -382,7 +405,14 @@ export interface FuelUnitReport {
   fills: number;
   /** What the fills with a quantity cost, over that quantity. Minor units, unrounded. */
   pricePerUnitMinor: number | null;
-  prices: { at: number; perUnitMinor: number; vendor: string | null }[];
+  /** One per fill, oldest first: what went in and what it cost, as well as the price. */
+  prices: {
+    at: number;
+    perUnitMinor: number;
+    quantity: number;
+    amountMinor: number;
+    vendor: string | null;
+  }[];
   /** Cheapest first. */
   places: { vendor: string; fills: number; perUnitMinor: number }[];
 }
@@ -461,6 +491,8 @@ export function buildRefuelReport(report: SpendReport): RefuelReport {
         prices: entries.map(({ row, quantity: amount }) => ({
           at: Date.parse(row.occurredAt),
           perUnitMinor: row.amount.amountMinor / amount,
+          quantity: amount,
+          amountMinor: row.amount.amountMinor,
           vendor: row.vendor,
         })),
         places: [...places.values()]

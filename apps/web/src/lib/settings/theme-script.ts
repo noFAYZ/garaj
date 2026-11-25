@@ -1,4 +1,4 @@
-import { DARK_TOKENS, LIGHT_TOKENS, oklchToHex } from '@vehicle-os/ui';
+import { DARK_TOKENS, oklchToHex } from '@vehicle-os/ui';
 
 /*
  * No `'use client'` in this module, on purpose. The root layout is a server component: it
@@ -16,7 +16,8 @@ export const GLASS_KEY = 'vehicleos.glass';
  */
 export const THEME_COLORS = {
   dark: oklchToHex(DARK_TOKENS.background),
-  light: oklchToHex(LIGHT_TOKENS.background),
+  // The daylight page is white, as on the phone (see `globals.css`); glass keeps the paper.
+  light: '#ffffff',
 } as const;
 
 /**

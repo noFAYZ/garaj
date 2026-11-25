@@ -7,10 +7,11 @@ import {
   EventTypeSchema,
   IsoDateTime,
   MoneyOutput,
-  PaginationQuery,
+  LedgerPaginationQuery,
   Uuid,
   Nullable,
 } from './common';
+import { PartLines } from './parts';
 
 export const TripPurposeSchema = Type.Union(TRIP_PURPOSES.map((purpose) => Type.Literal(purpose)));
 
@@ -83,6 +84,8 @@ const eventFields = {
   provider: Type.Optional(Type.String({ maxLength: 200 })),
   /** Only on `eventType: 'TRIP'`. */
   trip: Type.Optional(TripInput),
+  /** What went in: parts and fluids, saved with the entry in one write. */
+  parts: Type.Optional(PartLines),
 };
 
 export const CreateEvent = Type.Object(eventFields, { additionalProperties: false });
@@ -108,7 +111,7 @@ export const UpdateEvent = Type.Object(
 export type UpdateEvent = Static<typeof UpdateEvent>;
 
 export const ListEventsQuery = Type.Composite([
-  PaginationQuery,
+  LedgerPaginationQuery,
   Type.Object({
     // Repeatable in the query string: `?eventType=MAINTENANCE&eventType=REPAIR`.
     eventType: Type.Optional(

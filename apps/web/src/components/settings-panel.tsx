@@ -12,6 +12,7 @@ import {
   UserRound,
   type LucideIcon,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useState, type ComponentType } from 'react';
 import {
   avatarFor,
@@ -21,9 +22,11 @@ import {
   type NotificationPreference,
 } from '@vehicle-os/contracts';
 import { DISTANCE_UNITS, NOTIFICATION_TYPES, type DistanceUnit } from '@vehicle-os/domain';
-import { queryKeys } from '@vehicle-os/api-client/react';
+import { planQuery, queryKeys } from '@vehicle-os/api-client/react';
 import { api } from '@/lib/api';
-import { SectionCard } from '@/components/ui/primitives';
+import { authClient, signOut } from '@/lib/auth-client';
+import { FormError, Modal, ModalActions } from '@/components/ui/modal';
+import { Button, SectionCard } from '@/components/ui/primitives';
 import { buttonClass } from '@/components/ui/button-class';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -392,6 +395,32 @@ function AvatarPicker() {
   );
 }
 
+/**
+ * An address not yet confirmed, and the way to confirm it. Until it is, nobody can add this
+ * account to their garage — that is the one thing an unproved address could be used to take.
+ */
+function ConfirmEmail({ email }: { email: string }) {
+  const send = useMutation({
+    mutationFn: async () => {
+      const result = await authClient.sendVerificationEmail({ email });
+      if (result.error) throw new Error(result.error.message ?? 'Could not send the link.');
+    },
+    meta: { toast: `Link sent to ${email}` },
+  });
+  return send.isSuccess ? (
+    <span className="shrink-0 text-xs text-muted-foreground">Link sent</span>
+  ) : (
+    <button
+      type="button"
+      onClick={() => send.mutate()}
+      disabled={send.isPending}
+      className="shrink-0 rounded text-xs font-semibold text-foreground underline underline-offset-4 disabled:opacity-60"
+    >
+      Confirm email
+    </button>
+  );
+}
+
 export function AccountSettings() {
   const profile = useProfile();
 
@@ -403,7 +432,12 @@ export function AccountSettings() {
           profile.isPending ? (
             <Skeleton className="h-5 w-48 max-w-full" />
           ) : (
-            <span className="truncate text-sm text-muted-foreground">{profile.data?.email}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm text-muted-foreground">{profile.data?.email}</span>
+              {profile.data && !profile.data.emailVerified ? (
+                <ConfirmEmail email={profile.data.email} />
+              ) : null}
+            </span>
           )
         }
       </SettingRow>
@@ -416,6 +450,68 @@ export function AccountSettings() {
           )
         }
       </SettingRow>
+      <DeleteAccount />
+    </div>
+  );
+}
+
+/**
+ * Deleting the account, two presses away: the account, every garage it owns and everything in
+ * them, its stored files too. The server cancels a plan billed on the web; one bought in a
+ * phone's store only the store can stop, so that is said before the press.
+ */
+function DeleteAccount() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const plan = useQuery(planQuery(api));
+  const [confirming, setConfirming] = useState(false);
+  const remove = useMutation({
+    mutationFn: async () => {
+      await api.users.deleteMe();
+      await signOut().catch(() => undefined);
+    },
+    meta: { toast: 'Account deleted' },
+    onSuccess: () => {
+      queryClient.clear();
+      router.replace('/sign-in');
+    },
+  });
+  const storeBilled = plan.data?.provider === 'REVENUECAT' && plan.data.status !== 'CANCELED';
+
+  return (
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-destructive-soft p-4">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-foreground">Delete account</p>
+        <p className="text-xs text-muted-foreground">
+          Your account, every garage you own and everything in them. It cannot be undone.
+        </p>
+      </div>
+      <Button variant="danger" onClick={() => setConfirming(true)}>
+        Delete account
+      </Button>
+      {confirming ? (
+        <Modal
+          title="Delete your account?"
+          description="Every garage you own goes with it — vehicles, records, documents and photos. Garages someone else owns keep what you added."
+          onClose={() => (remove.isPending ? undefined : setConfirming(false))}
+        >
+          {storeBilled ? (
+            <p className="text-sm text-foreground">
+              Your plan is billed through the app store on your phone. Deleting the account does not
+              stop it — cancel it in the store first.
+            </p>
+          ) : null}
+          {remove.isError ? <FormError>{remove.error.message}</FormError> : null}
+          <ModalActions>
+            <Button onClick={() => setConfirming(false)} disabled={remove.isPending}>
+              Keep it
+            </Button>
+            <Button variant="danger" loading={remove.isPending} onClick={() => remove.mutate()}>
+              Delete for good
+            </Button>
+          </ModalActions>
+        </Modal>
+      ) : null}
     </div>
   );
 }

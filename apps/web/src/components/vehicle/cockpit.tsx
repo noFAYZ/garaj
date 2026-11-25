@@ -580,7 +580,7 @@ function SpendPanel({
           <span
             key={i}
             className={cn(
-              'bar-grow flex-1 rounded-t-[4px] transition-[height,background-color] duration-500',
+              'bar-grow flex-1 rounded-t-[4px] transition-[height,background-color] duration-250',
               !amount
                 ? 'bg-muted'
                 : i === at

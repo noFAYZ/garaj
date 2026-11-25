@@ -85,7 +85,7 @@ export function toPage<T>(
   };
 }
 
-export function normaliseLimit(requested: number | undefined): number {
+export function normaliseLimit(requested: number | undefined, max = MAX_PAGE_SIZE): number {
   if (requested === undefined) return DEFAULT_PAGE_SIZE;
-  return Math.min(Math.max(1, Math.trunc(requested)), MAX_PAGE_SIZE);
+  return Math.min(Math.max(1, Math.trunc(requested)), max);
 }

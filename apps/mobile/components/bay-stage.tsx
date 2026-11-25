@@ -17,8 +17,7 @@ import { BrandLogo } from '@/components/brand-logo';
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { vehicleIcon } from '@/components/vehicle-card';
 import { figure, lift, radius, useTheme, type Theme } from '@/lib/theme';
-
-const pad = (value: number) => String(value).padStart(2, '0');
+import { pad } from '@/lib/format';
 
 /** Where the back wall meets the floor, down the stage. */
 export const HORIZON = 0.6;
@@ -30,7 +29,7 @@ export type StagePhoto = Pick<VehiclePhoto, 'id' | 'thumbnailUrl' | 'isCutout' |
 };
 
 /** How lit a bay is, 0–1: a number when it never changes, a node when the light moves. */
-export type Lit = number | Animated.Value | Animated.AnimatedMultiplication<number>;
+export type Lit = number | Animated.Value | Animated.AnimatedMultiplication;
 
 /** The strip light's colour: a warm white at night, plain daylight by day. */
 const lampColor = (theme: Theme) => (theme.dark ? '#FFF2E2' : '#FFFFFF');

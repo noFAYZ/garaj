@@ -11,16 +11,20 @@ import {
   TextInput,
   View,
   type TextInputProps,
+  type TextInputInstance,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import logoTextLight from '@/assets/logo-text-light.png';
 import logoText from '@/assets/logo-text.png';
 import { useScheme } from '@/lib/appearance';
-import { signIn, signUp, useSession } from '@/lib/auth';
+import { requestPasswordReset, signIn, signUp, useSession } from '@/lib/auth';
 import { Eyebrow, Segmented } from '@/lib/instrument';
-import { haptic, Rise, useReduceMotion } from '@/lib/motion';
-import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Ground } from '@/lib/ui';
+import { dialog, FAILED } from '@/lib/dialog';
+import { markWelcomeSeen, useWelcomeSeen } from '@/lib/onboarding';
+import { Welcome } from '@/components/welcome';
 
 /**
  * The way in, as the web's: the wordmark, a line, the fields and the copper key — set here over the
@@ -34,6 +38,8 @@ export default function SignInScreen() {
   const queryClient = useQueryClient();
   // Sent here by the server ending the session, rather than by signing out: say so.
   const { ended } = useSession();
+  // A new install meets the welcome first; it hands over to the form in the mode it was left in.
+  const welcomed = useWelcomeSeen();
 
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [name, setName] = useState('');
@@ -42,8 +48,8 @@ export default function SignInScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Return on each field moves to the next, as a native form does; the last one submits.
-  const emailField = useRef<TextInput>(null);
-  const passwordField = useRef<TextInput>(null);
+  const emailField = useRef<TextInputInstance>(null);
+  const passwordField = useRef<TextInputInstance>(null);
 
   const signingUp = mode === 'sign-up';
   const shortPassword = signingUp && password.length > 0 && password.length < 12;
@@ -70,11 +76,23 @@ export default function SignInScreen() {
     }
   };
 
+  if (!welcomed) {
+    return (
+      <Welcome
+        onFinish={(next) => {
+          setMode(next);
+          setError(null);
+          markWelcomeSeen();
+        }}
+      />
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       // Otherwise the keyboard covers the password field on a small phone.
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ flex: 1, backgroundColor: theme.background }}
+      style={{ flex: 1, backgroundColor: 'transparent' }}
     >
       <Ambient />
       <ScrollView
@@ -206,9 +224,60 @@ export default function SignInScreen() {
             loading={busy}
             disabled={!email.trim() || !password || shortPassword || (signingUp && !name.trim())}
           />
+
+          {signingUp ? null : (
+            // The link opens the web app's reset page; the new password then works here too.
+            <PressableScale
+              onPress={() => forgot(email.trim())}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={{ alignSelf: 'center' }}
+            >
+              <Text style={[typeScale.label, { color: theme.mutedForeground }]}>
+                Forgot your password?
+              </Text>
+            </PressableScale>
+          )}
         </Rise>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+/**
+ * A reset link, for the address typed in. Always the same answer, whether or not it has an
+ * account — a different one would tell anyone holding the phone who uses Garaj.
+ */
+function forgot(email: string) {
+  if (!email.includes('@')) {
+    dialog('Reset your password', 'Type the email you sign in with first, then tap here.', [], {
+      icon: 'key-outline',
+    });
+    return;
+  }
+  dialog(
+    'Reset your password',
+    `Send a link to ${email}?`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Send link',
+        onPress: () =>
+          void requestPasswordReset(email)
+            .then(() =>
+              dialog(
+                'Check your email',
+                `If ${email} has a Garaj account, a link to choose a new password is on its way. It works for an hour.`,
+                [],
+                { icon: 'mail-outline' },
+              ),
+            )
+            .catch((error: unknown) =>
+              dialog('Could not send the link', (error as Error).message, undefined, FAILED),
+            ),
+      },
+    ],
+    { icon: 'key-outline' },
   );
 }
 
@@ -218,15 +287,11 @@ function Input({
   note,
   inputRef,
   ...props
-}: TextInputProps & { label: string; note?: string; inputRef?: Ref<TextInput> }) {
+}: TextInputProps & { label: string; note?: string; inputRef?: Ref<TextInputInstance> }) {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <View style={[styles.input, { backgroundColor: focused ? theme.popover : theme.card }]}>
-      {/* A volt edge on the field you are in — the caret's lane. */}
-      <View
-        style={[styles.focusBar, { backgroundColor: focused ? theme.primary : 'transparent' }]}
-      />
       <Eyebrow>{label}</Eyebrow>
       <TextInput
         ref={inputRef}
@@ -287,7 +352,7 @@ const styles = StyleSheet.create({
   logo: { width: 132, height: 37 },
   headline: { fontSize: 34, lineHeight: 38, letterSpacing: -1.3 },
   panel: {
-    borderRadius: radius.xl,
+    ...leaf('md'),
     overflow: 'hidden',
     gap: StyleSheet.hairlineWidth,
     borderWidth: StyleSheet.hairlineWidth,
@@ -298,6 +363,5 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
     gap: 4,
   },
-  focusBar: { position: 'absolute', left: 0, top: 14, bottom: 14, width: 3, borderRadius: 2 },
   error: { borderRadius: radius.lg, padding: spacing.md + 2 },
 });

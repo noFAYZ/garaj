@@ -56,30 +56,36 @@ export function lastSlot(job: ScheduledJob, now: Date): Date {
   return slot;
 }
 
-export function startScheduler(
+type SchedulerLog = { info: (o: object, m: string) => void; error: (o: object, m: string) => void };
+
+/** Queues `job` for `slot`, once: the slot's key dedupes repeats from any worker, any run. */
+export async function enqueueSlot(
   db: Database,
-  log: { info: (o: object, m: string) => void; error: (o: object, m: string) => void },
-): () => void {
+  log: SchedulerLog,
+  job: ScheduledJob,
+  slot: Date,
+): Promise<void> {
+  const jobKey = `scheduled:${job.name}:${slot.toISOString()}`;
+  try {
+    const [seen] = await db
+      .select({ id: schema.outboxMessages.id })
+      .from(schema.outboxMessages)
+      .where(eq(schema.outboxMessages.jobKey, jobKey))
+      .limit(1);
+    if (!seen) {
+      await db
+        .insert(schema.outboxMessages)
+        .values({ queue: 'scheduled', jobName: job.name, payload: {}, jobKey });
+    }
+  } catch (error) {
+    log.error({ err: error, job: job.name }, 'Scheduled job not queued');
+  }
+}
+
+export function startScheduler(db: Database, log: SchedulerLog): () => void {
   const timers = new Map<string, NodeJS.Timeout>();
   let stopped = false;
-
-  const enqueue = async (job: ScheduledJob, slot: Date) => {
-    const jobKey = `scheduled:${job.name}:${slot.toISOString()}`;
-    try {
-      const [seen] = await db
-        .select({ id: schema.outboxMessages.id })
-        .from(schema.outboxMessages)
-        .where(eq(schema.outboxMessages.jobKey, jobKey))
-        .limit(1);
-      if (!seen) {
-        await db
-          .insert(schema.outboxMessages)
-          .values({ queue: 'scheduled', jobName: job.name, payload: {}, jobKey });
-      }
-    } catch (error) {
-      log.error({ err: error, job: job.name }, 'Scheduled job not queued');
-    }
-  };
+  const enqueue = (job: ScheduledJob, slot: Date) => enqueueSlot(db, log, job, slot);
 
   for (const job of SCHEDULED_JOBS) {
     let slot = lastSlot(job, new Date());

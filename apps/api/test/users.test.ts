@@ -30,6 +30,28 @@ describe('users module', () => {
     expect(response.json().error.code).toBe('UNAUTHORIZED');
   });
 
+  it('refuses a bearer token on the very next request after it signs out', async () => {
+    // The phone's credential: a bearer token, which only the API's own session cache remembers.
+    const signIn = await context.app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in/email',
+      payload: { email: alice.email, password: 'correct-horse-battery-staple' },
+    });
+    const headers = { authorization: `Bearer ${String(signIn.headers['set-auth-token'])}` };
+    const me = () => context.app.inject({ method: 'GET', url: '/api/v1/users/me', headers });
+
+    // Two at once, as a screen sends them: they share one lookup and both get in.
+    expect((await Promise.all([me(), me()])).map((r) => r.statusCode)).toEqual([200, 200]);
+    const out = await context.app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-out',
+      headers,
+      payload: {},
+    });
+    expect(out.statusCode).toBe(200);
+    expect((await me()).statusCode).toBe(401);
+  });
+
   it('returns the signed-in user with default preferences', async () => {
     const response = await context.app.inject({
       method: 'GET',

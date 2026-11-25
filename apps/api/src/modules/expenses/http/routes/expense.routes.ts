@@ -15,6 +15,7 @@ import {
   StandardErrors,
   UpdateExpense,
   VehicleIdParam,
+  LEDGER_PAGE_MAX,
 } from '@vehicle-os/contracts';
 import type { FastifyInstance } from 'fastify';
 import { env } from '@vehicle-os/config';
@@ -170,7 +171,7 @@ export const expenseRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     async (request) => {
       await fastify.requireVehicleAccess(request, request.params.vehicleId, 'expense.read');
 
-      const limit = normaliseLimit(request.query.limit);
+      const limit = normaliseLimit(request.query.limit, LEDGER_PAGE_MAX);
       const cursor = request.query.cursor ? decodeKeysetCursor(request.query.cursor) : undefined;
 
       const rows = await listExpenses(fastify.db, {

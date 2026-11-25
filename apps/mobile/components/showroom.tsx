@@ -17,18 +17,25 @@ import { paintSwatch } from '@vehicle-os/ui';
 import { BayStage, Floor, Room } from '@/components/bay-stage';
 import { BrandLogo } from '@/components/brand-logo';
 import { kindOf } from '@/components/vehicle-hero';
-import { formatMoney, humanise } from '@/lib/format';
+import { pad, formatMoney, humanise } from '@/lib/format';
 import { SectionLink } from '@/lib/instrument';
 import { ease, haptic, PressableScale, Pulse, useReduceMotion } from '@/lib/motion';
-import { figure, radius, rimmed, spacing, typeScale, useTheme, type Theme } from '@/lib/theme';
+import {
+  figure,
+  radius,
+  rimmed,
+  spacing,
+  typeScale,
+  useTheme,
+  type Theme,
+  leaf,
+} from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 
 type Money = { amountMinor: number; currency: string };
 
 /** What a vehicle is waiting on: things late and things coming, from the home's one list. */
 export type BayFlag = { late: number; soon: number };
-
-const pad = (value: number) => String(value).padStart(2, '0');
 
 const PAGE = spacing.lg;
 const GAP = spacing.md;
@@ -528,7 +535,7 @@ export function EmptyBay({ onAdd }: { onAdd: () => void }) {
           Add a car, motorcycle, bicycle, boat — anything with a story worth keeping.
         </Text>
         <View style={{ marginTop: spacing.sm }}>
-          <Button label="Park your first vehicle" icon="add" variant="primary" onPress={onAdd} />
+          <Button label="Add" icon="add" variant="primary" onPress={onAdd} />
         </View>
       </View>
     </View>
@@ -542,7 +549,7 @@ export function ShowroomSkeleton() {
   const width = screen - PAGE * 2;
   return (
     <View style={[styles.card, bayCard(theme)]}>
-      <Skeleton height={Math.round(width * STAGE)} radius={radius.xl} />
+      <Skeleton height={Math.round(width * STAGE)} style={leaf('lg', BEZEL)} />
       <View style={styles.info}>
         <Skeleton width="50%" height={17} />
         <Skeleton height={40} radius={radius.lg} />
@@ -572,8 +579,9 @@ export const bayCard = (theme: Theme) =>
 
 const styles = StyleSheet.create({
   rail: { gap: GAP, paddingHorizontal: PAGE, paddingVertical: SHADOW_ROOM },
-  card: { borderRadius: radius.xxl + 4, padding: BEZEL, gap: 2 },
-  stage: { borderRadius: radius.xl + 2, overflow: 'hidden' },
+  card: { ...leaf('lg'), padding: BEZEL, gap: 2 },
+  // The card's leaf less its bezel: the stage's corners run with the card's.
+  stage: { ...leaf('lg', BEZEL), overflow: 'hidden' },
   marks: {
     position: 'absolute',
     top: 10,
@@ -594,7 +602,7 @@ const styles = StyleSheet.create({
   markText: { fontWeight: '600' },
   dot: { width: 7, height: 7, borderRadius: 4 },
   stencil: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     paddingBottom: 12,
@@ -610,7 +618,7 @@ const styles = StyleSheet.create({
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   name: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '700', letterSpacing: -0.35 },
   swatch: { width: 9, height: 9, borderRadius: 5, borderWidth: 1 },
-  readings: { flexDirection: 'row', borderRadius: radius.lg },
+  readings: { flexDirection: 'row', ...leaf('sm') },
   reading: {
     flex: 1,
     minWidth: 0,

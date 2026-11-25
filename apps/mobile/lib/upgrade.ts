@@ -1,11 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { createURL } from 'expo-linking';
 import { router } from 'expo-router';
 import type { PlanWall } from '@vehicle-os/api-client';
-import { garagesQuery, planQuery, pricesQuery } from '@vehicle-os/api-client/react';
-import type { PlanPrice } from '@vehicle-os/contracts';
+import { garagesQuery, planQuery } from '@vehicle-os/api-client/react';
 import {
-  formatPlanPrice,
   hasEntitlement,
   PLAN_NAMES,
   tierForCount,
@@ -13,14 +10,6 @@ import {
   type Entitlement,
 } from '@vehicle-os/domain';
 import { api } from '@/lib/api';
-
-/**
- * Where checkout and the billing portal send the person back to. Not a screen: `+native-intent`
- * turns it into an event for the upgrade screen still open underneath (or the plan, cold).
- * `vehicleos://billing-return` in a build, `exp://<host>/--/billing-return` in Expo Go — never
- * the web app, which a phone may not reach.
- */
-export const BILLING_RETURN = createURL('/billing-return');
 
 let lastShown = 0;
 
@@ -57,8 +46,6 @@ export function showUpgrade(wall: PlanWall): void {
 export function usePlan() {
   const plan = useQuery(planQuery(api));
   const data = plan.data;
-  // Loaded ahead of any wall, so the upgrade screen never opens on a blank price.
-  useQuery({ ...pricesQuery(api), enabled: Boolean(data) && data?.plan !== 'BUSINESS' });
 
   const allows = (entitlement: Entitlement) => !data || hasEntitlement(data.plan, entitlement);
 
@@ -112,9 +99,3 @@ export const FEATURE_ICON: Record<
   'mileage.report': 'speedometer',
   'driver.assign': 'people',
 };
-
-/** "$2.99 / mo" — the one way a price is written on the phone. */
-export function priceLabel(price: PlanPrice): string {
-  const { amount, per } = formatPlanPrice(price);
-  return `${amount} / ${per}`;
-}

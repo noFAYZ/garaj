@@ -73,3 +73,27 @@ export function Emoji({ name, size = 20, className, title }: EmojiProps) {
 }
 
 export const EMOJI_NAMES = Object.keys(EMOJI) as EmojiName[];
+
+/** A job's glyph, from the whole words in its title; no match keeps the toolbox. */
+const JOB_EMOJI: readonly [readonly string[], EmojiName][] = [
+  [['oil'], 'oil'],
+  [['tyre', 'tyres', 'tire', 'tires', 'wheel', 'wheels'], 'tyre'],
+  [['brake', 'brakes'], 'brake'],
+  [['chain', 'belt'], 'chain'],
+  [['battery', 'batteries'], 'battery'],
+  [['filter', 'filters', 'air'], 'filter'],
+  [['coolant', 'antifreeze', 'radiator'], 'coolant'],
+  [['spark', 'plug', 'plugs', 'ignition'], 'spark'],
+  [['inspection', 'inspect', 'mot', 'test'], 'inspection'],
+  [['clean', 'cleaning', 'wash', 'valet'], 'cleaning'],
+  [['insurance'], 'insurance'],
+  [['registration', 'tax'], 'registration'],
+];
+
+/** Whole words only: a schedule called "Brake repair" is brakes, not an air filter. */
+export function scheduleEmoji(title: string): EmojiName {
+  const words = new Set(title.toLowerCase().split(/[^a-z]+/));
+  const match = JOB_EMOJI.find(([keywords]) => keywords.some((word) => words.has(word)));
+  return match?.[1] ?? 'maintenance';
+}
+

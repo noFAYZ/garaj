@@ -1,5 +1,5 @@
 import { composite, DARK_TOKENS, LIGHT_TOKENS, oklchToHex, toNativeTokens } from '@vehicle-os/ui';
-import { StyleSheet, type TextStyle } from 'react-native';
+import { StyleSheet, type TextStyle, type ViewStyle } from 'react-native';
 import { useScheme } from './appearance';
 
 /**
@@ -63,6 +63,47 @@ export const spacing = { xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 }
 
 /** The web's radii: instrument-like rather than toy-like. `xxl` is `rounded-2xl`, a card. */
 export const radius = { sm: 7, md: 10, lg: 13, xl: 16, xxl: 20, xxxl: 24, pill: 999 } as const;
+
+/**
+ * The house card silhouette, from Home's dash (user, 2026-11-20: every card the same, "creative and
+ * modern"): a leaf. The top-left corner, where a card is entered and read from, and the bottom-right,
+ * where it ends and its action sits, are swept wide; the other two are held tight. Every curve is
+ * continuous (a squircle on iOS), never a quarter circle.
+ *
+ * Containers only: cards, panels, list groups, previews. Controls (buttons, chips, inputs, keys)
+ * keep symmetric corners so an action never reads as a container, and sheets and dialogs keep theirs.
+ *
+ * `lg` for a screen's lead card (Home's dash, the vehicle's stage and dash, a showroom bay, the
+ * Logs card), `md` for content cards, `sm` for small ones and tiles. `inset` is for what sits inside
+ * a card along its edge: its corners are the card's less the inset, so the curves stay concentric.
+ */
+export const LEAF = {
+  lg: { wide: 32, tight: 12 },
+  md: { wide: 24, tight: 10 },
+  sm: { wide: 18, tight: 7 },
+} as const;
+export type LeafSize = keyof typeof LEAF;
+
+export function leaf(size: LeafSize = 'md', inset = 0): ViewStyle {
+  const wide = Math.max(0, LEAF[size].wide - inset);
+  const tight = Math.max(0, LEAF[size].tight - inset);
+  return {
+    borderTopLeftRadius: wide,
+    borderTopRightRadius: tight,
+    borderBottomRightRadius: wide,
+    borderBottomLeftRadius: tight,
+    borderCurve: 'continuous',
+  };
+}
+
+/** Only a leaf's top corners, for what heads a card (a photo, a stage), its foot meeting the rest. */
+export function leafTop(size: LeafSize = 'md', inset = 0, foot = 0): ViewStyle {
+  return {
+    ...leaf(size, inset),
+    borderBottomRightRadius: foot,
+    borderBottomLeftRadius: foot,
+  };
+}
 
 /**
  * The type scale: a screen picks a role, not a number. Albert Sans, as the web sets it, at the web's

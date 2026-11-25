@@ -5,6 +5,7 @@
  * what carries the odometer forward, and what maintenance, expenses and documents attach to.
  */
 
+import type { PartLine } from '@vehicle-os/contracts';
 import type { Database } from '@vehicle-os/database';
 import {
   assertCurrency,
@@ -22,6 +23,8 @@ import {
   removeMirroredExpense,
 } from '../../../expenses/application/commands/mirror-event-expense';
 import type { CommandMeta } from '../../../garages/application/commands/create-garage';
+import { resolvePartLines } from '../../../parts/domain/part-lines';
+import { insertParts } from '../../../parts/infrastructure/repositories/part-repository';
 import {
   findVehicleById,
   raiseEngineHours,
@@ -61,6 +64,8 @@ export interface RecordEventInput {
   readonly costCurrency?: string;
   readonly provider?: string;
   readonly trip?: TripInput;
+  /** What went in, written with the entry. */
+  readonly parts?: readonly PartLine[];
 }
 
 /**
@@ -171,6 +176,17 @@ export async function recordEvent(
     fields.odometerUnit = 'An odometer reading needs its unit.';
   }
   const trip = tripColumns(input.eventType, input.trip, input.odometer, fields);
+  const parts = resolvePartLines(
+    input.parts,
+    {
+      vehicleId,
+      vehicleType: vehicle.vehicleType,
+      odometerUnit: vehicle.odometerUnit,
+      createdBy: actor.userId,
+      onEntry: true,
+    },
+    fields,
+  );
   if (Object.keys(fields).length > 0) throw new ValidationError('Invalid request', fields);
 
   const occurredAt = new Date(input.occurredAt);
@@ -217,6 +233,7 @@ export async function recordEvent(
     // A cost on the timeline is money spent on the vehicle, so it becomes an expense in the
     // same transaction — a total assembled from only one of the two screens is wrong.
     await mirrorEventExpense(tx, created, actor.userId);
+    await insertParts(tx, parts, created.id);
 
     /*
      * The cached reading on the vehicle only ever moves forward (see `raiseOdometer`), so

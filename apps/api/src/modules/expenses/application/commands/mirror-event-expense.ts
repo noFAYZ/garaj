@@ -11,13 +11,19 @@
 import { eq } from 'drizzle-orm';
 import { schema, type Executor } from '@vehicle-os/database';
 import type { EventType, ExpenseCategory } from '@vehicle-os/domain';
-import { categoryAfterEdit, categoryForEventType } from '../../domain/event-category';
+import {
+  categoryAfterEdit,
+  categoryForEventType,
+  measuredInNote,
+} from '../../domain/event-category';
 
 export interface MirroredEvent {
   readonly id: string;
   readonly vehicleId: string;
   readonly eventType: EventType;
   readonly title: string;
+  /** A fill's note leads with what went in ("40 L"); the expense takes that figure. */
+  readonly description: string | null;
   readonly occurredAt: Date;
   readonly odometer: number | null;
   readonly odometerUnit: 'KM' | 'MI' | null;
@@ -59,6 +65,10 @@ export async function mirrorEventExpense(
     return;
   }
 
+  const measured =
+    event.eventType === 'FUEL' || event.eventType === 'CHARGE'
+      ? measuredInNote(event.description)
+      : null;
   const values = {
     vehicleId: event.vehicleId,
     eventId: event.id,
@@ -76,6 +86,14 @@ export async function mirrorEventExpense(
     odometerUnit: event.odometerUnit,
     source: 'USER' as const,
     createdBy,
+    // Only what the note says: an edit whose note names no amount keeps one corrected on the
+    // expense itself. A charger's energy is `energyKwh`, as the expense form records it.
+    ...(measured
+      ? event.eventType === 'CHARGE'
+        ? { energyKwh: measured.quantity }
+        : { quantity: measured.quantity, quantityUnit: measured.unit }
+      : {}),
+    ...(measured?.fullTank ? { isFullTank: 1 } : {}),
   };
 
   if (existing) {

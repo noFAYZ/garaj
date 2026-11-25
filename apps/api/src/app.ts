@@ -41,6 +41,7 @@ import { mileageRoutes } from './modules/events/http/routes/mileage.routes';
 import { activityRoutes } from './modules/activity/http/routes/activity.routes';
 import { photoRoutes } from './modules/photos/http/routes/photo.routes';
 import { maintenanceRoutes } from './modules/maintenance/http/routes/maintenance.routes';
+import { partRoutes } from './modules/parts/http/routes/part.routes';
 import { expenseRoutes } from './modules/expenses/http/routes/expense.routes';
 import {
   documentRoutes,
@@ -103,7 +104,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     genReqId: () => newId(),
     // Behind a load balancer the socket address is the balancer's; the rate limiter and
     // audit log both need the real client, which arrives in X-Forwarded-For.
-    trustProxy: isProduction(config),
+    // Only the configured hops (hop 0 is the socket): `true` would believe any address a caller
+    // writes in the header.
+    trustProxy: isProduction(config)
+      ? (_address: string, hop: number) => hop < config.TRUST_PROXY_HOPS
+      : false,
     // Fastify's default 100 is generous for JSON but not for a base64 payload; documents
     // and photos never come through here, they go straight to object storage.
     bodyLimit: 1_048_576,
@@ -154,8 +159,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
    * is the difference a phone on one bar of signal feels. Brotli where the client offers it (at the
    * plugin's fast quality, not the slow default), gzip otherwise; anything under 1 KB, and types
    * that are already compressed (images, PDFs), go as they are.
+   *
+   * Not on Render (it sets `RENDER`): its load balancer already compresses every response, so
+   * doing it here too only spent the free plan's 0.1 CPU on work that was then done again.
    */
-  await app.register(compress);
+  if (!process.env.RENDER) await app.register(compress);
   await app.register(swagger);
   await app.register(storagePlugin, { storage: options.storage });
   await app.register(aiPlugin, { ai: options.ai });
@@ -179,6 +187,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       await api.register(activityRoutes, { prefix: '/vehicles' });
       await api.register(photoRoutes, { prefix: '/vehicles' });
       await api.register(maintenanceRoutes, { prefix: '/vehicles' });
+      await api.register(partRoutes, { prefix: '/vehicles' });
       await api.register(expenseRoutes, { prefix: '/vehicles' });
       await api.register(documentRoutes, { prefix: '/vehicles' });
       await api.register(documentSummaryRoutes, { prefix: '/documents' });

@@ -25,6 +25,7 @@ import {
   type PressableProps,
   type StyleProp,
   type TextStyle,
+  type ViewInstance,
   type ViewStyle,
 } from 'react-native';
 import Svg, {
@@ -147,7 +148,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
  * `forwardRef` because expo-router's `<Link asChild>` hands its child a ref.
  */
 export const PressableScale = forwardRef<
-  View,
+  ViewInstance,
   Omit<PressableProps, 'style'> & { style?: StyleProp<ViewStyle>; scaleTo?: number }
 >(function PressableScale({ style, scaleTo = 0.97, onPressIn, onPressOut, ...props }, ref) {
   const reduce = useReduceMotion();
@@ -731,7 +732,9 @@ export function Gauge({
   const every = marks && marks.length > 1 ? 40 / (marks.length - 1) : 10;
   // On the 200-unit box: a bare dial is drawn at a fifth of the size, so its lines are heavier.
   const weight = bare ? 24 : 5;
-  const turn = progress.interpolate({
+  // ponytail: RN 0.88's Value/Interpolation interpolate() overloads don't unify; same method at runtime.
+  const dial = progress as Animated.Value;
+  const turn = dial.interpolate({
     inputRange: [0, 1],
     outputRange: [`${GAUGE_START}deg`, `${GAUGE_START + GAUGE_SWEEP}deg`],
     extrapolate: 'clamp',
@@ -803,7 +806,7 @@ export function Gauge({
             strokeWidth={weight}
             strokeLinecap="round"
             strokeDasharray={`${GAUGE_LENGTH} ${GAUGE_LENGTH}`}
-            strokeDashoffset={progress.interpolate({
+            strokeDashoffset={dial.interpolate({
               inputRange: [0, 1],
               outputRange: [GAUGE_LENGTH, 0],
               extrapolate: 'clamp',
@@ -939,6 +942,8 @@ export const haptic = {
   selection: () => void Haptics.selectionAsync().catch(() => undefined),
   /** A physical-feeling press: the key going down, a sheet opening. */
   light: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined),
+  /** Weight leaving: the launch screen's tyre driving off. */
+  medium: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined),
   /** Something was saved. */
   success: () =>
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined),
@@ -951,3 +956,16 @@ const styles = StyleSheet.create({
   odometer: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start' },
   gaugeReadout: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
 });
+
+/**
+ * The time, kept current: a clock on the page re-renders every `every` ms (half a minute by
+ * default — a greeting and a dash need nothing finer), and stops when the page unmounts.
+ */
+export function useNow(every = 30_000) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), every);
+    return () => clearInterval(timer);
+  }, [every]);
+  return now;
+}

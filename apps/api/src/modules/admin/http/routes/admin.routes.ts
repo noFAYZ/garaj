@@ -46,7 +46,7 @@ import { Nullable, UpdateUserProfile } from '@vehicle-os/contracts';
 import { schema } from '@vehicle-os/database';
 import { PLAN_TIERS, VEHICLE_STATUSES, VEHICLE_TYPES } from '@vehicle-os/domain';
 import { recordAudit } from '../../../../infrastructure/audit';
-import { onlineCount } from '../../../../plugins/actor-context';
+import { forgetMemberships, onlineCount } from '../../../../plugins/actor-context';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../../../infrastructure/errors';
 
 /** A subscription the provider is still billing, or retrying. */
@@ -483,11 +483,18 @@ export const adminRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         const [paying] = await db
           .select({
             status: subscriptions.status,
+            provider: subscriptions.provider,
             stripeSubscriptionId: subscriptions.stripeSubscriptionId,
           })
           .from(subscriptions)
           .where(eq(subscriptions.userId, id))
           .limit(1);
+        if (paying?.provider === 'REVENUECAT' && LIVE_STATUSES.has(paying.status)) {
+          throw new ConflictError(
+            'PAID_THROUGH_STORE',
+            'This person pays through a phone app store. It is changed or refunded there (or in RevenueCat), not here.',
+          );
+        }
         if (paying?.stripeSubscriptionId && LIVE_STATUSES.has(paying.status)) {
           throw new ConflictError(
             'PAID_THROUGH_STRIPE',
@@ -592,6 +599,7 @@ export const adminRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         await recordAudit(tx, audit(request, 'user.deleted', 'user', id, { email: account.email }));
         await tx.delete(users).where(eq(users.id, id));
       });
+      forgetMemberships();
       return reply.status(204).send();
     },
   );

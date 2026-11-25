@@ -34,15 +34,15 @@ type TriggerMode = 'click' | 'hover';
 // the liquid neck balloon past the final panel edges.
 const GOO_OPEN_SPRING = {
   type: 'spring',
-  visualDuration: 0.24,
-  bounce: 0.15,
+  visualDuration: 0.05,
+  bounce: 0.1,
 } as const;
 const GOO_CLOSE_SPRING = {
   type: 'spring',
-  visualDuration: 0.16,
-  bounce: 0.15,
+  visualDuration: 0.03,
+  bounce: 0,
 } as const;
-const HOVER_CLOSE_DELAY = 120;
+const HOVER_CLOSE_DELAY = 20;
 const CIRCLE_KAPPA = 0.5523;
 
 // `onPointerEnter`/`onPointerLeave` rather than the mouse pair: a tap fires

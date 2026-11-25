@@ -7,6 +7,10 @@
  */
 
 import type {
+  RecordParts,
+  UpdatePart,
+  VehiclePart,
+  VehicleParts,
   ApiKey,
   CreateApiKey,
   CreatedApiKey,
@@ -190,7 +194,10 @@ export function createApiClient(options: ClientOptions) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await read(await doFetch(url, { ...init, signal: controller.signal }));
+      // Cast: on React Native, Expo's global types bring Node's AbortSignal alongside RN's own,
+      // and `fetch` is typed with the other one. They are the same object at runtime.
+      const signal = controller.signal as RequestInit['signal'];
+      return await read(await doFetch(url, { ...init, signal }));
     } catch (error) {
       if (controller.signal.aborted) throw new RequestTimeoutError();
       throw error;
@@ -365,6 +372,19 @@ export function createApiClient(options: ClientOptions) {
         request<MileageReport>('GET', `/vehicles/${vehicleId}/mileage-report`, undefined, query),
       mileageReportCsv: (vehicleId: string, query: { from: string; to: string }) =>
         download(`/vehicles/${vehicleId}/mileage-report`, { ...query, format: 'csv' }),
+    },
+
+    /** Parts and fluids: usually written with an entry (`events.create`'s `parts`). */
+    parts: {
+      list: (vehicleId: string) => request<VehicleParts>('GET', `/vehicles/${vehicleId}/parts`),
+      /** What is fitted now without an entry, or lines added to one (`eventId`). */
+      record: (vehicleId: string, body: RecordParts) =>
+        request<{ data: VehiclePart[] }>('POST', `/vehicles/${vehicleId}/parts`, body),
+      /** The whole line as it should now read: what is left out is cleared. */
+      update: (vehicleId: string, partId: string, body: UpdatePart) =>
+        request<VehiclePart>('PUT', `/vehicles/${vehicleId}/parts/${partId}`, body),
+      remove: (vehicleId: string, partId: string) =>
+        request<void>('DELETE', `/vehicles/${vehicleId}/parts/${partId}`),
     },
 
     /**

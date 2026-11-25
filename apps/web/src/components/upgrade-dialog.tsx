@@ -628,7 +628,7 @@ function PaymentSeal({ state }: { state: SealState }) {
       </svg>
       <span
         className={cn(
-          'relative grid size-16 place-items-center rounded-full transition-colors duration-500',
+          'relative grid size-16 place-items-center rounded-full transition-colors duration-250',
           done ? 'seal-disk bg-success-soft text-success' : 'bg-card',
         )}
       >

@@ -1,4 +1,4 @@
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
 import { Image, type ImageProps } from 'expo-image';
 import { useState, type ReactNode } from 'react';
 
@@ -10,23 +10,30 @@ import { useState, type ReactNode } from 'react';
 const lastRefresh = new Map<string, number>();
 const REFRESH_EVERY_MS = 60_000;
 
+/**
+ * The answers that carry signed links: the vehicle list and each vehicle (their cover photos),
+ * photos, documents and a single entry. Not the reports — a dozen requests of sums with no
+ * picture in them, which every broken image used to refetch.
+ */
+function carriesLinks({ queryKey: [root, id, section, part] }: Query): boolean {
+  if (root !== 'vehicles') return false;
+  if (typeof id !== 'string' || section === undefined) return true;
+  if (section === 'photos' || section === 'documents') return true;
+  return section === 'events' && typeof part === 'string' && part !== 'readings';
+}
+
 /*
- * Fresh links, asked for once per burst. Links last five minutes and the cache restored on launch
- * is up to a day old, so a cold start can find a whole screen of photos expired at once — and each
- * one asking for its own refetch restarted every vehicle query once per photo. Failures inside
- * the same quarter-second share one refetch, and it lets requests already on their way finish
+ * Fresh links, asked for once per burst. Links last an hour and the cache restored on launch is up
+ * to a day old, so a cold start can find a whole screen of photos expired at once — and each one
+ * asking for its own refetch restarted the vehicle queries once per photo. Failures inside the
+ * same quarter-second share one refetch, and it lets requests already on their way finish
  * (`cancelRefetch: false`) rather than throwing them away to start again.
  */
-const asking = new Map<string, readonly unknown[]>();
 let askTimer: ReturnType<typeof setTimeout> | null = null;
-function askForFreshLinks(queryClient: QueryClient, queryKey: readonly unknown[]) {
-  asking.set(JSON.stringify(queryKey), queryKey);
+function askForFreshLinks(queryClient: QueryClient) {
   askTimer ??= setTimeout(() => {
     askTimer = null;
-    for (const key of asking.values()) {
-      void queryClient.invalidateQueries({ queryKey: key }, { cancelRefetch: false });
-    }
-    asking.clear();
+    void queryClient.invalidateQueries({ predicate: carriesLinks }, { cancelRefetch: false });
   }, 250);
 }
 
@@ -39,9 +46,9 @@ function askForFreshLinks(queryClient: QueryClient, queryKey: readonly unknown[]
  *   arrived under a new URL each time, and the image cache is keyed by URL. `cacheKey` keys it by
  *   what the picture *is* instead, so a photo downloads once and is read from disk after that.
  * - **An expired link stayed broken.** The query cache is restored from disk on launch, links and
- *   all, and a link past its life fails. Here a failure asks for fresh links (the vehicle queries
- *   are refetched) instead of settling on the fallback; the new URL arrives with the same
- *   `cacheKey` and loads.
+ *   all, and a link past its life fails. Here a failure asks for fresh links (the queries that
+ *   carry links are refetched) instead of settling on the fallback; the new URL arrives with the
+ *   same `cacheKey` and loads.
  *
  * Until it loads, or when it cannot, `fallback` holds the space.
  */
@@ -49,15 +56,12 @@ export function RemoteImage({
   uri,
   cacheKey,
   fallback = null,
-  refreshKey = ['vehicles'],
   ...props
 }: Omit<ImageProps, 'source'> & {
   uri: string | null | undefined;
   /** Stable for the picture itself, e.g. `photo:<id>:cutout`. */
   cacheKey: string;
   fallback?: ReactNode;
-  /** The query whose refetch mints fresh links. */
-  refreshKey?: readonly unknown[];
 }) {
   const queryClient = useQueryClient();
   const [failedUri, setFailedUri] = useState<string | null>(null);
@@ -77,7 +81,7 @@ export function RemoteImage({
         const last = lastRefresh.get(cacheKey) ?? 0;
         if (Date.now() - last > REFRESH_EVERY_MS) {
           lastRefresh.set(cacheKey, Date.now());
-          askForFreshLinks(queryClient, refreshKey);
+          askForFreshLinks(queryClient);
         }
         props.onError?.(event);
       }}

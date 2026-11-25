@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Fragment, useRef, type ReactNode } from 'react';
-import { Alert, Animated, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Fragment, useRef, useState, type ReactNode } from 'react';
+import { ScrollView, Share, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, Line, RadialGradient, Rect, Stop } from 'react-native-svg';
 import type {
@@ -21,30 +21,35 @@ import {
 } from '@vehicle-os/api-client/react';
 import type { EventType } from '@vehicle-os/domain';
 import { odometerDeltas } from '@vehicle-os/ui';
+import { EntryParts } from '@/components/parts-kit';
 import { photoKey, RemoteImage } from '@/components/remote-image';
-import { groupSurface } from '@/components/settings-kit';
+import { HeaderKey } from '@/components/settings-kit';
 import { fillQuantity, KindBadge, KindDisc, kindHue, splitCents } from '@/components/timeline';
 import { api } from '@/lib/api';
 import { fileParams, pickPhoto } from '@/lib/file-picker';
 import { DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
+import { Segmented } from '@/lib/instrument';
 import { economy, sincePrevious, spendWindow, unitPrice } from '@/lib/ledger';
-import { haptic, Odometer, Pop, PressableScale, Rise, useScrollY } from '@/lib/motion';
-import { cardSurface, figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { haptic, Odometer, Pop, PressableScale, Rise } from '@/lib/motion';
+import { cardSurface, figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Empty, Skeleton } from '@/lib/ui';
+import { dialog, FAILED } from '@/lib/dialog';
 
 /**
  * One entry, in full — drawn as a receipt is read: what it was and what it cost first, large, then
- * the facts it records on one sheet, then what only the whole record can say — how far and how long
- * since the last one of its kind, what that fill did per 100, and how this bill sits among the
- * others, as bars that open the entry each one is. The note, what is filed against it, and the way
- * to let it go close the page.
+ * the rest on tabs rather than one long page (user asked). Details: the facts it records, each with
+ * its icon, the note, and where it came from. Insights: what only the whole record can say — how
+ * far and how long since the last one of its kind, what that fill did per 100, and how this bill
+ * sits among the others, as bars that open the entry each one is. Files: what is filed against it.
+ * The stack's own header carries the way back, share and delete, as the document screen's does.
  */
 
-/** The bar the keys float on, below the status bar. */
-const BAR = 52;
-const DISC = 76;
-/** How far the kind's light reaches round the disc. */
-const HALO = 196;
+const DISC = 64;
+/**
+ * How far the kind's light reaches round the disc. It is spent by 85% of the way out, and the hero
+ * stands far enough under the header for that to fit: the page's top would cut it otherwise.
+ */
+const HALO = 140;
 /** How tall the spend bars stand at their dearest. */
 const BARS = 64;
 
@@ -73,6 +78,9 @@ const NOUN: Partial<Record<EventType, string>> = {
 };
 const noun = (kind: EventType) => NOUN[kind] ?? `${humanise(kind).toLowerCase()} entry`;
 
+type IconName = keyof typeof Ionicons.glyphMap;
+type Tab = 'details' | 'insights' | 'files';
+
 /**
  * The row that opened this screen is already on the phone, in one of the logbook's pages: drawn
  * from there at once, then settled by the entry's own fetch — no blank screen between a tap and
@@ -96,8 +104,8 @@ export default function EventScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
-  const scroller = useRef<ScrollView>(null);
-  const { y, onScroll } = useScrollY();
+  const scroller = useRef<ScrollViewInstance>(null);
+  const [tab, setTab] = useState<Tab>('details');
 
   const event = useQuery({
     ...eventQuery(api, vehicleId, id),
@@ -131,6 +139,14 @@ export default function EventScreen() {
   const hue = kind ? kindHue(kind) : undefined;
   const tint = hue ? theme[hue] : null;
   const delta = data ? (odometerDeltas(logbook.data?.done.data ?? []).get(data.id) ?? null) : null;
+  const same = sameKind.data?.done.data ?? [];
+  // Insights only when the record can say something: a last one of its kind, or bills to compare.
+  const insightful =
+    data !== undefined &&
+    Boolean(sincePrevious(data, same) || (data.cost && spendWindow(data, same)));
+  const fileCount = attachedPhotos.length + attachedDocuments.length;
+  // A tab the entry turned to cannot show falls back to its details.
+  const shown: Tab = tab === 'insights' && !insightful ? 'details' : tab;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.event(vehicleId, id) });
@@ -147,20 +163,25 @@ export default function EventScreen() {
         });
       }
     } catch (error) {
-      Alert.alert('Could not open photos', (error as Error).message);
+      dialog('Could not open photos', (error as Error).message, undefined, FAILED);
     }
   };
 
   const addPhoto = () =>
-    Alert.alert('Add a photo', undefined, [
-      { text: 'Take a photo', onPress: () => void attach('camera') },
-      { text: 'Choose from library', onPress: () => void attach('library') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    dialog(
+      'Add a photo',
+      undefined,
+      [
+        { text: 'Take a photo', onPress: () => void attach('camera') },
+        { text: 'Choose from library', onPress: () => void attach('library') },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { icon: 'camera-outline' },
+    );
 
   const remove = () => {
     haptic.selection();
-    Alert.alert(`Delete "${title || 'this entry'}"?`, 'Its cost leaves the totals too.', [
+    dialog(`Delete "${title || 'this entry'}"?`, 'Its cost leaves the totals too.', [
       { text: 'Keep it', style: 'cancel' },
       {
         text: 'Delete',
@@ -174,7 +195,7 @@ export default function EventScreen() {
               router.back();
             })
             .catch((error: unknown) =>
-              Alert.alert('Could not delete it', (error as Error).message),
+              dialog('Could not delete it', (error as Error).message, undefined, FAILED),
             );
         },
       },
@@ -210,142 +231,96 @@ export default function EventScreen() {
     scroller.current?.scrollTo({ y: 0, animated: true });
   };
 
-  const top = insets.top + BAR;
-
   return (
-    <View style={{ flex: 1, backgroundColor: theme.background }}>
-      <Stack.Screen options={{ headerShown: false }} />
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+      {/*
+       * The app's header, as every pushed screen wears it: part of the page, not floating over it
+       * (user asked). No title — the hero names the entry; share and delete are its round keys.
+       */}
+      <Stack.Screen
+        options={{
+          title: '',
+          headerRight: () =>
+            data ? (
+              <>
+                <HeaderKey icon="share-outline" label="Share this entry" onPress={share} />
+                <HeaderKey
+                  icon="trash-outline"
+                  label="Delete this entry"
+                  color={theme.destructive}
+                  onPress={remove}
+                />
+              </>
+            ) : null,
+        }}
+      />
       {event.isError ? (
-        <View style={{ flex: 1, paddingTop: top }}>
-          <Empty title="Entry not found" description="It may have been deleted." />
-        </View>
+        <Empty title="Entry not found" description="It may have been deleted." />
       ) : (
-        <Animated.ScrollView
+        <ScrollView
           ref={scroller}
-          onScroll={onScroll}
-          scrollEventThrottle={16}
           contentContainerStyle={[
             styles.page,
-            {
-              paddingTop: top + spacing.xs,
-              paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xl,
-            },
+            { paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xl },
           ]}
         >
           {data ? (
             // Keyed, so turning to another entry plays its arrival again.
             <View key={data.id} style={styles.content}>
               <Hero event={data} title={title} glow={tint ?? theme.primary} />
-              <Facts event={data} delta={delta} />
-              <Context
-                event={data}
-                sameKind={sameKind.data?.done.data ?? []}
-                tint={tint ?? theme.foreground}
-                onOpen={open}
-              />
-              <Note event={data} tint={tint ?? theme.borderStrong} />
-              <Attachments
-                photos={attachedPhotos}
-                documents={attachedDocuments}
-                vehicleId={vehicleId}
-                onAdd={addPhoto}
-              />
-              <Foot event={data} vehicleName={vehicle.data?.displayName} onDelete={remove} />
+              <Rise index={3}>
+                <Segmented
+                  small
+                  value={shown}
+                  options={[
+                    { value: 'details', label: 'Details' },
+                    ...(insightful ? [{ value: 'insights' as const, label: 'Insights' }] : []),
+                    {
+                      value: 'files',
+                      label: fileCount > 0 ? `Files · ${fileCount}` : 'Files',
+                      said: `Files, ${fileCount}`,
+                    },
+                  ]}
+                  onChange={setTab}
+                />
+              </Rise>
+              {/* Keyed by the tab too, so each one arrives as the page did. */}
+              <View key={shown} style={styles.content}>
+                {shown === 'details' ? (
+                  <>
+                    <Facts event={data} delta={delta} />
+                    <Note event={data} tint={tint ?? theme.borderStrong} />
+                    <EntryParts
+                      vehicleId={vehicleId}
+                      eventId={data.id}
+                      index={5}
+                      label={<Label icon="construct-outline">Parts & fluids</Label>}
+                    />
+                    <Record event={data} vehicleName={vehicle.data?.displayName} />
+                  </>
+                ) : shown === 'insights' ? (
+                  <Context
+                    event={data}
+                    sameKind={same}
+                    tint={tint ?? theme.foreground}
+                    onOpen={open}
+                  />
+                ) : (
+                  <Attachments
+                    photos={attachedPhotos}
+                    documents={attachedDocuments}
+                    vehicleId={vehicleId}
+                    onAdd={addPhoto}
+                  />
+                )}
+              </View>
             </View>
           ) : (
             <Placeholder />
           )}
-        </Animated.ScrollView>
-      )}
-      <TopBar y={y} title={title} onShare={data ? share : undefined} />
-    </View>
-  );
-}
-
-/**
- * The keys over the page — back, and share — with a bar under them that only arrives once the
- * hero has scrolled away, the entry's name in it.
- */
-function TopBar({
-  y,
-  title,
-  onShare,
-}: {
-  y: Animated.Value;
-  title: string;
-  onShare: (() => void) | undefined;
-}) {
-  const theme = useTheme();
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const shown = y.interpolate({ inputRange: [90, 130], outputRange: [0, 1], extrapolate: 'clamp' });
-  return (
-    <View pointerEvents="box-none" style={[styles.bar, { paddingTop: insets.top }]}>
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            opacity: shown,
-            backgroundColor: theme.background,
-            borderBottomColor: theme.border,
-            borderBottomWidth: StyleSheet.hairlineWidth,
-          },
-        ]}
-      />
-      <Key
-        icon="arrow-back"
-        label="Back"
-        onPress={() => (router.canGoBack() ? router.back() : router.navigate('/'))}
-      />
-      <Animated.Text
-        numberOfLines={1}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={[
-          typeScale.label,
-          styles.barTitle,
-          {
-            color: theme.foreground,
-            opacity: shown,
-            transform: [
-              { translateY: shown.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) },
-            ],
-          },
-        ]}
-      >
-        {title}
-      </Animated.Text>
-      {onShare ? (
-        <Key icon="share-outline" label="Share this entry" onPress={onShare} />
-      ) : (
-        <View style={styles.key} />
+        </ScrollView>
       )}
     </View>
-  );
-}
-
-function Key({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  return (
-    <PressableScale
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      hitSlop={6}
-      scaleTo={0.9}
-      style={[styles.key, groupSurface(theme)]}
-    >
-      <Ionicons name={icon} size={19} color={theme.foreground} />
-    </PressableScale>
   );
 }
 
@@ -367,8 +342,8 @@ function Halo({ color }: { color: string }) {
       <Defs>
         <RadialGradient id="entry-halo" cx="50%" cy="50%" r="50%">
           <Stop offset="0" stopColor={color} stopOpacity={theme.dark ? 0.34 : 0.26} />
-          <Stop offset="0.5" stopColor={color} stopOpacity={theme.dark ? 0.1 : 0.08} />
-          <Stop offset="1" stopColor={color} stopOpacity={0} />
+          <Stop offset="0.45" stopColor={color} stopOpacity={theme.dark ? 0.1 : 0.08} />
+          <Stop offset="0.85" stopColor={color} stopOpacity={0} />
         </RadialGradient>
       </Defs>
       <Rect width={HALO} height={HALO} fill="url(#entry-halo)" />
@@ -423,6 +398,7 @@ function Hero({ event, title, glow }: { event: VehicleEvent; title: string; glow
       </Rise>
       <Rise index={2} style={styles.heroMeta}>
         <KindBadge eventType={event.eventType} />
+        <Ionicons name="calendar-outline" size={12} color={theme.mutedForeground} />
         <Text style={[figure, styles.heroDate, { color: theme.mutedForeground }]}>{day}</Text>
       </Rise>
     </View>
@@ -431,6 +407,7 @@ function Hero({ event, title, glow }: { event: VehicleEvent; title: string; glow
 
 type Fact = {
   key: string;
+  icon: IconName;
   label: string;
   /** What a screen reader says for the value. */
   said: string;
@@ -440,9 +417,9 @@ type Fact = {
 };
 
 /**
- * Everything else the entry records, as a spec sheet: two columns, hairlines between, a small
- * tracked label over each value — the odometer on its drums, what went in and what a litre of it
- * cost, where, the engine's hours, a trip's purpose and claim. Only what is there is drawn.
+ * Everything else the entry records, as a spec sheet: two columns, hairlines between, its icon and
+ * a small tracked label over each value — the odometer on its drums, what went in and what a litre
+ * of it cost, where, the engine's hours, a trip's purpose and claim. Only what is there is drawn.
  */
 function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) {
   const theme = useTheme();
@@ -474,6 +451,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (event.odometer !== null) {
     facts.push({
       key: 'odometer',
+      icon: 'speedometer-outline',
       label: 'Odometer',
       said: formatDistance(event.odometer, event.odometerUnit),
       value: (
@@ -496,6 +474,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (event.provider) {
     facts.push({
       key: 'where',
+      icon: 'location-outline',
       label: 'Where',
       said: event.provider,
       value: value(event.provider, false),
@@ -504,6 +483,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (quantity) {
     facts.push({
       key: 'quantity',
+      icon: event.eventType === 'CHARGE' ? 'flash-outline' : 'water-outline',
       label: event.eventType === 'CHARGE' ? 'Charged' : 'Filled',
       said: quantity,
       value: value(quantity),
@@ -512,6 +492,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (price) {
     facts.push({
       key: 'price',
+      icon: 'pricetag-outline',
       label: `Per ${price.per}`,
       said: `${formatMoney(price.price)} per ${price.per}`,
       value: money(price.price),
@@ -520,6 +501,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (event.engineHours !== null) {
     facts.push({
       key: 'hours',
+      icon: 'time-outline',
       label: 'Engine hours',
       said: `${event.engineHours.toLocaleString()} hours`,
       value: value(`${event.engineHours.toLocaleString()} h`),
@@ -528,6 +510,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (event.trip) {
     facts.push({
       key: 'purpose',
+      icon: 'briefcase-outline',
       label: 'Purpose',
       said: humanise(event.trip.purpose),
       value: value(humanise(event.trip.purpose), false),
@@ -535,11 +518,18 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
     // The hero already says the distance when nothing was paid.
     if (event.cost) {
       const distance = formatDistance(event.trip.distance, event.odometerUnit);
-      facts.push({ key: 'distance', label: 'Distance', said: distance, value: value(distance) });
+      facts.push({
+        key: 'distance',
+        icon: 'navigate-outline',
+        label: 'Distance',
+        said: distance,
+        value: value(distance),
+      });
     }
     if (event.trip.deduction) {
       facts.push({
         key: 'deduction',
+        icon: 'receipt-outline',
         label: 'Deduction',
         said: formatMoney(event.trip.deduction),
         value: money(event.trip.deduction),
@@ -552,7 +542,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
   if (facts.length === 0) return null;
 
   return (
-    <Rise index={3} style={[styles.card, cardSurface(theme)]}>
+    <Rise index={4} style={[styles.card, cardSurface(theme)]}>
       <View style={styles.grid}>
         {facts.map((fact, place) => {
           // An odd one out takes the whole last row.
@@ -571,9 +561,7 @@ function Facts({ event, delta }: { event: VehicleEvent; delta: number | null }) 
                 place >= 2 ? styles.cellBelow : null,
               ]}
             >
-              <Text style={[styles.label, { color: theme.mutedForeground }]}>
-                {fact.label.toUpperCase()}
-              </Text>
+              <Label icon={fact.icon}>{fact.label}</Label>
               {fact.value}
               {fact.sub ? (
                 <Text style={[figure, styles.sub, { color: fact.sub.color }]}>{fact.sub.text}</Text>
@@ -609,24 +597,48 @@ function Context({
   const { quantity } = fillQuantity(event.eventType, event.description);
   const unit = event.odometerUnit === 'MI' ? 'mi' : 'km';
 
-  // Each figure says what it is by its unit; `said` is the same for a screen reader.
-  const stats: { value: string; unit: string; said: string }[] = [];
+  // Each figure under its icon and name, its unit beside it; `said` is the same for a screen reader.
+  const stats: { icon: IconName; label: string; value: string; unit: string; said: string }[] = [];
   if (since?.distance) {
     const driven = formatDistance(since.distance, event.odometerUnit);
-    stats.push({ value: driven.split(' ')[0]!, unit, said: `${driven} driven` });
+    stats.push({
+      icon: 'navigate-outline',
+      label: 'Driven',
+      value: driven.split(' ')[0]!,
+      unit,
+      said: `${driven} driven`,
+    });
   }
   if (since) {
     const days = since.days === 1 ? 'day' : 'days';
     stats.push(
       since.days === 0
-        ? { value: 'Same', unit: 'day', said: 'the same day' }
-        : { value: String(since.days), unit: days, said: `${since.days} ${days} apart` },
+        ? {
+            icon: 'calendar-outline',
+            label: 'Apart',
+            value: 'Same',
+            unit: 'day',
+            said: 'the same day',
+          }
+        : {
+            icon: 'calendar-outline',
+            label: 'Apart',
+            value: String(since.days),
+            unit: days,
+            said: `${since.days} ${days} apart`,
+          },
     );
   }
   const fill = economy(quantity, since?.distance ?? null, event.odometerUnit);
   if (fill) {
     const [figureText, ...rest] = fill.split(' ');
-    stats.push({ value: figureText!, unit: rest.join(' '), said: fill });
+    stats.push({
+      icon: 'leaf-outline',
+      label: 'Economy',
+      value: figureText!,
+      unit: rest.join(' '),
+      said: fill,
+    });
   }
   if (
     event.cost &&
@@ -637,7 +649,13 @@ function Context({
       amountMinor: event.cost.amountMinor / since.distance,
       currency: event.cost.currency,
     });
-    stats.push({ value: running, unit: `/${unit}`, said: `${running} per ${unit}` });
+    stats.push({
+      icon: 'cash-outline',
+      label: 'Cost',
+      value: running,
+      unit: `/${unit}`,
+      said: `${running} per ${unit}`,
+    });
   }
 
   if (stats.length === 0 && !spend) return null;
@@ -665,21 +683,35 @@ function Context({
             </Text>
             <Ionicons name="chevron-forward" size={13} color={theme.mutedForeground} />
           </PressableScale>
+          {/* Side by side while they fit; four go two by two. */}
           <View style={styles.stats}>
-            {stats.map((stat, place) => (
-              <Fragment key={stat.said}>
-                {place > 0 ? (
-                  <View style={[styles.statRule, { backgroundColor: theme.border }]} />
-                ) : null}
-                <View accessible accessibilityLabel={stat.said} style={styles.statLine}>
-                  <Text style={[figure, styles.statValue, { color: theme.foreground }]}>
+            {stats.map((stat) => (
+              <View
+                key={stat.said}
+                accessible
+                accessibilityLabel={stat.said}
+                style={[
+                  styles.stat,
+                  { backgroundColor: theme.muted },
+                  stats.length === 4 ? styles.statHalf : null,
+                ]}
+              >
+                <Label icon={stat.icon}>{stat.label}</Label>
+                <View style={styles.statLine}>
+                  <Text
+                    numberOfLines={1}
+                    style={[figure, styles.statValue, { color: theme.foreground }]}
+                  >
                     {stat.value}
                   </Text>
-                  <Text style={[styles.statUnit, { color: theme.mutedForeground }]}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.statUnit, { color: theme.mutedForeground }]}
+                  >
                     {stat.unit}
                   </Text>
                 </View>
-              </Fragment>
+              </View>
             ))}
           </View>
         </View>
@@ -827,17 +859,17 @@ function Bars({
   );
 }
 
-/** The note, as a quote: a rule in the kind's colour and the words beside it. */
+/** The note, on a card of its own: a rule in the kind's colour and the words beside it. */
 function Note({ event, tint }: { event: VehicleEvent; tint: string }) {
   const theme = useTheme();
   // A fill's quantity is a fact above; the note is what is left of it.
   const { rest } = fillQuantity(event.eventType, event.description);
   if (!rest) return null;
   return (
-    <Rise index={5} style={styles.note}>
+    <Rise index={5} style={[styles.card, styles.note, cardSurface(theme)]}>
       <View style={[styles.noteRule, { backgroundColor: tint }]} />
-      <View style={{ flex: 1, gap: 4 }}>
-        <Text style={[styles.label, { color: theme.mutedForeground }]}>NOTE</Text>
+      <View style={{ flex: 1, gap: 6 }}>
+        <Label icon="reader-outline">Note</Label>
         <Text style={[typeScale.body, { color: theme.foreground }]}>{rest}</Text>
       </View>
     </Rise>
@@ -864,7 +896,7 @@ function Attachments({
 
   if (count === 0) {
     return (
-      <Rise index={6}>
+      <Rise index={4}>
         <PressableScale
           onPress={onAdd}
           accessibilityRole="button"
@@ -883,11 +915,8 @@ function Attachments({
   }
 
   return (
-    <Rise index={6} style={{ gap: spacing.sm }}>
-      <View style={styles.sectionHead}>
-        <Text style={[styles.halfTitle, { color: theme.foreground }]}>Attachments</Text>
-        <Text style={[figure, styles.halfAside, { color: theme.mutedForeground }]}>{count}</Text>
-      </View>
+    <Rise index={4} style={{ gap: spacing.md }}>
+      {/* The tab already says how many: the photos as a rail, the way to add one at its end. */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -954,40 +983,60 @@ function DocumentLine({ document, vehicleId }: { document: VehicleDocument; vehi
   );
 }
 
-/** Where the entry came from, quietly, and the way to let it go. */
-function Foot({
-  event,
-  vehicleName,
-  onDelete,
-}: {
-  event: VehicleEvent;
-  vehicleName: string | undefined;
-  onDelete: () => void;
-}) {
+/**
+ * Where the entry belongs and came from, as rows: the vehicle, the day it was logged, and who
+ * logged it when it was not typed in by hand. Delete is the header's.
+ */
+function Record({ event, vehicleName }: { event: VehicleEvent; vehicleName: string | undefined }) {
   const theme = useTheme();
-  const by = /^ai$/i.test(event.source)
-    ? 'by the assistant'
-    : event.source === 'IMPORT'
-      ? 'imported'
-      : null;
+  const rows: { icon: IconName; label: string; value: string }[] = [
+    ...(vehicleName
+      ? [{ icon: 'car-outline' as const, label: 'Vehicle', value: vehicleName }]
+      : []),
+    {
+      icon: 'create-outline',
+      label: 'Logged',
+      value: SHORT_DATE.format(new Date(event.createdAt)),
+    },
+    ...(/^ai$/i.test(event.source)
+      ? [{ icon: 'sparkles-outline' as const, label: 'Added by', value: 'Assistant' }]
+      : event.source === 'IMPORT'
+        ? [{ icon: 'cloud-download-outline' as const, label: 'Source', value: 'Imported' }]
+        : []),
+  ];
   return (
-    <Rise index={7} style={styles.foot}>
-      <Text style={[typeScale.caption, styles.logged, { color: theme.mutedForeground }]}>
-        {[vehicleName, `Logged ${SHORT_DATE.format(new Date(event.createdAt))}`, by]
-          .filter(Boolean)
-          .join(' · ')}
-      </Text>
-      <PressableScale
-        onPress={onDelete}
-        accessibilityRole="button"
-        accessibilityLabel="Delete this entry"
-        scaleTo={0.96}
-        style={[styles.delete, { backgroundColor: theme.destructiveSoft }]}
-      >
-        <Ionicons name="trash-outline" size={15} color={theme.destructive} />
-        <Text style={[typeScale.label, { color: theme.destructive }]}>Delete entry</Text>
-      </PressableScale>
+    <Rise index={6} style={[styles.card, cardSurface(theme)]}>
+      {rows.map((row, place) => (
+        <Fragment key={row.label}>
+          {place > 0 ? <View style={[styles.rule, { backgroundColor: theme.border }]} /> : null}
+          <View accessible accessibilityLabel={`${row.label}, ${row.value}`} style={styles.line}>
+            <Ionicons name={row.icon} size={17} color={theme.mutedForeground} />
+            <Text style={[typeScale.label, styles.lineLabel, { color: theme.mutedForeground }]}>
+              {row.label}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={[typeScale.label, styles.lineValue, { color: theme.foreground }]}
+            >
+              {row.value}
+            </Text>
+          </View>
+        </Fragment>
+      ))}
     </Rise>
+  );
+}
+
+/** A small tracked name under its icon's lead, over a figure or a fact. */
+function Label({ icon, children }: { icon: IconName; children: string }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.labelRow}>
+      <Ionicons name={icon} size={12} color={theme.mutedForeground} />
+      <Text numberOfLines={1} style={[styles.label, { color: theme.mutedForeground }]}>
+        {children.toUpperCase()}
+      </Text>
+    </View>
   );
 }
 
@@ -1007,37 +1056,17 @@ function Placeholder() {
         </View>
         <Skeleton width={190} height={16} />
       </View>
-      <Skeleton width="100%" height={128} radius={radius.xl} />
+      <Skeleton width="100%" height={128} style={leaf('md')} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { paddingHorizontal: spacing.lg },
-  content: { gap: spacing.lg },
-  bar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: (BAR - 40) / 2,
-  },
-  barTitle: { flex: 1, textAlign: 'center' },
-  key: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  page: { paddingHorizontal: spacing.lg, paddingTop: spacing.xs },
+  content: { gap: spacing.md },
   disc: { width: DISC, height: DISC, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', top: (DISC - HALO) / 2, left: (DISC - HALO) / 2 },
-  hero: { alignItems: 'center', gap: 12, paddingTop: spacing.sm, paddingBottom: spacing.xs },
+  hero: { alignItems: 'center', gap: 10, paddingTop: spacing.xl, paddingBottom: spacing.xs },
   heroText: { alignItems: 'center', gap: 2 },
   title: {
     fontSize: 19,
@@ -1048,16 +1077,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
   },
   amount: { flexDirection: 'row', alignItems: 'baseline' },
-  whole: { fontSize: 40, lineHeight: 48, fontWeight: '600', letterSpacing: -1.4 },
-  cents: { fontSize: 22, lineHeight: 28, fontWeight: '600', letterSpacing: -0.4 },
-  heroMeta: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  whole: { fontSize: 36, lineHeight: 44, fontWeight: '600', letterSpacing: -1.2 },
+  cents: { fontSize: 20, lineHeight: 26, fontWeight: '600', letterSpacing: -0.4 },
+  heroMeta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   heroDate: { fontSize: 12, lineHeight: 16, fontWeight: '500', letterSpacing: -0.2 },
-  card: { borderRadius: radius.xl + 2 },
+  card: leaf('md'),
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   cell: { paddingHorizontal: 14, paddingVertical: 12, gap: 5 },
   cellRight: { borderLeftWidth: StyleSheet.hairlineWidth },
   cellBelow: { borderTopWidth: StyleSheet.hairlineWidth },
-  label: { fontSize: 7, lineHeight: 10, fontWeight: '700', letterSpacing: 0, opacity: 0.7 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  label: { flexShrink: 1, fontSize: 9.5, lineHeight: 12, fontWeight: '700', letterSpacing: 0.7 },
   factValue: { fontSize: 20, lineHeight: 23, fontWeight: '600', letterSpacing: -0.3 },
   factCents: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
   reading: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -1068,10 +1098,18 @@ const styles = StyleSheet.create({
   halfHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   halfTitle: { flex: 1, fontSize: 13, lineHeight: 17, fontWeight: '600' },
   halfAside: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
-  stats: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
-  statRule: { width: StyleSheet.hairlineWidth, height: 18 },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  // Equal tiles on the muted wash, as the dash's readings sit.
+  stat: { flexGrow: 1, flexBasis: 0, minWidth: 0, gap: 4, padding: 10, borderRadius: radius.lg },
+  statHalf: { flexBasis: '40%' },
   statLine: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
-  statValue: { fontSize: 20, lineHeight: 26, fontWeight: '600', letterSpacing: -0.4 },
+  statValue: {
+    flexShrink: 1,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '600',
+    letterSpacing: -0.4,
+  },
   statUnit: { flexShrink: 1, fontSize: 9, lineHeight: 11, fontWeight: '500', opacity: 0.75 },
   verdict: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4 },
   bars: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
@@ -1087,9 +1125,8 @@ const styles = StyleSheet.create({
   },
   axis: { flexDirection: 'row', justifyContent: 'space-between' },
   axisText: { fontSize: 10, lineHeight: 13, fontWeight: '500' },
-  note: { flexDirection: 'row', gap: 12, paddingHorizontal: 2 },
+  note: { flexDirection: 'row', gap: 12, padding: 14 },
   noteRule: { width: 2, borderRadius: 1 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
   attach: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1115,14 +1152,13 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
   },
-  foot: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.sm },
-  logged: { textAlign: 'center' },
-  delete: {
+  line: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    height: 40,
-    paddingHorizontal: spacing.lg,
-    borderRadius: 999,
+    gap: 10,
+    minHeight: 46,
+    paddingHorizontal: 14,
   },
+  lineLabel: { fontWeight: '500' },
+  lineValue: { flex: 1, textAlign: 'right' },
 });

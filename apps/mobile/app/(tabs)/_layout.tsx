@@ -1,14 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { Tabs, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { dashboardQuery } from '@vehicle-os/api-client/react';
 import { AddSheet } from '@/components/add-sheet';
 import { Dock, type DockAction, type DockItem } from '@/components/dock';
 import type { QuickAction } from '@/components/add-activity';
+import { useAddRequests, type AddRequest } from '@/lib/add-request';
 import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { haptic } from '@/lib/motion';
-import { useTheme } from '@/lib/theme';
+import { startStore } from '@/lib/store';
+import { useProfile } from '@/lib/vehicle-units';
 
 /**
  * Three places, one action.
@@ -28,15 +30,18 @@ const TABS: readonly DockItem[] = [
 ];
 
 export default function TabsLayout() {
-  const theme = useTheme();
-
+  // Signed in from here down: RevenueCat starts now, so an unfinished purchase gets finished.
+  const userId = useProfile().data?.id;
+  useEffect(() => {
+    if (userId) startStore(userId);
+  }, [userId]);
   return (
     <Tabs
       tabBar={(props) => <TabBar {...props} />}
       screenOptions={{
         // Each tab sets its title in the page, so there is no bar to float.
         headerShown: false,
-        sceneStyle: { backgroundColor: theme.background },
+        sceneStyle: { backgroundColor: 'transparent' },
         // A tab out of sight stops re-rendering — the garage's clock and carousel, a list a
         // sync just refreshed — and catches up in one render when it is chosen again.
         freezeOnBlur: true,
@@ -62,12 +67,12 @@ interface TabBarProps {
     readonly index: number;
     readonly routes: readonly { readonly key: string; readonly name: string }[];
   };
-  readonly navigation: {
-    navigate: (name: string) => void;
+  readonly emitter: {
     emit: (event: { type: 'tabPress'; target: string; canPreventDefault: true }) => {
-      defaultPrevented: boolean;
+      defaultPrevented?: boolean;
     };
   };
+  readonly navigateToTab: (routeKey: string) => void;
 }
 
 /**
@@ -79,12 +84,15 @@ interface TabBarProps {
  * Tasks carries the web's count — what is late or due today, red once anything is late — from the
  * dashboard the Garage tab already holds, so the bar asks for nothing of its own.
  */
-function TabBar({ state, navigation }: TabBarProps) {
+function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
   const router = useRouter();
   const [sheet, setSheet] = useState<{
     file: PickedFile | null;
     quick?: QuickAction;
+    request?: AddRequest;
   } | null>(null);
+  // Home's Up next and the lists' "add" open this drawer on its form.
+  useAddRequests((request) => setSheet({ file: null, request }));
   const activeName = state.routes[state.index]?.name ?? '';
   const attention = useQuery(dashboardQuery(api)).data?.attention;
   const late = attention?.overdueTasks ?? 0;
@@ -104,8 +112,8 @@ function TabBar({ state, navigation }: TabBarProps) {
   const go = (name: string) => {
     const route = state.routes.find((candidate) => candidate.name === name);
     if (!route) return;
-    const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-    if (!event.defaultPrevented) navigation.navigate(name);
+    const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+    if (!event.defaultPrevented) navigateToTab(route.key);
   };
 
   /*
@@ -141,7 +149,7 @@ function TabBar({ state, navigation }: TabBarProps) {
       emoji: '🗓️',
       label: 'Reminder',
       hint: 'Once, or every so often',
-      onPress: () => router.push('/add/planned'),
+      onPress: () => setSheet({ file: null, request: { mode: 'planned' } }),
     },
     {
       key: 'receipt',
@@ -191,6 +199,7 @@ function TabBar({ state, navigation }: TabBarProps) {
         <AddSheet
           initialFile={sheet.file}
           initialQuick={sheet.quick}
+          initialRequest={sheet.request ?? null}
           onClose={() => setSheet(null)}
         />
       ) : null}

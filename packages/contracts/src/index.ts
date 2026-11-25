@@ -21,3 +21,4 @@ export * from './dashboard';
 export * from './ai';
 export * from './transfer';
 export * from './api-keys';
+export * from './parts';

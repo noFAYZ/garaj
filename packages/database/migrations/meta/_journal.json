@@ -169,6 +169,27 @@
       "when": 1791049989059,
       "tag": "0023_vehicle_drivers",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795013165495,
+      "tag": "0024_billing_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795263721537,
+      "tag": "0025_vehicle_parts",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795265297706,
+      "tag": "0026_part_warranty",
+      "breakpoints": true
     }
   ]
 }

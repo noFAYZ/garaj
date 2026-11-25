@@ -69,6 +69,35 @@ describe('vehicle timeline', () => {
     expect(mirrored).toHaveLength(1);
   });
 
+  // The add forms put the litres at the head of a fill's note; spending has to count them.
+  it('gives a fill-up expense the litres its note leads with', async () => {
+    const id = newId();
+    const created = await post({
+      id,
+      eventType: 'FUEL',
+      title: 'Fuel',
+      description: '40 L · full tank',
+      occurredAt: iso('2026-06-02T10:00:00Z'),
+      costAmountMinor: 7_000,
+      costCurrency: 'USD',
+    });
+    expect(created.status).toBe(201);
+
+    const expenses = await as(context, alice).get(`/api/v1/vehicles/${vehicleId}/expenses`);
+    const fill = (
+      expenses.body as {
+        data: {
+          eventId: string | null;
+          quantity: string | null;
+          quantityUnit: string | null;
+          isFullTank: boolean | null;
+        }[];
+      }
+    ).data.find((expense) => expense.eventId === id);
+    expect(fill).toMatchObject({ quantityUnit: 'LITER', isFullTank: true });
+    expect(Number(fill?.quantity)).toBe(40);
+  });
+
   it('records an event and returns it with no warnings', async () => {
     const response = await post({
       eventType: 'MAINTENANCE',
