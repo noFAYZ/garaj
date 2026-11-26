@@ -41,6 +41,12 @@ export function useToneColors(tone: Tone) {
   }
 }
 
+/**
+ * A form field's label: the eyebrow a size down and barely tracked, so a panel of fields reads as
+ * its values rather than its captions. Every field in the add and edit forms wears it.
+ */
+export const formLabel: TextStyle = { fontSize: 10, lineHeight: 13, letterSpacing: 0.6 };
+
 /** The web's `text-label`: small, uppercase, tracked out. */
 export function Eyebrow({
   children,
@@ -189,12 +195,17 @@ export function Chip({
  * The web's navigation track: one rounded track on a resting card, and a copper-wash pill that
  * glides to the chosen side on the web nav's spring, so the move reads as a change of place.
  * `small` is the short one, for a track that sits beside another.
+ *
+ * `switch` is the same control as a switch rather than tabs: a recessed track and a solid copper
+ * knob that slides under the chosen side — for flipping what a form is (Done or Reminder), not for
+ * going somewhere. `quiet` is its second-rank twin, a raised white knob, for a choice inside it.
  */
 export function Segmented<T extends string>({
   value,
   options,
   onChange,
   small = false,
+  variant = 'track',
 }: {
   value: T;
   options: readonly {
@@ -206,10 +217,22 @@ export function Segmented<T extends string>({
   }[];
   onChange: (value: T) => void;
   small?: boolean;
+  variant?: 'track' | 'switch' | 'quiet';
 }) {
   const theme = useTheme();
   const reduce = useReduceMotion();
   const [width, setWidth] = useState(0);
+  const knob =
+    variant === 'switch'
+      ? theme.primary
+      : variant === 'quiet'
+        ? // Raised white by day; by night a step lighter than its track, or it sinks into it.
+          theme.dark
+          ? theme.borderStrong
+          : theme.cardRaised
+        : theme.primarySoft;
+  const lit =
+    variant === 'switch' ? theme.primaryForeground : variant === 'quiet' ? theme.foreground : null;
   const [x] = useState(() => new Animated.Value(0));
   const placed = useRef(false);
   const index = Math.max(
@@ -238,14 +261,21 @@ export function Segmented<T extends string>({
   return (
     <View
       onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)}
-      style={[styles.segmented, { backgroundColor: theme.card, borderColor: theme.hairline }]}
+      style={[
+        styles.segmented,
+        variant === 'track'
+          ? { backgroundColor: theme.card, borderColor: theme.hairline }
+          : { backgroundColor: theme.muted, borderColor: 'transparent' },
+      ]}
     >
       {slot ? (
         <Animated.View
           pointerEvents="none"
           style={[
             styles.thumb,
-            { width: slot, backgroundColor: theme.primarySoft, transform: [{ translateX: x }] },
+            // A shadow without elevation: Android stacks an elevated knob over the labels.
+            variant === 'track' ? null : styles.knob,
+            { width: slot, backgroundColor: knob, transform: [{ translateX: x }] },
           ]}
         />
       ) : null}
@@ -272,7 +302,7 @@ export function Segmented<T extends string>({
               <Ionicons
                 name={option.icon}
                 size={small ? 14 : 16}
-                color={selected ? theme.primary : theme.mutedForeground}
+                color={selected ? (lit ?? theme.primary) : theme.mutedForeground}
               />
             ) : null}
             <Text
@@ -280,7 +310,10 @@ export function Segmented<T extends string>({
               style={[
                 typeScale.label,
                 small ? styles.segmentSmallLabel : null,
-                { flexShrink: 1, color: selected ? theme.foreground : theme.mutedForeground },
+                {
+                  flexShrink: 1,
+                  color: selected ? (lit ?? theme.foreground) : theme.mutedForeground,
+                },
               ]}
             >
               {option.label}
@@ -370,7 +403,7 @@ export function PanelCell({
     return (
       <View style={[styles.cell, styles.inlineCell, { backgroundColor: theme.cardRaised }]}>
         <View style={{ flexShrink: 1, gap: 3 }}>
-          <Eyebrow>{label}</Eyebrow>
+          <Eyebrow style={formLabel}>{label}</Eyebrow>
           {noteNode}
         </View>
         <View style={{ flexShrink: 0, maxWidth: '62%' }}>{children}</View>
@@ -380,7 +413,7 @@ export function PanelCell({
 
   return (
     <View style={[styles.cell, { backgroundColor: theme.cardRaised }]}>
-      <Eyebrow>{label}</Eyebrow>
+      <Eyebrow style={formLabel}>{label}</Eyebrow>
       {children}
       {noteNode}
     </View>
@@ -459,7 +492,7 @@ export function FigureInput({ unit, ...props }: TextInputProps & { unit?: string
   return (
     <View style={styles.figureInput}>
       <TextInput
-        placeholderTextColor={theme.borderStrong}
+        placeholderTextColor={theme.placeholder}
         style={[
           figure,
           {
@@ -506,9 +539,9 @@ export function Headline({
           },
         ]}
       >
-        <Eyebrow>{label}</Eyebrow>
+        <Eyebrow style={formLabel}>{label}</Eyebrow>
         <TextInput
-          placeholderTextColor={theme.borderStrong}
+          placeholderTextColor={theme.placeholder}
           accessibilityLabel={label}
           accessibilityHint={error ?? note}
           maxLength={200}
@@ -769,6 +802,12 @@ const styles = StyleSheet.create({
     bottom: SEGMENT_PAD,
     left: SEGMENT_PAD,
     borderRadius: 999,
+  },
+  knob: {
+    shadowColor: '#000000',
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
   },
   segment: {
     flex: 1,

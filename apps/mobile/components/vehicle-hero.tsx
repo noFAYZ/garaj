@@ -38,7 +38,7 @@ import {
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
 import { Glyph } from '@/lib/instrument';
-import { pad, DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
+import { compactMoney, pad, DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { ease, Gauge, haptic, PressableScale, useIgnition, useReduceMotion } from '@/lib/motion';
 import { figure, lift, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
@@ -516,10 +516,11 @@ function Dash({
                 <Skeleton width={48} height={16} />
               ) : (
                 <DashValue muted={!spent} narrow={narrow}>
-                  {spent ? formatMoney(spent, true) : '—'}
+                  {spent ? spentFigure(spent) : '—'}
                 </DashValue>
               )}
-              {monthly && monthly.points.length > 1 ? (
+              {/* A small phone's tile has no room for both: the figure keeps it. */}
+              {monthly && monthly.points.length > 1 && !narrow ? (
                 <Spark points={monthly.points} month={thisMonth} />
               ) : null}
             </DashReading>
@@ -608,6 +609,17 @@ function RestingDial() {
  * The six months this one closes, as a column a month — this month in copper, the rest quiet —
  * rising in a wave from the oldest. How this month compares, before a figure is read.
  */
+/**
+ * The month's spend as its tile can hold it beside the spark: whole units while they are short
+ * ("$1,240"), the compact figure Home's dash uses once they are not ("PKR 48,250" is "PKR48k").
+ * ponytail: a length cut, not a measured one; six characters is what a third of a 360pt card
+ * holds next to the spark at a readable size.
+ */
+function spentFigure(spent: { amountMinor: number; currency: string }): string {
+  const whole = formatMoney(spent, true);
+  return whole.length > 6 ? compactMoney(spent.amountMinor, spent.currency) : whole;
+}
+
 function Spark({
   points,
   month,

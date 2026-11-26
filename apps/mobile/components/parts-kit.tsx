@@ -385,7 +385,7 @@ function WordCell({
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
-        placeholderTextColor={theme.borderStrong}
+        placeholderTextColor={theme.placeholder}
         accessibilityLabel={label}
         maxLength={label === 'Product' ? 120 : 80}
         autoCapitalize="words"

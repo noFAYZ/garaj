@@ -295,7 +295,7 @@ function Input({
       <Eyebrow>{label}</Eyebrow>
       <TextInput
         ref={inputRef}
-        placeholderTextColor={theme.borderStrong}
+        placeholderTextColor={theme.placeholder}
         accessibilityLabel={label}
         accessibilityHint={note}
         onFocus={() => setFocused(true)}

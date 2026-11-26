@@ -244,7 +244,7 @@ export default function AddDocumentScreen() {
               value={title}
               onChangeText={setTitle}
               placeholder={fallbackTitle}
-              placeholderTextColor={theme.borderStrong}
+              placeholderTextColor={theme.placeholder}
               maxLength={200}
               returnKeyType="done"
               accessibilityLabel="Title"

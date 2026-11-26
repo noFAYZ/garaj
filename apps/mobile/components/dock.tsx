@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
   Modal,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
+import { composite } from '@vehicle-os/ui';
 import { AddGlyph } from '@/components/add-sheet';
 import { Glyph, Icon, type IconName } from '@/lib/instrument';
 import { ease, haptic, PressableScale, spring, useReduceMotion } from '@/lib/motion';
@@ -81,6 +82,9 @@ const GUTTER = spacing.md;
 /** How far the wash stands in from its slot, and how wide it grows at most. */
 const WASH_INSET = 3;
 const WASH_MAX = 76;
+/** Each end of the wash: as wide as its widest corner, the middle stretched between them. */
+const CAP = LEAF.sm.wide;
+const NEEDLE = 16;
 /** Wider than a phone, the slab stops growing and sits centred. */
 const MAX_WIDTH = 520;
 /** The bar above the safe area: the slab and the air over it. */
@@ -246,8 +250,9 @@ export function Dock({
       return;
     }
     const goingRight = index > from;
-    const lead = { useNativeDriver: false, speed: 14, bounciness: 4 } as const;
-    const lag = { useNativeDriver: false, speed: 2, bounciness: 6 } as const;
+    // The UI thread's, so the wash still travels while the JS thread mounts the screen it leads to.
+    const lead = { useNativeDriver: true, speed: 14, bounciness: 4 } as const;
+    const lag = { useNativeDriver: true, speed: 2, bounciness: 6 } as const;
     const settle = Animated.parallel([
       Animated.spring(left, { toValue: l, ...(goingRight ? lag : lead) }),
       Animated.spring(right, { toValue: r, ...(goingRight ? lead : lag) }),
@@ -257,6 +262,36 @@ export function Dock({
     // `washAt` reads only the slab's width, the layout and the places' count, all listed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, width, centred, items.length, reduce, left, right]);
+
+  /*
+   * The wash from its two edges, in transforms only, which the native driver can move (`left` and
+   * `width` are layout, and kept it on the JS thread). A view stretched by `scaleX` would stretch
+   * its corners too, so each end is its own cap with the leaf's corners, and only the plain middle
+   * is stretched: one point wide, scaled about its centre to span from cap to cap. Made once, so a
+   * re-render mid-travel does not re-attach the native nodes.
+   */
+  const wash = useMemo(() => {
+    const mid = Animated.multiply(Animated.add(left, right), 0.5);
+    return {
+      start: { transform: [{ translateX: left }] },
+      end: { transform: [{ translateX: Animated.subtract(right, CAP) }] },
+      middle: {
+        transform: [
+          { translateX: Animated.subtract(mid, 0.5) },
+          {
+            scaleX: Animated.subtract(right, left).interpolate({
+              inputRange: [CAP, CAP + 1],
+              outputRange: [0, 1],
+              extrapolateLeft: 'clamp',
+            }),
+          },
+        ],
+      },
+      needle: { transform: [{ translateX: Animated.subtract(mid, NEEDLE / 2) }] },
+    };
+  }, [left, right]);
+  // Opaque (the soft copper over the slab), so where the pieces overlap there is no seam.
+  const washFill = composite(theme.primarySoft, theme.popover);
 
   const pressKey = () => {
     haptic.light();
@@ -358,19 +393,24 @@ export function Dock({
             accessibilityRole="tablist"
           >
             {width > 0 && index >= 0 ? (
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.wash,
-                  {
-                    left,
-                    width: Animated.subtract(right, left),
-                    backgroundColor: theme.primarySoft,
-                  },
-                ]}
-              >
-                <View style={[styles.needle, { backgroundColor: theme.primary }]} />
-              </Animated.View>
+              <>
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.washMiddle, { backgroundColor: washFill }, wash.middle]}
+                />
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.washStart, { backgroundColor: washFill }, wash.start]}
+                />
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.washEnd, { backgroundColor: washFill }, wash.end]}
+                />
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.needle, { backgroundColor: theme.primary }, wash.needle]}
+                />
+              </>
             ) : null}
             {centred ? (
               <>
@@ -522,6 +562,8 @@ function TabIcon({ item, focused }: { item: DockItem; focused: boolean }) {
 
 const CARD = 56;
 const CARD_GAP = 10;
+/** Room round a card in its slot for its shadow: a hardware layer clips to its view's bounds. */
+const CARD_PAD = 28;
 
 /**
  * The hand the key deals: each card flies out of the key and lands in a stack above it, nearest
@@ -554,9 +596,14 @@ function Fan({
   const { width: screenWidth } = useWindowDimensions();
   const [dim] = useState(() => new Animated.Value(reduce ? 1 : 0));
   const [deal] = useState(() => actions.map(() => new Animated.Value(reduce ? 1 : 0)));
+  const closing = useRef(false);
   const base = keyBottom + KEY + spacing.md;
 
-  useEffect(() => {
+  /*
+   * Dealt once the modal's window is up, not on mount: a slow phone takes a few frames to open
+   * that window, and a deal started on mount was half over (or done) before anything showed.
+   */
+  const dealIn = () => {
     if (reduce) return;
     Animated.parallel([
       Animated.timing(dim, { toValue: 1, duration: 200, easing: ease.out, useNativeDriver: true }),
@@ -567,10 +614,36 @@ function Fan({
         ),
       ),
     ]).start();
-  }, [dim, deal, reduce]);
+  };
 
-  /** Every card back into the key at once, then the hand is gone. */
+  // Each card's flight, made once: a re-render mid-deal would re-attach its native nodes.
+  const flight = useMemo(
+    () =>
+      deal.map((progress, index) => {
+        // From the key's centre to where this card lands.
+        const rise = base - keyBottom - KEY / 2 + index * (CARD + CARD_GAP) + CARD / 2;
+        const turn = centred ? (index % 2 === 0 ? -1 : 1) * (1 + index * 0.5) : -(index + 1) * 1.6;
+        return {
+          opacity: progress.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 1, 1] }),
+          transform: [
+            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [rise, 0] }) },
+            { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) },
+            {
+              rotate: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [`${(index % 2 === 0 ? 1 : -1) * 14}deg`, `${turn}deg`],
+              }),
+            },
+          ],
+        };
+      }),
+    [deal, base, keyBottom, centred],
+  );
+
+  /** Every card back into the key at once, then the hand is gone. Once: a second tap is ignored. */
   const fold = (then: () => void) => {
+    if (closing.current) return;
+    closing.current = true;
     if (reduce) return then();
     Animated.parallel([
       Animated.timing(dim, { toValue: 0, duration: 160, useNativeDriver: true }),
@@ -592,6 +665,7 @@ function Fan({
       visible
       transparent
       animationType="none"
+      onShow={dealIn}
       onRequestClose={() => fold(onClose)}
       statusBarTranslucent
       navigationBarTranslucent
@@ -608,42 +682,31 @@ function Fan({
       </Animated.View>
 
       {actions.map((action, index) => {
-        const progress = deal[index]!;
-        // From the key's centre to where this card lands.
-        const rise = base - keyBottom - KEY / 2 + index * (CARD + CARD_GAP) + CARD / 2;
-        const turn = centred ? (index % 2 === 0 ? -1 : 1) * (1 + index * 0.5) : -(index + 1) * 1.6;
+        // Held from the right: the card's right edge, where it turns from.
+        const right = screenWidth - keyX - KEY / 2 + index * 5;
         return (
           <Animated.View
             key={action.key}
             pointerEvents="box-none"
+            /*
+             * Drawn once into a texture that the flight only moves, scales and turns. Otherwise
+             * Android redraws every card each frame at its new size, emoji paths and all, which is
+             * what a slow phone could not keep up with. iOS composites layers like this already.
+             */
+            renderToHardwareTextureAndroid
             style={[
               styles.cardSlot,
               centred
                 ? styles.cardCentre
                 : {
-                    right: screenWidth - keyX - KEY / 2 + index * 5,
+                    right: right - CARD_PAD,
+                    paddingRight: CARD_PAD,
                     alignItems: 'flex-end',
-                    transformOrigin: 'right bottom',
+                    // The card's bottom-right corner, inside the slot's room for the shadow.
+                    transformOrigin: [screenWidth - right, CARD_PAD + CARD, 0],
                   },
-              {
-                bottom: base + index * (CARD + CARD_GAP),
-                opacity: progress.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 1, 1] }),
-                transform: [
-                  {
-                    translateY: progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [rise, 0],
-                    }),
-                  },
-                  { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) },
-                  {
-                    rotate: progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [`${(index % 2 === 0 ? 1 : -1) * 14}deg`, `${turn}deg`],
-                    }),
-                  },
-                ],
-              },
+              { bottom: base + index * (CARD + CARD_GAP) - CARD_PAD },
+              flight[index],
             ]}
           >
             <PressableScale
@@ -716,15 +779,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   half: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  wash: {
+  washMiddle: { position: 'absolute', top: 3, bottom: 3, left: 0, width: 1 },
+  washStart: {
     position: 'absolute',
     top: 3,
     bottom: 3,
-    alignItems: 'center',
-    ...leaf('sm'),
+    left: 0,
+    width: CAP,
+    borderTopLeftRadius: LEAF.sm.wide,
+    borderBottomLeftRadius: LEAF.sm.tight,
+    borderCurve: 'continuous',
+  },
+  washEnd: {
+    position: 'absolute',
+    top: 3,
+    bottom: 3,
+    left: 0,
+    width: CAP,
+    borderTopRightRadius: LEAF.sm.tight,
+    borderBottomRightRadius: LEAF.sm.wide,
+    borderCurve: 'continuous',
   },
   // The pointer on the wash's top edge: where you are, read like a gauge.
-  needle: { width: 16, height: 3, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 },
+  needle: {
+    position: 'absolute',
+    top: 3,
+    left: 0,
+    width: NEEDLE,
+    height: 3,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
+  },
   tab: {
     flex: 1,
     minWidth: 0,
@@ -762,7 +847,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 2,
   },
-  cardSlot: { position: 'absolute', left: 0 },
+  cardSlot: { position: 'absolute', left: 0, paddingVertical: CARD_PAD },
   cardCentre: { right: 0, alignItems: 'center' },
   card: {
     height: CARD,

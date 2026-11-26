@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -10,55 +11,71 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { DueItem } from '@vehicle-os/contracts';
+import { dashboardQuery } from '@vehicle-os/api-client/react';
+import { readDue } from '@/components/activity-feed';
 import {
   AddActivity,
+  DueRing,
   QUICK_ACTIONS,
   type ActivityMode,
   type QuickAction,
 } from '@/components/add-activity';
-import { ADD_ACTIONS, type AddOption, type AddTarget } from '@/components/add-mode';
+import type { AddTarget } from '@/components/add-mode';
 import { GrowCombo } from '@/components/grow-combo';
 import type { AddRequest } from '@/lib/add-request';
+import { api } from '@/lib/api';
 import { confirmDiscard } from '@/lib/discard';
 import { fileParams, pickPhoto, type PickedFile } from '@/lib/file-picker';
-import { Eyebrow } from '@/lib/instrument';
+import { Glyph } from '@/lib/instrument';
 import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
-import { leaf, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 import { DialogHost } from '@/lib/dialog';
 
-const PHOTO_DESTINATIONS: readonly AddOption[] = [
+/** A way in, as a tile: the web's own artwork, its name, and a few words on what it asks. */
+interface Tile {
+  readonly key: string;
+  readonly emoji: string;
+  readonly label: string;
+  readonly hint: string;
+  readonly onPress: () => void;
+}
+
+/** Where a photo can go, once it is taken: what it is decides the screen. */
+const PHOTO_DESTINATIONS: readonly (Omit<Tile, 'onPress'> & { readonly to: AddTarget })[] = [
   {
     key: 'receipt',
     to: { form: 'done' },
-    icon: 'receipt-outline',
-    label: 'A receipt',
-    hint: 'Kept with the entry',
+    emoji: '🧾',
+    label: 'Receipt',
+    hint: 'Read into an entry',
   },
   {
     key: 'document',
     to: { screen: '/add/document' },
-    icon: 'document-text-outline',
-    label: 'A document',
-    hint: 'Insurance, registration',
+    emoji: '📋',
+    label: 'Document',
+    hint: 'Insurance, papers',
   },
   {
     key: 'photo',
     to: { screen: '/add/photo' },
-    icon: 'images-outline',
-    label: 'A vehicle I have',
-    hint: '',
+    emoji: '🚗',
+    label: 'My vehicle',
+    hint: 'To its gallery',
   },
   {
     key: 'vehicle',
     to: { screen: '/add/vehicle' },
-    icon: 'car-sport-outline',
-    label: 'A new vehicle',
-    hint: '',
+    emoji: '🏠',
+    label: 'New vehicle',
+    hint: 'Starts from the photo',
   },
 ];
 
@@ -278,53 +295,72 @@ export function AddSheet({
     'form' in to ? open(to.form, null, file ?? null) : go(to.screen, file ? fileParams(file) : {});
 
   /*
-   * A new vehicle is not in the list: it grows the garage rather than recording something about a
-   * vehicle, so it lives in the combo below with a new garage. Bound to one vehicle, the combo is
-   * not shown at all — neither is something you do to the vehicle you are looking at.
+   * What to log, as one grid of equal tiles: the pump-side three first, where a thumb lands, then a
+   * reminder, a paper, and the catch-all last. A new vehicle is not here: it grows the garage rather
+   * than recording something about a vehicle, so it lives with a new garage further down.
    */
-  const actions = ADD_ACTIONS.filter((action) => action.key !== 'vehicle');
-  /*
-   * No "Photo" key: the copper photo key is how a photo gets added, and a second way to reach the
-   * same screen is a choice the reader has to work out rather than one they wanted.
-   */
-  const tiles = [
+  const tiles: readonly Tile[] = [
     ...QUICK_ACTIONS.map((action) => ({
       key: action.kind,
-      icon: action.icon,
+      emoji: action.emoji,
       label: action.label,
       hint: action.hint,
       onPress: () => open('done', action.kind),
     })),
-    // "Something done" is the catch-all, so it comes last, after the keys that name a thing.
-    ...[...actions]
-      .sort((a, b) => Number(a.key === 'done') - Number(b.key === 'done'))
-      .map((action) => ({
-        key: action.key,
-        icon: action.icon,
-        // A key is a noun: "A reminder" reads as a sentence in a list, "Reminder" on a key.
-        label:
-          action.key === 'done'
-            ? 'Anything else'
-            : action.label.replace(/^An? (\w)/, (_, first: string) => first.toUpperCase()),
-        hint: action.hint,
-        onPress: () => follow(action.to),
-      })),
+    {
+      key: 'planned',
+      emoji: '🗓️',
+      label: 'Reminder',
+      hint: 'Once or a repeat',
+      onPress: () => open('planned'),
+    },
+    {
+      key: 'document',
+      emoji: '📋',
+      label: 'Document',
+      hint: 'Papers, cover',
+      onPress: () => go('/add/document'),
+    },
+    {
+      key: 'done',
+      emoji: '✨',
+      label: 'Other',
+      hint: 'Repair, wash, toll',
+      onPress: () => open('done'),
+    },
   ];
 
-  const destinations: readonly AddOption[] = vehicleId
-    ? [
-        ...PHOTO_DESTINATIONS.filter(
-          (destination) => destination.key !== 'vehicle' && destination.key !== 'photo',
-        ),
-        {
-          key: 'photo',
-          to: { screen: '/add/photo' },
-          icon: 'images-outline',
-          label: 'This vehicle',
-          hint: '',
-        },
-      ]
-    : PHOTO_DESTINATIONS;
+  // Bound to a vehicle, a photo is of this one, and starting a new vehicle is not offered.
+  const destinations = PHOTO_DESTINATIONS.filter(
+    (destination) => !vehicleId || destination.key !== 'vehicle',
+  ).map((destination) =>
+    vehicleId && destination.key === 'photo'
+      ? { ...destination, label: 'This vehicle' }
+      : destination,
+  );
+
+  /*
+   * What is due now, where the thing most likely to be added is the thing that is due: from Home's
+   * own read (cached), this vehicle's alone when the sheet is bound to one. Two at most, the late
+   * first; a press opens the form already completing it.
+   */
+  const dashboard = useQuery(dashboardQuery(api));
+  const due = (dashboard.data?.attention.maintenance ?? [])
+    .filter(
+      (item) =>
+        (!vehicleId || item.vehicleId === vehicleId) &&
+        (item.plan.status === 'OVERDUE' || item.plan.status === 'DUE_SOON'),
+    )
+    // `sort` on the array `filter` made: Hermes has no `toSorted`.
+    .sort((a, b) => Number(b.plan.status === 'OVERDUE') - Number(a.plan.status === 'OVERDUE'))
+    .slice(0, 2);
+  const complete = (item: DueItem) =>
+    setForm({
+      mode: 'done',
+      quick: null,
+      photo: null,
+      request: { vehicleId: item.vehicleId, planId: item.plan.id, mode: 'done' },
+    });
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
@@ -377,6 +413,7 @@ export function AddSheet({
                     initialMode={form.mode}
                     initialKind={form.request?.kind ?? starts?.kind ?? null}
                     initialLine={starts?.line ?? ''}
+                    initialEntry={starts?.entry}
                     initialScheduleId={form.request?.planId ?? null}
                     initialPhoto={form.photo}
                     inSheet
@@ -397,7 +434,7 @@ export function AddSheet({
                   />
                 </Rise>
               ) : file ? (
-                <Rise key="photo" style={{ gap: spacing.md }}>
+                <Rise key="photo" style={styles.menu}>
                   <View style={styles.sheetHeader}>
                     <PressableScale
                       onPress={() => setFile(null)}
@@ -408,12 +445,14 @@ export function AddSheet({
                     >
                       <Ionicons name="chevron-back" size={18} color={theme.foreground} />
                     </PressableScale>
-                    <Text
-                      accessibilityRole="header"
-                      style={[styles.title, { flex: 1, color: theme.foreground }]}
-                    >
-                      What is in the photo?
-                    </Text>
+                    <View style={styles.heading}>
+                      <Text
+                        accessibilityRole="header"
+                        style={[styles.title, { color: theme.foreground }]}
+                      >
+                        What is this?
+                      </Text>
+                    </View>
                   </View>
 
                   <View style={[styles.preview, { backgroundColor: theme.muted }]}>
@@ -428,45 +467,41 @@ export function AddSheet({
                       onPress={() => void capture('camera')}
                       accessibilityRole="button"
                       accessibilityLabel="Retake photo"
-                      style={[styles.retake, { backgroundColor: theme.background }]}
+                      scaleTo={0.94}
+                      style={[styles.retake, { backgroundColor: theme.popover }]}
                     >
                       <Ionicons name="camera-reverse-outline" size={14} color={theme.foreground} />
-                      <Text
-                        style={[typeScale.caption, { fontWeight: '600', color: theme.foreground }]}
-                      >
-                        Retake
-                      </Text>
+                      <Text style={[styles.pillLabel, { color: theme.foreground }]}>Retake</Text>
                     </PressableScale>
                   </View>
 
-                  <OptionList
-                    options={destinations.map((destination) => ({
-                      key: destination.key,
-                      icon: destination.icon,
-                      label: destination.label,
-                      hint: destination.hint,
+                  <Tiles
+                    // Three (bound to a vehicle) fill one row; four, two rows of two.
+                    columns={destinations.length === 3 ? 3 : 2}
+                    tiles={destinations.map((destination) => ({
+                      ...destination,
                       // A receipt is read into the add form, here; the rest go to their screens.
                       onPress: () => follow(destination.to, file),
                     }))}
                   />
                 </Rise>
               ) : (
-                <Rise key="menu" style={{ gap: spacing.sm + 4 }}>
+                <Rise key="menu" style={styles.menuFrame}>
                   <View style={styles.sheetHeader}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={styles.heading}>
                       <Text
                         accessibilityRole="header"
                         style={[styles.title, { color: theme.foreground }]}
                       >
-                        What are you adding?
+                        Add
                       </Text>
                       {/* Named, so a sheet that will not ask which vehicle says which it means. */}
                       {subject ? (
                         <Text
                           numberOfLines={1}
-                          style={[typeScale.caption, { color: theme.mutedForeground }]}
+                          style={[styles.subtitle, { color: theme.mutedForeground }]}
                         >
-                          To {subject}
+                          {subject}
                         </Text>
                       ) : null}
                     </View>
@@ -483,126 +518,101 @@ export function AddSheet({
                   </View>
 
                   {/*
-                   * Everything that is a record about a vehicle, as one grid of equal keys: the
-                   * pump-side three first, where a thumb lands, then the rest. Each opens its form
-                   * here in the sheet, or (a document) its own screen.
+                   * Under the header, the rest scrolls: with what is due and the garage's own
+                   * keys it is taller than a small phone's room, and the sheet shrinks to fit.
                    */}
-                  <View style={styles.grid}>
-                    {tiles.map((tile, index) => (
-                      <Rise key={tile.key} index={index} style={styles.cell}>
-                        <PressableScale
-                          onPress={tile.onPress}
-                          accessibilityRole="button"
-                          accessibilityLabel={tile.label}
-                          accessibilityHint={tile.hint || undefined}
-                          scaleTo={0.94}
-                          style={[styles.tile, { backgroundColor: theme.muted }]}
-                        >
-                          <View style={[styles.tileIcon, { backgroundColor: theme.cardRaised }]}>
-                            <Ionicons name={tile.icon} size={18} color={theme.foreground} />
-                          </View>
-                          <Text
-                            numberOfLines={1}
-                            adjustsFontSizeToFit
-                            style={[styles.tileLabel, { color: theme.foreground }]}
-                          >
-                            {tile.label}
-                          </Text>
-                        </PressableScale>
-                      </Rise>
-                    ))}
-                  </View>
-
-                  {/*
-                   * The photo, as one wide key: the camera is the press, because the receipt, the
-                   * paper and the car are in front of the phone; the library rides on it as a
-                   * smaller key for what was already taken. Its camera is the sheet's one copper.
-                   */}
-                  <Rise
-                    index={tiles.length}
-                    style={[styles.capture, { backgroundColor: theme.muted }]}
+                  <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    style={styles.menuScroll}
+                    contentContainerStyle={styles.menu}
                   >
-                    <PressableScale
-                      onPress={() => void capture('camera')}
-                      disabled={busy !== null}
-                      accessibilityRole="button"
-                      accessibilityLabel="Camera"
-                      accessibilityHint="A receipt, a paper or the vehicle"
-                      accessibilityState={{ busy: busy === 'camera' }}
-                      scaleTo={0.97}
-                      style={styles.captureMain}
+                    {/*
+                     * The photo first, as the sheet's one copper: the receipt, the paper and the car
+                     * are in front of the phone, and what is in the picture is read for you. The
+                     * camera is the press; the library rides on it as a small key.
+                     */}
+                    <Rise
+                      index={1}
+                      style={[styles.capture, { backgroundColor: theme.primarySoft }]}
                     >
-                      <View style={[styles.captureIcon, { backgroundColor: theme.primary }]}>
-                        {busy === 'camera' ? (
-                          <ActivityIndicator size="small" color={theme.primaryForeground} />
-                        ) : (
-                          <Ionicons name="camera" size={20} color={theme.primaryForeground} />
-                        )}
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={[typeScale.label, { color: theme.foreground }]}>
-                          Snap a photo
-                        </Text>
-                        <Text
-                          numberOfLines={1}
-                          style={[typeScale.caption, { color: theme.mutedForeground }]}
-                        >
-                          A receipt, a paper or the car
-                        </Text>
-                      </View>
-                    </PressableScale>
-                    <PressableScale
-                      onPress={() => void capture('library')}
-                      disabled={busy !== null}
-                      accessibilityRole="button"
-                      accessibilityLabel="Upload"
-                      accessibilityHint="A photo already on this phone"
-                      accessibilityState={{ busy: busy === 'library' }}
-                      scaleTo={0.92}
-                      style={[styles.upload, { backgroundColor: theme.cardRaised }]}
-                    >
-                      {busy === 'library' ? (
-                        <ActivityIndicator size="small" color={theme.foreground} />
-                      ) : (
-                        <Ionicons name="images-outline" size={15} color={theme.foreground} />
-                      )}
-                      <Text style={[styles.uploadLabel, { color: theme.foreground }]}>Upload</Text>
-                    </PressableScale>
-                  </Rise>
-
-                  {error ? (
-                    <View style={[styles.banner, { backgroundColor: theme.warningSoft }]}>
-                      <Text
-                        accessibilityRole="alert"
-                        style={[typeScale.caption, { color: theme.warning }]}
+                      <PressableScale
+                        onPress={() => void capture('camera')}
+                        disabled={busy !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel="Snap a photo"
+                        accessibilityHint="A receipt, a paper or the vehicle, read for you"
+                        accessibilityState={{ busy: busy === 'camera' }}
+                        scaleTo={0.97}
+                        style={styles.captureMain}
                       >
-                        {error}
-                      </Text>
-                    </View>
-                  ) : null}
+                        <View style={[styles.captureKey, { backgroundColor: theme.primary }]}>
+                          {busy === 'camera' ? (
+                            <ActivityIndicator size="small" color={theme.primaryForeground} />
+                          ) : (
+                            <Ionicons name="camera" size={21} color={theme.primaryForeground} />
+                          )}
+                        </View>
+                        <View style={styles.captureLine}>
+                          <Text style={[styles.captureTitle, { color: theme.foreground }]}>
+                            Snap a photo
+                          </Text>
+                          {/* It reads what it sees: the spark says so, as on the form's key. */}
+                          <Ionicons name="sparkles" size={13} color={theme.primary} />
+                        </View>
+                      </PressableScale>
+                      <PressableScale
+                        onPress={() => void capture('library')}
+                        disabled={busy !== null}
+                        accessibilityRole="button"
+                        accessibilityLabel="Upload"
+                        accessibilityHint="A photo already on this phone"
+                        accessibilityState={{ busy: busy === 'library' }}
+                        scaleTo={0.92}
+                        style={[styles.upload, { backgroundColor: theme.cardRaised }]}
+                      >
+                        {busy === 'library' ? (
+                          <ActivityIndicator size="small" color={theme.foreground} />
+                        ) : (
+                          <Ionicons name="images-outline" size={16} color={theme.foreground} />
+                        )}
+                      </PressableScale>
+                    </Rise>
 
-                  {vehicleId ? null : (
-                    <View style={{ gap: spacing.xs }}>
-                      <Eyebrow>Grow the garage</Eyebrow>
+                    {error ? (
+                      <View style={[styles.banner, { backgroundColor: theme.warningSoft }]}>
+                        <Text
+                          accessibilityRole="alert"
+                          style={[typeScale.caption, { color: theme.warning }]}
+                        >
+                          {error}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {due.length > 0 ? (
+                      <View style={styles.section}>
+                        {due.map((item, index) => (
+                          <Rise key={item.plan.id} index={index + 2}>
+                            <DueCard
+                              item={item}
+                              showVehicle={!vehicleId}
+                              onLog={() => complete(item)}
+                            />
+                          </Rise>
+                        ))}
+                      </View>
+                    ) : null}
+
+                    <Tiles columns={3} tiles={tiles} />
+
+                    {vehicleId ? null : (
                       <GrowCombo
                         onVehicle={() => go('/add/vehicle')}
                         onGarage={() => go('/add/garage')}
                         onClose={onClose}
                       />
-                    </View>
-                  )}
-
-                  {/*
-                   * Said once, here, because it is the thing that makes the rest of this sheet
-                   * usable in a basement — and because a queue nobody is told about reads as an
-                   * app that did not save what they typed.
-                   */}
-                  <View style={styles.assurance}>
-                    <Ionicons name="flash-outline" size={12} color={theme.mutedForeground} />
-                    <Text style={[styles.assuranceText, { color: theme.mutedForeground }]}>
-                      Saved here, sent when there is signal.
-                    </Text>
-                  </View>
+                    )}
+                  </ScrollView>
                 </Rise>
               )}
             </View>
@@ -615,50 +625,90 @@ export function AddSheet({
   );
 }
 
-function OptionList({
-  options,
-}: {
-  options: {
-    key: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    label: string;
-    hint: string;
-    onPress: () => void;
-  }[];
-}) {
+/** Ways in, as a grid of equal tiles, each rising into place in turn. */
+function Tiles({ tiles, columns }: { tiles: readonly Tile[]; columns: 2 | 3 }) {
   const theme = useTheme();
   return (
-    <View style={[styles.options, { backgroundColor: theme.border }]}>
-      {options.map((option, index) => (
-        <Rise key={option.key} index={index + 1}>
+    <View style={styles.grid}>
+      {tiles.map((tile, index) => (
+        <Rise key={tile.key} index={index + 2} style={columns === 3 ? styles.third : styles.half}>
           <PressableScale
-            onPress={option.onPress}
+            onPress={() => {
+              haptic.selection();
+              tile.onPress();
+            }}
             accessibilityRole="button"
-            accessibilityLabel={option.label}
-            accessibilityHint={option.hint}
-            scaleTo={0.98}
-            style={[styles.option, { backgroundColor: theme.muted }]}
+            accessibilityLabel={tile.label}
+            accessibilityHint={tile.hint || undefined}
+            scaleTo={0.95}
+            style={[styles.tile, { backgroundColor: theme.muted }]}
           >
-            <View style={[styles.optionIcon, { backgroundColor: theme.card }]}>
-              <Ionicons name={option.icon} size={18} color={theme.foreground} />
+            <View style={[styles.tileArt, { backgroundColor: theme.cardRaised }]}>
+              <Glyph size={22}>{tile.emoji}</Glyph>
             </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[typeScale.label, { color: theme.foreground }]}>{option.label}</Text>
-              {/* Only where the label genuinely needs help; most do not. */}
-              {option.hint ? (
-                <Text
-                  numberOfLines={1}
-                  style={[typeScale.caption, { color: theme.mutedForeground }]}
-                >
-                  {option.hint}
-                </Text>
-              ) : null}
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={theme.mutedForeground} />
+            <Text numberOfLines={1} style={[styles.tileLabel, { color: theme.foreground }]}>
+              {tile.label}
+            </Text>
           </PressableScale>
         </Rise>
       ))}
     </View>
+  );
+}
+
+/**
+ * A reminder that is due, as the shortest way to log it: its glyph in the ring of how due it is,
+ * its name, how late or how soon in its tone (and whose, on Home), and a copper Log key. The whole
+ * card is the press.
+ */
+function DueCard({
+  item,
+  showVehicle,
+  onLog,
+}: {
+  item: DueItem;
+  showVehicle: boolean;
+  onLog: () => void;
+}) {
+  const theme = useTheme();
+  const { headline, tone } = readDue(item.plan, item.odometerUnit);
+  const color =
+    tone === 'destructive'
+      ? theme.destructive
+      : tone === 'warning'
+        ? theme.warning
+        : theme.mutedForeground;
+  return (
+    <PressableScale
+      onPress={() => {
+        haptic.selection();
+        onLog();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={`Log ${item.plan.title}, ${headline}${showVehicle ? `, ${item.vehicleName}` : ''}`}
+      scaleTo={0.98}
+      style={[styles.due, { backgroundColor: theme.muted }]}
+    >
+      <DueRing plan={item.plan} unit={item.odometerUnit} size={40} glyph={19} />
+      <View style={styles.dueWords}>
+        <Text numberOfLines={1} style={[styles.dueTitle, { color: theme.foreground }]}>
+          {item.plan.title}
+        </Text>
+        <Text numberOfLines={1} style={[styles.dueLine, { color }]}>
+          {headline}
+          {showVehicle ? (
+            // Its own weight: a nested Text is dressed to its own font file.
+            <Text style={[styles.dueWhose, { color: theme.mutedForeground }]}>
+              {` · ${item.vehicleName}`}
+            </Text>
+          ) : null}
+        </Text>
+      </View>
+      <View style={[styles.logKey, { backgroundColor: theme.primary }]}>
+        <Ionicons name="checkmark" size={13} color={theme.primaryForeground} />
+        <Text style={[styles.logLabel, { color: theme.primaryForeground }]}>Log</Text>
+      </View>
+    </PressableScale>
   );
 }
 
@@ -674,8 +724,14 @@ const styles = StyleSheet.create({
   },
   handle: { alignItems: 'center', paddingTop: spacing.sm + 2, paddingBottom: spacing.xs },
   grabber: { width: 40, height: 5, borderRadius: 999 },
+  menu: { gap: spacing.md },
+  // The menu shrinks to the sheet's room; its header stays, the rest scrolls under it.
+  menuFrame: { flexShrink: 1, gap: spacing.md },
+  menuScroll: { flexShrink: 1 },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 40 },
-  title: { fontSize: 20, lineHeight: 25, fontWeight: '700', letterSpacing: -0.5 },
+  heading: { flex: 1, minWidth: 0, gap: 1 },
+  title: { fontSize: 18, lineHeight: 23, fontWeight: '700', letterSpacing: -0.45 },
+  subtitle: { fontSize: 12, lineHeight: 16 },
   iconButton: {
     width: 36,
     height: 36,
@@ -683,82 +739,90 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
-  cell: { width: '31.9%' },
-  tile: { ...leaf('sm'), minHeight: 74, padding: 10, justifyContent: 'space-between', gap: 8 },
-  tileIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tileLabel: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
   capture: {
-    ...leaf('md'),
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    borderRadius: radius.lg,
     paddingRight: 10,
   },
   captureMain: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm + 4,
-    minHeight: 62,
-    paddingLeft: 10,
+    gap: 12,
+    minHeight: 68,
+    paddingLeft: 11,
   },
-  captureIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  captureKey: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  captureTitle: { fontSize: 15, lineHeight: 19, fontWeight: '700', letterSpacing: -0.2 },
+  captureLine: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   upload: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: 36,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-  },
-  uploadLabel: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
-  assurance: {
-    flexDirection: 'row',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingTop: 2,
   },
-  assuranceText: { fontSize: 11.5, lineHeight: 15 },
-  banner: { borderRadius: radius.md, padding: spacing.md },
-  options: { ...leaf('md'), overflow: 'hidden', gap: StyleSheet.hairlineWidth },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingHorizontal: spacing.md,
-    minHeight: 54,
+  pillLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  section: { gap: spacing.sm },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
+  third: { width: '31.9%' },
+  half: { width: '48.9%' },
+  tile: {
+    minHeight: 80,
+    padding: 10,
+    justifyContent: 'space-between',
+    gap: 10,
+    borderRadius: radius.lg,
   },
-  optionIcon: {
-    width: 36,
-    height: 36,
+  tileArt: {
+    width: 38,
+    height: 38,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  preview: { ...leaf('md'), height: 184, overflow: 'hidden' },
+  tileLabel: { fontSize: 13.5, lineHeight: 17, fontWeight: '600', letterSpacing: -0.1 },
+  due: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 58,
+    paddingLeft: 9,
+    paddingRight: 10,
+    borderRadius: radius.lg,
+  },
+  dueWords: { flex: 1, minWidth: 0, gap: 1 },
+  dueTitle: { fontSize: 14, lineHeight: 18, fontWeight: '600', letterSpacing: -0.1 },
+  dueLine: { fontSize: 11.5, lineHeight: 15, fontWeight: '600' },
+  dueWhose: { fontSize: 11.5, lineHeight: 15, fontWeight: '500' },
+  logKey: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 30,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+  },
+  logLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '700' },
+  banner: { borderRadius: radius.md, padding: spacing.md },
+  preview: { borderRadius: radius.lg, height: 176, overflow: 'hidden' },
   retake: {
     position: 'absolute',
     right: 10,
     bottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
+    height: 32,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 6,
   },
 });

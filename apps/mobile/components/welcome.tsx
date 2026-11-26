@@ -167,7 +167,7 @@ export function Welcome({ onFinish }: { onFinish: (mode: Mode) => void }) {
 
       <Footer>
         <Dots index={index} count={SCENES.length} />
-        <Button label="Get started" variant="primary" onPress={() => finish('sign-up')} />
+        <Button label="Get started" variant="primary" pill onPress={() => finish('sign-up')} />
         <Button
           label="I already have an account"
           variant="ghost"

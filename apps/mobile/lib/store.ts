@@ -35,6 +35,12 @@ export interface StoreOffer {
   readonly cadence: Cadence;
   /** The store's own localised price — what Play requires the app to show. */
   readonly price: string;
+  /** The price as a number in its currency, to compare one way of paying with another. */
+  readonly amount: number;
+  /** The store's own price per month ("Rs 833"), for a yearly plan read monthly; null once. */
+  readonly perMonth: string | null;
+  /** A free trial the store gives on it, said as a span ("7 days", "1 month"); null when none. */
+  readonly trial: string | null;
   readonly productId: string;
   readonly pkg: PurchasesPackage;
 }
@@ -119,6 +125,19 @@ export class StoreUnavailableError extends Error {
   }
 }
 
+/**
+ * A free introductory period as a person says it: "7 days", "1 month". A discounted (not free)
+ * introductory price is not a trial, and is left to the store's own sheet to explain.
+ */
+function trialOf(intro: PurchasesPackage['product']['introPrice']): string | null {
+  if (!intro || intro.price !== 0) return null;
+  const count = intro.periodNumberOfUnits * Math.max(1, intro.cycles);
+  const unit = (
+    { DAY: 'day', WEEK: 'week', MONTH: 'month', YEAR: 'year' } as Record<string, string>
+  )[intro.periodUnit];
+  return unit ? `${count} ${unit}${count === 1 ? '' : 's'}` : null;
+}
+
 /** What the store sells right now, best tier last and cadences in a fixed order. */
 export async function loadOffers(userId: string): Promise<StoreOffer[]> {
   await ready(userId);
@@ -127,10 +146,14 @@ export async function loadOffers(userId: string): Promise<StoreOffer[]> {
   for (const pkg of offerings.current?.availablePackages ?? []) {
     const match = PACKAGE.exec(pkg.identifier);
     if (!match) continue;
+    const offerCadence = match[2] as Cadence;
     offers.push({
       tier: match[1] === 'plus' ? 'PLUS' : 'BUSINESS',
-      cadence: match[2] as Cadence,
+      cadence: offerCadence,
       price: pkg.product.priceString,
+      amount: pkg.product.price,
+      perMonth: offerCadence === 'lifetime' ? null : pkg.product.pricePerMonthString,
+      trial: trialOf(pkg.product.introPrice),
       productId: pkg.product.identifier,
       pkg,
     });

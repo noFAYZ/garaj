@@ -240,6 +240,7 @@ export function Button({
   loading,
   busyLabel,
   a11yLabel,
+  pill,
 }: {
   label: string;
   onPress: () => void;
@@ -253,9 +254,11 @@ export function Button({
   busyLabel?: string;
   /** What a screen reader says, where the label alone ("Log") needs the row's name. */
   a11yLabel?: string;
+  /** Fully round ends, for a screen's one lead call to action. */
+  pill?: boolean;
 }) {
   const theme = useTheme();
-  const shape = SIZES[size];
+  const shape = pill ? { ...SIZES[size], borderRadius: radius.pill } : SIZES[size];
   const color = {
     primary: theme.primaryForeground,
     danger: theme.destructiveForeground,

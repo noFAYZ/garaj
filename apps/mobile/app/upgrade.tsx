@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -12,7 +12,17 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { vehiclesQuery } from '@vehicle-os/api-client/react';
+import Svg, {
+  Circle,
+  Defs,
+  Ellipse,
+  G,
+  LinearGradient,
+  Path,
+  RadialGradient,
+  Rect,
+  Stop,
+} from 'react-native-svg';
 import {
   ENTITLEMENT_COPY,
   ENTITLEMENTS,
@@ -25,13 +35,14 @@ import {
   type PlanLimits,
   type PlanTier,
 } from '@vehicle-os/domain';
-import { BrandLogo } from '@/components/brand-logo';
+import { composite } from '@vehicle-os/ui';
+import { TwoWay } from '@/components/add-kit';
 import { api } from '@/lib/api';
+import { pad } from '@/lib/format';
 import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
-import { PlanBadge, PlanPass, PlanTag } from '@/lib/plan-kit';
+import { PlanBadge, PlanPass } from '@/lib/plan-kit';
 import {
   buy,
-  CADENCE_LABEL,
   isCancelled,
   isPending,
   loadOffers,
@@ -45,21 +56,13 @@ import {
   type PaidTier,
   type StoreOffer,
 } from '@/lib/store';
-import { FEATURE_ICON, usePlan } from '@/lib/upgrade';
+import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
-import { figure, leaf, lift, radius, spacing, typeScale, useTheme } from '@/lib/theme';
-import { RoundKey } from '@/components/onboarding-kit';
-import { pad } from '@/lib/format';
+import { figure, leaf, radius, spacing, useTheme, type Theme } from '@/lib/theme';
 
 type Limit = keyof PlanLimits;
 /** Choosing; bought and waiting for the server to see it; waited too long; upgraded. */
 type Phase = 'choose' | 'confirming' | 'slow' | 'done';
-
-const LIMIT_TITLE: Record<Limit, string> = {
-  vehicles: 'Your garage is full',
-  garages: 'No room for another garage',
-  members: 'No room for another person',
-};
 
 const LIMIT_NOUN: Record<Limit, [string, string]> = {
   vehicles: ['vehicle', 'vehicles'],
@@ -67,11 +70,38 @@ const LIMIT_NOUN: Record<Limit, [string, string]> = {
   members: ['person', 'people'],
 };
 
-const LIMIT_ICON: Record<Limit, keyof typeof Ionicons.glyphMap> = {
-  vehicles: 'car-sport',
-  garages: 'home',
-  members: 'people',
+/** A report hue: the chart colours, the app's one use of hue for something other than a status. */
+type Hue = 'chartRefuel' | 'chartService' | 'chartExpense' | 'chartIncome' | 'chartTrip';
+type IconName = keyof typeof Ionicons.glyphMap;
+
+/** Each gain as an icon on a tile of its own hue, so three lines read as three different things. */
+const LIMIT_MARK: Record<Limit, { icon: IconName; hue: Hue }> = {
+  vehicles: { icon: 'car-sport', hue: 'chartRefuel' },
+  garages: { icon: 'home', hue: 'chartService' },
+  members: { icon: 'people', hue: 'chartTrip' },
 };
+const FEATURE_MARK: Record<Entitlement, { icon: IconName; hue: Hue }> = {
+  'passport.share': { icon: 'document-text', hue: 'chartIncome' },
+  'income.track': { icon: 'cash', hue: 'chartIncome' },
+  'mileage.report': { icon: 'speedometer', hue: 'chartService' },
+  'driver.assign': { icon: 'people', hue: 'chartExpense' },
+};
+
+/** A way of paying, as its card names it. */
+const CADENCE_NAME: Record<Cadence, string> = {
+  monthly: 'Monthly',
+  annual: 'Yearly',
+  lifetime: 'Lifetime',
+};
+
+/** The Recommended tab over a card, and the curve it grows out of the card's edge on. */
+const TAB = 22;
+/** Bays drawn on a plan's card; the rest of its room is a figure after them. */
+const BAYS_SHOWN = 6;
+const FILLET = 8;
+
+/** The cards' order: the yearly one, the best value, first. */
+const SHOWN_ORDER: readonly Cadence[] = ['annual', 'monthly', 'lifetime'];
 
 const POLL_MS = 2_000;
 const PATIENCE_MS = 30_000;
@@ -85,28 +115,144 @@ const isLimit = (value: string | undefined): value is Limit =>
 const gainedFeatures = (from: PlanTier, to: PlanTier) =>
   entitlementsFor(to).filter((entitlement) => !entitlementsFor(from).includes(entitlement));
 
+interface Gain {
+  readonly key: string;
+  readonly icon: IconName;
+  readonly hue: Hue;
+  readonly title: string;
+  readonly line: string;
+}
+
+/**
+ * What a plan adds over the one held, a line each: room for vehicles first, then what the plan
+ * unlocks, then its other room — what was hit leading — and three at most, so the plans stay in view.
+ * Plus reads as more vehicles, the passport and more garages; Business as its reports.
+ */
+function gainsOf(
+  from: PlanTier,
+  to: PlanTier,
+  lead: Entitlement | Limit | null,
+  most = 3,
+): readonly Gain[] {
+  const before = limitsFor(from);
+  const after = limitsFor(to);
+  const room = (limit: Limit): Gain | null =>
+    after[limit] > before[limit]
+      ? {
+          key: limit,
+          ...LIMIT_MARK[limit],
+          title:
+            limit === 'members'
+              ? `${after.members} people per garage`
+              : `${after[limit]} ${noun(limit, after[limit])}`,
+          line: `${after[limit] - before[limit]} more than ${PLAN_NAMES[from]}`,
+        }
+      : null;
+  const rows = [
+    room('vehicles'),
+    // Not the passport (user, 2026-11-26): Plus still has it, the paywall does not sell with it.
+    ...gainedFeatures(from, to)
+      .filter((gain) => gain !== 'passport.share')
+      .map((gain) => ({
+        key: gain,
+        ...FEATURE_MARK[gain],
+        title: ENTITLEMENT_COPY[gain].name,
+        line: ENTITLEMENT_COPY[gain].does,
+      })),
+    room('garages'),
+    room('members'),
+  ].filter((row): row is Gain => row !== null);
+  // `sort` on the array `filter` made: Hermes has no `toSorted`.
+  return rows.sort((a, b) => Number(b.key === lead) - Number(a.key === lead)).slice(0, most);
+}
+
+/** Made-up prices a dev build lays the cards out against, in the person's own currency. */
+const DEMO_PRICES: Record<string, readonly [number, number, number, number]> = {
+  PKR: [1200, 9999, 4500, 39999],
+  INR: [249, 1999, 899, 7499],
+  default: [2.99, 24.99, 9.99, 79.99],
+};
+
+/**
+ * Sample offers — Plus and Business, monthly and yearly — for a dev build whose store has nothing
+ * to sell (Expo Go, no RevenueCat keys, an empty offering). Never in a release: a price on this
+ * screen is the store's or none. They cannot be bought; the screen keeps its button off.
+ */
+function demoOffers(currency: string): StoreOffer[] {
+  const [plusMonth, plusYear, businessMonth, businessYear] =
+    DEMO_PRICES[currency] ?? DEMO_PRICES.default!;
+  let format = (amount: number) => `${currency} ${Math.round(amount)}`;
+  try {
+    const whole = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    });
+    const cents = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    format = (amount) => (amount >= 100 ? whole : cents).format(amount);
+  } catch {
+    // An unknown code: the plain fallback above.
+  }
+  const make = (tier: PaidTier, cadence: Cadence, amount: number): StoreOffer => ({
+    tier,
+    cadence,
+    amount,
+    price: format(amount),
+    perMonth: format(cadence === 'annual' ? amount / 12 : amount),
+    trial: null,
+    productId: `demo_${tier}_${cadence}`,
+    pkg: null as unknown as StoreOffer['pkg'],
+  });
+  return [
+    make('PLUS', 'monthly', plusMonth),
+    make('PLUS', 'annual', plusYear),
+    make('BUSINESS', 'monthly', businessMonth),
+    make('BUSINESS', 'annual', businessYear),
+  ];
+}
+
+/** What a way of paying comes to, as a card's figure says it: a month where it can. */
+function priceOf(way: StoreOffer): { figure: string; unit: string } {
+  if (way.cadence === 'lifetime') return { figure: way.price, unit: 'once' };
+  if (way.cadence === 'annual' && way.perMonth) return { figure: way.perMonth, unit: 'per month' };
+  return { figure: way.price, unit: way.cadence === 'annual' ? 'per year' : 'per month' };
+}
+
+/** How a way of paying is billed, in a few words, its trial first. */
+function billedOf(way: StoreOffer): string {
+  if (way.cadence === 'lifetime') return 'Pay once, keep it';
+  const per = way.cadence === 'annual' ? 'yr' : 'mo';
+  if (way.trial) return `${way.trial} free, then ${way.price}/${per}`;
+  return way.cadence === 'annual' ? `${way.price} a year` : 'Billed monthly';
+}
+
 /**
  * The upgrade (GAPS §10, §17): one screen that decides, instead of a pointer to settings.
  *
- * A picture of the reason, a headline, a choice of plan, what it adds, and one button that says
- * what happens next — compact enough to fit a small phone without scrolling. The picture is the
- * person's garage: their vehicles in the bays, and the dashed bays the next plan adds. The colour
- * is ink, because the logo is the only colour this product has.
+ * Laid out as a store paywall reads: the brand's mark on a copper sky across the top, with the
+ * close and Restore over it; under it, on a sheet, why it opened (small, in copper), "Get Garaj
+ * Plus" and its trial, what the plan adds a line each, the ways to pay as cards — the chosen one
+ * ringed in copper, the yearly one flagged with what it saves — and one copper button that says
+ * what happens next, with the terms under it.
  *
  * Opened from anywhere a plan refuses something — a full garage, a paid feature, the queue
  * replaying an offline write — with the reason in its params, so it leads with what was hit.
- * Opened from settings with no reason, it leads with room.
  *
  * It never decides a plan changed. The purchase happens in the phone's store (`lib/store`), the
- * server reads it from RevenueCat, and this screen waits for the plan in plain sight — the new bays
- * breathe until the plan is real, then settle. A plan paid for on the web is not sold or managed
- * here: the store's rules keep the app to its own billing, so it only says where that plan lives.
+ * server reads it from RevenueCat, and this screen waits for the plan in plain sight — the mark
+ * breathes until the plan is real. A plan paid for on the web is not sold or managed here: the
+ * store's rules keep the app to its own billing, so it only says where that plan lives.
  */
 export default function UpgradeScreen() {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { height } = useWindowDimensions();
   const params = useLocalSearchParams<{
     reason?: string;
     limit?: string;
@@ -116,8 +262,8 @@ export default function UpgradeScreen() {
 
   const { data, plan } = usePlan();
   const { refetch } = plan;
-  const vehicles = useQuery(vehiclesQuery(api));
-  const userId = useProfile().data?.id;
+  const profile = useProfile().data;
+  const userId = profile?.id;
   // Not persisted (its root is not in the cache's list): store packages are live objects.
   const offers = useQuery({
     queryKey: ['store', 'offers', userId],
@@ -160,19 +306,25 @@ export default function UpgradeScreen() {
   const chosen = order?.to ?? options.find((tier) => tier === picked) ?? options[0] ?? null;
   // Paying already: the store replaces that subscription rather than starting another.
   const switching = current !== 'FREE';
-  // The ways the chosen tier is sold, and the one picked — monthly unless another was chosen.
-  const ways = (offers.data ?? []).filter((offer) => offer.tier === chosen);
+  const offersLoading = offers.isPending && offers.fetchStatus !== 'idle';
+  // A dev build with nothing from the store prices its cards with samples; a release never does.
+  const demo = __DEV__ && !offersLoading && (offers.data ?? []).length === 0;
+  const catalogue = demo ? demoOffers(profile?.defaultCurrency ?? 'USD') : (offers.data ?? []);
+  // The ways the chosen tier is sold, best value first, and the one picked — yearly by default.
+  const ways = catalogue
+    .filter((offer) => offer.tier === chosen)
+    .sort((a, b) => SHOWN_ORDER.indexOf(a.cadence) - SHOWN_ORDER.indexOf(b.cadence));
   const offer =
     ways.find((way) => way.cadence === pickedCadence) ??
+    ways.find((way) => way.cadence === 'annual') ??
     ways.find((way) => way.cadence === 'monthly') ??
     ways[0] ??
     null;
-  const offersLoading = offers.isPending && offers.fetchStatus !== 'idle';
   // Nothing to sell in this build, or the store has no price for it: say so now, not on the press.
   const unavailable =
-    !storeAvailable() || Boolean(chosen && (offers.isError || (offers.isSuccess && !offer)));
-  /** The cheapest way to pay for a tier, for its row in the choice. */
-  const fromPrice = (tier: PaidTier) => (offers.data ?? []).find((way) => way.tier === tier);
+    demo ||
+    !storeAvailable() ||
+    Boolean(chosen && (offers.isError || (offers.isSuccess && !offer)));
 
   // While confirming, ask every two seconds for half a minute — then say so, and stop. The
   // first ask goes to RevenueCat through the server, not only to a webhook that may never arrive.
@@ -236,37 +388,9 @@ export default function UpgradeScreen() {
   const failure = purchase.error ?? restoring.error;
   const failureText = failure instanceof Error ? failure.message : null;
 
-  const marks: ReactNode[] = (vehicles.data?.data ?? []).map((vehicle) => (
-    <BrandLogo key={vehicle.id} make={vehicle.make} size={26} />
-  ));
-  // A generic open from settings leads with room for vehicles — the ceiling people meet first.
-  const heroLimit: Limit | null = entitlement ? null : (limit ?? 'vehicles');
-  const used = heroLimit
-    ? heroLimit === 'members'
-      ? limitsFor(current).members
-      : (data?.usage[heroLimit] ?? 0)
-    : 0;
-  const room = heroLimit && chosen ? Math.max(0, limitsFor(chosen)[heroLimit] - used) : 0;
-  const featuresGained = chosen ? gainedFeatures(current, chosen) : [];
-
-  /*
-   * One row of bays, always: the taken ones and the ones the plan adds, side by side, is the
-   * whole picture — wrapped onto two lines it stops reading as a garage. So the bay shrinks to
-   * fit the screen rather than the row breaking, down to a size a logo is still legible at.
-   */
-  const takenShown = Math.min(used, 5);
-  const freshShown = Math.min(room, 3);
-  const bayCount = Math.max(1, takenShown + freshShown);
-  const bayGap = 8;
-  const heroInner = width - spacing.md * 2 - spacing.md * 2;
-  const bay = Math.max(
-    34,
-    Math.min(38, Math.floor((heroInner - bayGap * (bayCount - 1)) / bayCount)),
-  );
-  const baySize = { width: bay, height: bay, borderRadius: Math.round(bay * 0.3) };
-
-  const allowed = limit ? limitsFor(current)[limit] : 0;
   const waiting = phase === 'confirming' || phase === 'slow';
+  const choosing = phase === 'choose' && chosen !== null;
+
   const [title, subtitle] =
     phase === 'done' && order
       ? [`You’re on ${PLAN_NAMES[order.to]}`, `${PLAN_NAMES[order.to]} is active on your account.`]
@@ -276,323 +400,303 @@ export default function UpgradeScreen() {
           ? ['Payment received', 'Your plan hasn’t updated yet. It can take a minute.']
           : !chosen
             ? ['You’re on the largest plan', 'Everything Garaj does is already yours.']
-            : entitlement
-              ? [
-                  `${ENTITLEMENT_COPY[entitlement].name} needs ${PLAN_NAMES[options[0] ?? chosen]}`,
-                  ENTITLEMENT_COPY[entitlement].does,
-                ]
-              : limit === 'members'
-                ? [LIMIT_TITLE.members, `${PLAN_NAMES[current]} garages hold ${allowed} people.`]
-                : limit
-                  ? [
-                      LIMIT_TITLE[limit],
-                      `${PLAN_NAMES[current]} holds ${allowed} ${noun(limit, allowed)}.`,
-                    ]
-                  : [
-                      `Room for ${room} more ${noun('vehicles', room)}`,
-                      `You’re on ${PLAN_NAMES[current]}.`,
-                    ];
+            : [`Get Garaj ${PLAN_NAMES[chosen]}`, null];
+
+  // The trial the store gives on the chosen way: its flag, its button and its promise.
+  const trial = choosing && !elsewhere ? (offer?.trial ?? null) : null;
+  /*
+   * Two paid plans to choose between: each is a card, priced in the billing the switch over them
+   * says — yearly unless monthly was chosen. One plan: its ways to pay are the cards instead.
+   */
+  const billing: Cadence = pickedCadence ?? 'annual';
+  const sold = (tier: PaidTier) => catalogue.filter((way) => way.tier === tier);
+  const wayFor = (tier: PaidTier) =>
+    sold(tier).find((way) => way.cadence === billing) ??
+    sold(tier).find((way) => way.cadence === 'annual') ??
+    sold(tier).find((way) => way.cadence === 'monthly') ??
+    sold(tier)[0] ??
+    null;
+  // What yearly saves over twelve months of monthly, for a card's flag and the switch's tag.
+  const savingOf = (tier: PaidTier) => {
+    const yearly = sold(tier).find((way) => way.cadence === 'annual');
+    const month = sold(tier).find((way) => way.cadence === 'monthly');
+    return yearly && month && month.amount > 0
+      ? Math.round((1 - yearly.amount / (month.amount * 12)) * 100)
+      : 0;
+  };
+  const tiered = options.length > 1;
+  const bothBillings =
+    catalogue.some((way) => way.cadence === 'monthly') &&
+    catalogue.some((way) => way.cadence === 'annual');
+  const bestSaving = Math.max(0, ...options.map(savingOf));
+  // Three points, or two on a short phone, so the whole sheet fits without scrolling.
+  const gains = choosing
+    ? gainsOf(current, chosen, entitlement ?? limit, height < 720 ? 2 : 3)
+    : [];
 
   const store = storeName(data?.store);
-  const footnote = unavailable
-    ? 'Upgrades aren’t available yet.'
-    : offer?.cadence === 'lifetime'
-      ? inStore
-        ? `Paid once. Cancel your current subscription in ${store} so it stops renewing.`
-        : 'Paid once. No renewals, nothing to cancel.'
-      : switching
-        ? `${store} credits the time left on your current plan.`
-        : `Renews automatically, billed by ${store}. Cancel anytime in ${store}.`;
+  const footnote = demo
+    ? 'Sample prices · The store isn’t connected in this build'
+    : unavailable
+      ? 'Upgrades aren’t available yet.'
+      : trial
+        ? `No charge today · Cancel anytime in ${store}`
+        : offer?.cadence === 'annual' && !switching
+          ? `${offer.price} a year · Cancel anytime in ${store}`
+          : offer?.cadence === 'lifetime'
+            ? inStore
+              ? `Paid once. Cancel your subscription in ${store} so it stops renewing.`
+              : 'Paid once. Nothing to cancel.'
+            : switching
+              ? `${store} credits the time left on your plan.`
+              : `Renews automatically · Cancel anytime in ${store}`;
 
-  // The stamp: the one number the upgrade is about, or a tick once it is yours.
-  const stamp = chosen ? (
-    <View
-      style={[styles.badge, { backgroundColor: theme.background, borderColor: theme.primary }]}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-    >
-      {phase === 'done' ? (
-        <Ionicons name="checkmark" size={30} color={theme.foreground} />
-      ) : (
-        <>
-          <Text style={[figure, styles.badgeFigure, { color: theme.foreground }]}>
-            +{heroLimit ? room : featuresGained.length}
-          </Text>
-          <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-            {heroLimit ? 'more' : featuresGained.length === 1 ? 'feature' : 'features'}
-          </Text>
-        </>
-      )}
-    </View>
-  ) : null;
+  /*
+   * The picture takes whatever height the sheet and the button leave, so the screen fits without
+   * scrolling: both are measured, the picture is the rest (the sheet rises over its foot), between
+   * a strip and a third of a tall phone. Too short a phone for even the strip scrolls the rest.
+   */
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const [footHeight, setFootHeight] = useState(0);
+  const rest =
+    sheetHeight && footHeight ? height - sheetHeight - footHeight + radius.xxxl : height * 0.3;
+  const picture = Math.round(Math.min(300 + insets.top, Math.max(140 + insets.top / 2, rest)));
 
   return (
-    <View style={[styles.screen, { backgroundColor: 'transparent' }]}>
+    <View style={[styles.screen, { backgroundColor: theme.background }]}>
       <ScrollView
-        contentContainerStyle={[styles.page, { paddingTop: insets.top + spacing.sm }]}
+        bounces={false}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
       >
-        <RoundKey icon="close" label="Close" onPress={() => router.back()} />
+        <Art height={picture} breathe={phase === 'confirming'} />
 
-        {/*
-         * --- the picture: what was hit, and what the plan adds — while it is being bought, and
-         * once it is yours. While choosing, the stamp alone stands by the headline.
-         */}
-        {phase === 'choose' ? null : (
-          <Rise style={[styles.hero, { backgroundColor: theme.card }]}>
-            {heroLimit ? (
-              <View
-                style={styles.bays}
-                accessible
-                accessibilityRole="image"
-                accessibilityLabel={
-                  chosen
-                    ? `${used} ${noun(heroLimit, used)} now; ${PLAN_NAMES[chosen]} has room for ${room} more`
-                    : `${used} ${noun(heroLimit, used)}`
-                }
-              >
-                {Array.from({ length: takenShown }, (_, index) => (
-                  <View
-                    key={`taken-${index}`}
-                    style={[styles.bay, baySize, { backgroundColor: theme.muted }]}
-                  >
-                    {heroLimit === 'vehicles' && marks[index] ? (
-                      marks[index]
-                    ) : (
-                      <Ionicons name={LIMIT_ICON[heroLimit]} size={20} color={theme.foreground} />
-                    )}
+        {/* The sheet, risen over the picture's foot. */}
+        <View
+          onLayout={(event) => setSheetHeight(Math.ceil(event.nativeEvent.layout.height))}
+          style={[styles.sheet, { backgroundColor: theme.background }]}
+        >
+          <Rise style={styles.heading}>
+            <View style={styles.titleRow}>
+              <Text accessibilityRole="header" style={[styles.title, { color: theme.foreground }]}>
+                {title}
+              </Text>
+              {trial ? (
+                // A sticker: the picture's sun yellow, ink-edged, the same in either scheme.
+                <View style={styles.flag}>
+                  <Text style={styles.flagText}>{`${trial} free`.toUpperCase()}</Text>
+                </View>
+              ) : null}
+            </View>
+            {subtitle ? (
+              <Text style={[styles.subtitle, { color: theme.mutedForeground }]}>{subtitle}</Text>
+            ) : null}
+          </Rise>
+
+          {plan.isPending ? <ActivityIndicator color={theme.mutedForeground} /> : null}
+
+          {gains.length > 0 ? (
+            // Keyed by the plan, so switching plans deals its lines in again.
+            <View key={chosen} style={styles.gains}>
+              {gains.map((gain, index) => (
+                <Rise key={gain.key} index={index + 2} style={styles.gain}>
+                  <GainMark gain={gain} theme={theme} />
+                  <View style={styles.gainWords}>
+                    <Text style={[styles.gainTitle, { color: theme.foreground }]}>
+                      {gain.title}
+                    </Text>
+                    <Text
+                      numberOfLines={2}
+                      style={[styles.gainLine, { color: theme.mutedForeground }]}
+                    >
+                      {gain.line}
+                    </Text>
                   </View>
-                ))}
-                {Array.from({ length: freshShown }, (_, index) => (
-                  <Rise key={`fresh-${chosen}-${index}`} index={index + 2} distance={8}>
-                    <Breathe active={phase === 'confirming'}>
-                      {/* Dashed while bought-not-built; a solid outline once the plan is real. */}
-                      <View
-                        style={[
-                          styles.bay,
-                          baySize,
-                          phase === 'done' ? styles.built : styles.fresh,
-                          { borderColor: theme.borderStrong },
-                        ]}
-                      />
-                    </Breathe>
-                  </Rise>
-                ))}
-              </View>
-            ) : entitlement ? (
-              <View style={[styles.featureTile, { backgroundColor: theme.muted }]}>
-                <Ionicons
-                  name={`${FEATURE_ICON[entitlement]}-outline`}
-                  size={44}
-                  color={theme.foreground}
+                </Rise>
+              ))}
+            </View>
+          ) : null}
+
+          {/* --- the ways to pay ---------------------------------------------------------- */}
+          {choosing && !elsewhere ? (
+            offersLoading ? (
+              <View style={styles.plans}>
+                <View
+                  style={[styles.planCard, styles.planGhost, { backgroundColor: theme.muted }]}
                 />
                 <View
-                  style={[styles.lock, { backgroundColor: theme.primary, borderColor: theme.card }]}
-                >
-                  <Ionicons
-                    name={phase === 'done' ? 'lock-open' : 'lock-closed'}
-                    size={14}
-                    color={theme.primaryForeground}
-                  />
-                </View>
+                  style={[styles.planCard, styles.planGhost, { backgroundColor: theme.muted }]}
+                />
               </View>
-            ) : null}
-
-            {stamp}
-          </Rise>
-        )}
-
-        <Rise index={1} style={styles.titleRow}>
-          <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
-            <Text accessibilityRole="header" style={[styles.title, { color: theme.foreground }]}>
-              {title}
-            </Text>
-            <Text style={[styles.subtitle, { color: theme.mutedForeground }]}>{subtitle}</Text>
-          </View>
-          {phase === 'choose' ? stamp : null}
-        </Rise>
-
-        {plan.isPending ? (
-          <ActivityIndicator color={theme.mutedForeground} style={{ marginTop: spacing.lg }} />
-        ) : null}
-
-        {/* --- the choice: only when there is one ------------------------------------------ */}
-        {phase === 'choose' && options.length > 1 ? (
-          <Rise index={2} style={{ gap: spacing.sm }}>
-            <View accessibilityRole="radiogroup" style={{ gap: spacing.sm }}>
-              {options.map((tier, index) => {
-                const selected = tier === chosen;
-                const tierPrice = fromPrice(tier);
-                const limits = limitsFor(tier);
-                return (
-                  <PressableScale
-                    key={tier}
-                    onPress={() => {
-                      if (selected) return;
-                      haptic.selection();
-                      setPicked(tier);
-                    }}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: selected }}
-                    accessibilityLabel={`${PLAN_NAMES[tier]}${tierPrice ? `, from ${tierPrice.price} ${CADENCE_LABEL[tierPrice.cadence].short}` : ''}`}
-                    scaleTo={0.98}
-                    style={[
-                      styles.tier,
-                      { backgroundColor: selected ? theme.primarySoft : theme.cardRaised },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.radio,
-                        { backgroundColor: selected ? theme.primary : theme.muted },
-                      ]}
-                    >
-                      {selected ? (
-                        <Ionicons name="checkmark" size={14} color={theme.primaryForeground} />
-                      ) : null}
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                      {/* The plan as Settings shows it: its own badge, and the tag the first wears. */}
-                      <View style={styles.optionName}>
-                        <PlanBadge tier={tier} />
-                        {index === 0 ? (
-                          <PlanTag
-                            label="Recommended"
-                            fill={theme.primarySoft}
-                            ink={theme.primary}
-                          />
-                        ) : null}
+            ) : tiered || ways.length === 0 ? (
+              /*
+               * The plans as radio cards — always, priced or not. A build or a store with nothing
+               * to sell (no RevenueCat keys, Expo Go, an empty offering) still shows what each
+               * plan is; the prices, the flags and the billing switch arrive with the store's offers.
+               */
+              <Rise index={5} style={styles.plans}>
+                {bothBillings ? (
+                  <View style={styles.billing}>
+                    <TwoWay
+                      left="Monthly"
+                      right="Yearly"
+                      on={billing === 'annual'}
+                      onChange={(on) => setPickedCadence(on ? 'annual' : 'monthly')}
+                      said="Pay yearly"
+                    />
+                    {bestSaving >= 5 ? (
+                      <View style={[styles.saveTag, { backgroundColor: theme.primarySoft }]}>
+                        <Text style={[styles.saveTagText, { color: theme.primary }]}>
+                          Save up to {bestSaving}%
+                        </Text>
                       </View>
-                      <Text
-                        numberOfLines={1}
-                        style={[typeScale.caption, figure, { color: theme.mutedForeground }]}
-                      >
-                        {pad(limits.vehicles)} vehicles · {pad(limits.garages)} garages
-                      </Text>
-                    </View>
-                    {offersLoading ? (
-                      <ActivityIndicator size="small" color={theme.mutedForeground} />
-                    ) : tierPrice ? (
-                      <Text style={[typeScale.label, figure, { color: theme.foreground }]}>
-                        {tierPrice.price} {CADENCE_LABEL[tierPrice.cadence].short}
-                      </Text>
                     ) : null}
-                  </PressableScale>
-                );
-              })}
-            </View>
-          </Rise>
-        ) : null}
-
-        {phase === 'choose' && !elsewhere && ways.length > 1 ? (
-          <Rise index={2}>
-            <View accessibilityRole="radiogroup" style={styles.cadences}>
-              {ways.map((way) => {
-                const selected = way === offer;
-                return (
-                  <PressableScale
-                    key={way.cadence}
-                    onPress={() => {
-                      if (selected) return;
-                      haptic.selection();
-                      setPickedCadence(way.cadence);
-                    }}
-                    accessibilityRole="radio"
-                    accessibilityState={{ checked: selected }}
-                    accessibilityLabel={`${CADENCE_LABEL[way.cadence].long}, ${way.price}`}
-                    scaleTo={0.97}
-                    style={[
-                      styles.cadence,
-                      { backgroundColor: selected ? theme.primarySoft : theme.cardRaised },
-                    ]}
-                  >
-                    <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                      {CADENCE_LABEL[way.cadence].long}
-                    </Text>
-                    <Text style={[typeScale.label, figure, { color: theme.foreground }]}>
-                      {way.price}
-                    </Text>
-                  </PressableScale>
-                );
-              })}
-            </View>
-          </Rise>
-        ) : null}
-
-        {/* --- the order, or what is yours now --------------------------------------------- */}
-        {phase === 'done' && order ? (
-          <View style={{ gap: spacing.sm }} accessibilityLabel="Now included">
-            {data ? (
-              <Rise index={2}>
-                <PlanPass plan={data} price={null} />
-              </Rise>
-            ) : null}
-            {gainedFeatures(order.from, order.to).map((gain, index) => (
-              <Rise
-                key={gain}
-                index={index + 3}
-                style={[styles.included, { backgroundColor: theme.card }]}
-              >
-                <View style={[styles.includedIcon, { backgroundColor: theme.muted }]}>
-                  <Ionicons
-                    name={`${FEATURE_ICON[gain]}-outline`}
-                    size={18}
-                    color={theme.foreground}
-                  />
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[typeScale.label, { color: theme.foreground }]}>
-                    {ENTITLEMENT_COPY[gain].name}
-                  </Text>
-                  <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                    {ENTITLEMENT_COPY[gain].does}
-                  </Text>
+                  </View>
+                ) : null}
+                <View accessibilityRole="radiogroup" style={styles.plans}>
+                  {options.map((tier, index) => {
+                    const way = wayFor(tier);
+                    const room = limitsFor(tier).vehicles;
+                    const selected = tier === chosen;
+                    // Yearly, against twelve months of monthly: the month it would have cost, struck.
+                    const month = sold(tier).find((each) => each.cadence === 'monthly');
+                    return (
+                      <PlanCard
+                        key={tier}
+                        head={
+                          <View style={styles.planHead}>
+                            <PlanBadge tier={tier} size="md" />
+                          </View>
+                        }
+                        sub={
+                          <View style={styles.planSub}>
+                            <Bays room={room} used={data?.usage.vehicles ?? 0} />
+                          </View>
+                        }
+                        price={way ? priceOf(way) : null}
+                        compare={way?.cadence === 'annual' && month ? month.price : null}
+                        saving={way?.cadence === 'annual' ? savingOf(tier) : 0}
+                        said={`${PLAN_NAMES[tier]}, room for ${room} vehicles${
+                          way ? `, ${priceOf(way).figure} ${priceOf(way).unit}` : ''
+                        }`}
+                        selected={selected}
+                        tab={index === 0 ? 'Recommended' : undefined}
+                        onPress={() => {
+                          if (tier === chosen) return;
+                          haptic.selection();
+                          setPicked(tier);
+                        }}
+                      />
+                    );
+                  })}
                 </View>
               </Rise>
-            ))}
-          </View>
-        ) : waiting && chosen ? (
-          <Rise index={2}>
-            <Steps tier={chosen} store={store} slow={phase === 'slow'} seconds={seconds} />
-          </Rise>
-        ) : chosen ? (
-          // Keyed by the plan, so switching plans deals its tiles in again.
-          <Perks key={chosen} from={current} to={chosen} />
-        ) : null}
+            ) : (
+              <Rise index={5}>
+                <View accessibilityRole="radiogroup" style={styles.plans}>
+                  {ways.map((way) => (
+                    <PlanCard
+                      key={way.cadence}
+                      head={
+                        <Text style={[styles.planName, { color: theme.foreground }]}>
+                          {CADENCE_NAME[way.cadence]}
+                        </Text>
+                      }
+                      sub={
+                        <Text
+                          numberOfLines={1}
+                          style={[styles.planLine, { color: theme.mutedForeground }]}
+                        >
+                          {billedOf(way)}
+                        </Text>
+                      }
+                      price={priceOf(way)}
+                      compare={null}
+                      saving={chosen ? (way.cadence === 'annual' ? savingOf(chosen) : 0) : 0}
+                      said={`${CADENCE_NAME[way.cadence]}, ${billedOf(way)}, ${priceOf(way).figure} ${
+                        priceOf(way).unit
+                      }`}
+                      selected={way === offer}
+                      onPress={() => {
+                        if (way === offer) return;
+                        haptic.selection();
+                        setPickedCadence(way.cadence);
+                      }}
+                    />
+                  ))}
+                </View>
+              </Rise>
+            )
+          ) : null}
+
+          {/* --- the order, or what is yours now ------------------------------------------ */}
+          {phase === 'done' && order ? (
+            <View style={styles.gains} accessibilityLabel="Now included">
+              {data ? (
+                <Rise index={1}>
+                  <PlanPass plan={data} price={null} />
+                </Rise>
+              ) : null}
+              {gainsOf(order.from, order.to, null).map((gain, index) => (
+                <Rise key={gain.key} index={index + 2} style={styles.gain}>
+                  <GainMark gain={gain} theme={theme} />
+                  <View style={styles.gainWords}>
+                    <Text style={[styles.gainTitle, { color: theme.foreground }]}>
+                      {gain.title}
+                    </Text>
+                    <Text style={[styles.gainLine, { color: theme.mutedForeground }]}>
+                      {gain.line}
+                    </Text>
+                  </View>
+                  <Ionicons name="checkmark-circle" size={20} color={theme.success} />
+                </Rise>
+              ))}
+            </View>
+          ) : waiting && chosen ? (
+            <Rise index={1}>
+              <Steps tier={chosen} store={store} slow={phase === 'slow'} seconds={seconds} />
+            </Rise>
+          ) : null}
+
+          {elsewhere && phase === 'choose' ? (
+            <Text style={[styles.subtitle, { color: theme.mutedForeground }]}>
+              Your plan is billed through the Garaj website. Change it there, signed in to this
+              account.
+            </Text>
+          ) : null}
+        </View>
       </ScrollView>
 
-      {/* --- the one action, pinned where the thumb is ------------------------------------ */}
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+      {/* --- the one action, pinned where the thumb is, the terms under it ---------------- */}
+      <View
+        onLayout={(event) => setFootHeight(Math.ceil(event.nativeEvent.layout.height))}
+        style={[
+          styles.footer,
+          { paddingBottom: Math.max(insets.bottom, spacing.md), backgroundColor: theme.background },
+        ]}
+      >
         {failureText ? (
-          <Text
-            accessibilityRole="alert"
-            style={[typeScale.caption, { color: theme.destructive, textAlign: 'center' }]}
-          >
+          <Text accessibilityRole="alert" style={[styles.fine, { color: theme.destructive }]}>
             {failureText}
           </Text>
         ) : notice ? (
           <Text
             accessibilityLiveRegion="polite"
-            style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}
+            style={[styles.fine, { color: theme.mutedForeground }]}
           >
             {notice}
           </Text>
         ) : null}
 
-        {elsewhere && phase === 'choose' ? (
-          <Text style={[typeScale.body, { color: theme.mutedForeground, textAlign: 'center' }]}>
-            Your plan is billed through the Garaj website. Change it there, signed in to this
-            account.
-          </Text>
-        ) : phase === 'done' ? (
+        {elsewhere && phase === 'choose' ? null : phase === 'done' ? (
           <Cta label="Done" onPress={() => router.back()} />
         ) : phase === 'confirming' ? (
           <View
-            style={[styles.status, { backgroundColor: theme.card }]}
+            style={[styles.status, { backgroundColor: theme.muted }]}
             accessibilityLiveRegion="polite"
           >
             <ActivityIndicator color={theme.foreground} />
-            <Text style={[typeScale.label, { color: theme.foreground }]}>
+            <Text style={[styles.statusText, { color: theme.foreground }]}>
               Confirming your purchase
             </Text>
           </View>
@@ -600,8 +704,11 @@ export default function UpgradeScreen() {
           <Cta label="Check again" busy={plan.isFetching} onPress={() => void refetch()} />
         ) : chosen ? (
           <Cta
-            label={`${switching ? 'Switch' : 'Upgrade'} to ${PLAN_NAMES[chosen]}`}
-            icon="arrow-forward"
+            label={
+              trial
+                ? `Try ${trial} free`
+                : `${switching ? 'Switch' : 'Upgrade'} to ${PLAN_NAMES[chosen]}`
+            }
             busy={purchase.isPending}
             disabled={unavailable || !offer || !userId}
             onPress={() => {
@@ -612,110 +719,453 @@ export default function UpgradeScreen() {
           />
         ) : null}
 
-        {phase === 'choose' && chosen && !elsewhere ? (
-          <Text style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}>
-            {footnote}
-          </Text>
+        {choosing && !elsewhere ? (
+          <Text style={[styles.fine, { color: theme.mutedForeground }]}>{footnote}</Text>
         ) : null}
+      </View>
 
-        {phase !== 'done' ? (
-          <View style={styles.links}>
-            {waiting || elsewhere ? null : inStore ? (
-              <PressableScale
-                onPress={() => void openStoreManagement(data)}
-                accessibilityRole="button"
-                hitSlop={8}
-              >
-                <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                  Manage in {store}
-                </Text>
-              </PressableScale>
-            ) : storeAvailable() && userId ? (
-              // A new phone or a reinstall: what this store account already bought.
-              <PressableScale
-                onPress={() => restoring.mutate()}
-                disabled={restoring.isPending}
-                accessibilityRole="button"
-                hitSlop={8}
-              >
-                <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                  {restoring.isPending ? 'Restoring…' : 'Restore purchases'}
-                </Text>
-              </PressableScale>
-            ) : null}
-          </View>
+      {/* Over the picture and staying there: the way out, and what the store already holds. */}
+      <View pointerEvents="box-none" style={[styles.top, { top: insets.top + spacing.sm }]}>
+        <OverKey icon="close" label="Close" onPress={() => router.back()} />
+        {phase === 'done' || waiting || elsewhere ? null : inStore ? (
+          <OverKey text="Manage" label="Manage" onPress={() => void openStoreManagement(data)} />
+        ) : storeAvailable() && userId ? (
+          // A new phone or a reinstall: what this store account already bought.
+          <OverKey
+            text={restoring.isPending ? 'Restoring…' : 'Restore'}
+            label="Restore purchases"
+            disabled={restoring.isPending}
+            onPress={() => restoring.mutate()}
+          />
         ) : null}
       </View>
     </View>
   );
 }
 
+/** The ink the picture's keys are drawn in: theirs is the picture's light, the same either way. */
+const PICTURE_INK = '#1C1712';
+
 /**
- * What the plan adds, as tiles dealt in one after another: each limit it raises as a big copper
- * figure — "+3 more vehicles" — then each feature it unlocks, its icon beside its name and marked
- * new. Two columns.
+ * The paywall's picture, drawn: a warm evening over the hills, trees and two birds, and on the road a
+ * chunky copper car with its lights on and speed behind it, coins in the air and sparks in the sky —
+ * what Plus buys a garage, as a storybook frame. Authored on a 390×300 board and cut to fill from the bottom up, so
+ * the road and the car always show and a tall screen gets more sky. One picture in both schemes, as
+ * an illustration is. Shapes and gradients only: react-native-svg filters crash Android.
  */
-function Perks({ from, to }: { from: PlanTier; to: PaidTier }) {
-  const theme = useTheme();
-  const before = limitsFor(from);
-  const after = limitsFor(to);
-  const perks = [
-    ...(['vehicles', 'garages', 'members'] as const)
-      .filter((limit) => after[limit] > before[limit])
-      .map((limit) => ({
-        key: limit,
-        icon: LIMIT_ICON[limit],
-        figure: `+${after[limit] - before[limit]}`,
-        label: `${noun(limit, after[limit] - before[limit])}${limit === 'members' ? ' per garage' : ''}`,
-      })),
-    ...gainedFeatures(from, to).map((gain) => ({
-      key: gain,
-      icon: `${FEATURE_ICON[gain]}-outline` as keyof typeof Ionicons.glyphMap,
-      figure: null,
-      label: ENTITLEMENT_COPY[gain].name,
-    })),
-  ];
-  if (perks.length === 0) return null;
+function Art({ height, breathe }: { height: number; breathe: boolean }) {
+  const { width } = useWindowDimensions();
   return (
-    <View style={{ gap: 6 }}>
-      <Text style={[figure, styles.perksTitle, { color: theme.primary }]}>
-        {PLAN_NAMES[to].toUpperCase()} ADDS
-      </Text>
-      <View
-        accessible
-        style={styles.perks}
-        accessibilityLabel={`${PLAN_NAMES[to]} adds ${perks
-          .map((perk) => (perk.figure ? `${perk.figure} ${perk.label}` : perk.label))
-          .join(', ')}`}
-      >
-        {perks.map((perk, index) => (
-          <Rise key={perk.key} index={index + 3} distance={10} style={styles.perkCell}>
-            <View style={[styles.perk, { backgroundColor: theme.cardRaised }, lift(theme, 'low')]}>
-              <View style={[styles.perkIcon, { backgroundColor: theme.primarySoft }]}>
-                <Ionicons name={perk.icon} size={14} color={theme.primary} />
-              </View>
-              <View style={styles.perkWords}>
-                {perk.figure ? (
-                  <Text style={[figure, styles.perkFigure, { color: theme.foreground }]}>
-                    {perk.figure}
-                  </Text>
-                ) : (
-                  <Text style={[styles.perkNew, { color: theme.primary }]}>NEW</Text>
-                )}
-                <Text
-                  numberOfLines={perk.figure ? 1 : 2}
-                  style={[
-                    perk.figure ? styles.perkLabel : styles.perkName,
-                    { color: perk.figure ? theme.mutedForeground : theme.foreground },
-                  ]}
-                >
-                  {perk.label}
-                </Text>
-              </View>
-            </View>
-          </Rise>
-        ))}
+    <View
+      style={{ height, overflow: 'hidden' }}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Breathe active={breathe}>
+        <Svg
+          width={width}
+          height={height}
+          viewBox="0 0 390 300"
+          preserveAspectRatio="xMidYMax slice"
+        >
+          <Defs>
+            <LinearGradient id="pw-sky" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#E7845A" />
+              <Stop offset="0.55" stopColor="#F6BC8A" />
+              <Stop offset="1" stopColor="#FCE3B8" />
+            </LinearGradient>
+            <RadialGradient id="pw-sun" cx="50%" cy="50%" r="50%">
+              <Stop offset="0" stopColor="#FFF3C9" stopOpacity={0.95} />
+              <Stop offset="1" stopColor="#FFF3C9" stopOpacity={0} />
+            </RadialGradient>
+            <LinearGradient id="pw-body" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#F79A5B" />
+              <Stop offset="1" stopColor="#C4531A" />
+            </LinearGradient>
+            <LinearGradient id="pw-road" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#4A3A33" />
+              <Stop offset="1" stopColor="#2E2420" />
+            </LinearGradient>
+          </Defs>
+          <Rect width="390" height="300" fill="url(#pw-sky)" />
+          {/* The sun, low, and its glow. */}
+          <Circle cx="292" cy="130" r="96" fill="url(#pw-sun)" />
+          <Circle cx="292" cy="130" r="40" fill="#FFE9A8" />
+          <Path
+            d="M36 80 C36 68 52 62 62 68 C68 56 90 56 96 70 C108 68 116 76 112 86 L40 86 C34 86 32 82 36 80 Z"
+            fill="#FFF6EC"
+            opacity={0.85}
+          />
+          <Path
+            d="M298 52 C300 44 312 42 318 47 C324 39 340 41 342 51 C350 51 354 58 349 62 L302 62 C296 62 294 56 298 52 Z"
+            fill="#FFF6EC"
+            opacity={0.7}
+          />
+          {/* Hills, far then near. */}
+          <Path
+            d="M0 194 C52 166 112 168 170 184 C228 200 292 164 390 178 L390 300 L0 300 Z"
+            fill="#EAA172"
+          />
+          <Path
+            d="M0 220 C70 200 140 208 204 216 C270 224 328 202 390 210 L390 300 L0 300 Z"
+            fill="#D8854F"
+          />
+          {/* The road, its edge and its dashes. */}
+          <Rect y="234" width="390" height="66" fill="url(#pw-road)" />
+          <Rect y="234" width="390" height="3" fill="#6B544A" />
+          {[16, 80, 144, 208, 272, 336].map((x) => (
+            <Rect
+              key={x}
+              x={x}
+              y="262"
+              width="34"
+              height="5"
+              rx="2.5"
+              fill="#F7CF6A"
+              opacity={0.85}
+            />
+          ))}
+          {/* Trees along the near hills, and two birds over them. */}
+          {[
+            [26, 207, 1],
+            [48, 203, 0.8],
+            [344, 203, 0.85],
+            [368, 207, 1],
+          ].map(([x, y, k]) => (
+            <G key={x} transform={`translate(${x} ${y}) scale(${k})`}>
+              <Rect x="-1.5" y="0" width="3" height="10" rx="1.5" fill="#8A4A2A" />
+              <Circle cx="0" cy="-3" r="9" fill="#B4683A" />
+              <Circle cx="-3" cy="-6" r="4" fill="#C97B49" />
+            </G>
+          ))}
+          <Path
+            d="M150 48 q5 -5 10 0 q5 -5 10 0 M176 38 q4 -4 8 0 q4 -4 8 0"
+            stroke="#8A4A2A"
+            strokeWidth={1.6}
+            strokeLinecap="round"
+            fill="none"
+          />
+          {/* The car's headlight on the road ahead, its speed behind it, and its shadow. */}
+          <Path
+            d="M278 198 Q312 190 336 192 Q340 202 336 212 Q312 212 278 205 Z"
+            fill="#FFF3B0"
+            opacity={0.3}
+          />
+          {[
+            [56, 180, 100],
+            [38, 194, 96],
+            [62, 208, 102],
+          ].map(([x0, y, x1]) => (
+            <Path
+              key={y}
+              d={`M${x0} ${y} L${x1} ${y}`}
+              stroke="#FFFFFF"
+              strokeOpacity={0.75}
+              strokeWidth={4}
+              strokeLinecap="round"
+            />
+          ))}
+          <Ellipse cx="199" cy="250" rx="94" ry="7" fill="#000000" opacity={0.28} />
+          <G transform="translate(102 146) scale(0.92)">
+            <Car />
+          </G>
+          {/* Coins and sparks in the air. */}
+          <Coin x={60} y={150} r={13} />
+          <Coin x={334} y={186} r={11} />
+          <Coin x={98} y={106} r={9} tilt />
+          <Spark x={34} y={118} s={7} fill="#FFFFFF" />
+          <Spark x={238} y={86} s={6} fill="#FFFFFF" />
+          <Spark x={368} y={156} s={5} fill="#FFE07A" />
+          <Spark x={146} y={78} s={4.5} fill="#FFFFFF" />
+        </Svg>
+      </Breathe>
+    </View>
+  );
+}
+
+/**
+ * The picture's car, side on: a glossy copper body and cabin, dark glass, a mirror, big round
+ * wheels in their arches.
+ */
+function Car() {
+  return (
+    <>
+      <Path
+        d="M14 64 C14 52 24 46 38 45 L160 42 C178 41 194 50 196 64 L196 82 C196 88 192 92 186 92 L22 92 C17 92 14 88 14 82 Z"
+        fill="url(#pw-body)"
+      />
+      <Path d="M54 46 C62 24 76 16 98 16 L126 16 C144 16 156 26 166 44 Z" fill="url(#pw-body)" />
+      <Path d="M68 44 C74 29 84 23 98 23 L106 23 L106 44 Z" fill="#2E2A3A" />
+      <Path d="M112 23 L126 23 C139 23 148 31 155 44 L112 44 Z" fill="#2E2A3A" />
+      <Path d="M80 42 L92 25 L98 25 L86 42 Z" fill="#FFFFFF" opacity={0.3} />
+      <Path d="M122 42 L134 25 L139 26 L128 42 Z" fill="#FFFFFF" opacity={0.3} />
+      <Path
+        d="M30 54 C70 49 130 48 180 50"
+        stroke="#FFFFFF"
+        strokeOpacity={0.5}
+        strokeWidth={3}
+        strokeLinecap="round"
+        fill="none"
+      />
+      <Path d="M108 47 L108 84" stroke="#A8481A" strokeOpacity={0.55} strokeWidth={1.6} />
+      <Rect x="118" y="56" width="13" height="3.5" rx="1.75" fill="#A8481A" />
+      <Path d="M150 45 L158 40 L163 43 L157 48 Z" fill="#C4531A" />
+      <Ellipse cx="190" cy="60" rx="5" ry="4" fill="#FFF3B0" />
+      <Rect x="13" y="56" width="6" height="9" rx="2" fill="#E2453C" />
+      <Rect x="12" y="80" width="186" height="7" rx="3.5" fill="#3B2E2A" opacity={0.35} />
+      {[54, 154].map((cx) => (
+        <G key={cx}>
+          {/* The arch the wheel sits in, darker than the body round it. */}
+          <Path d={`M${cx - 24} 90 A24 24 0 0 1 ${cx + 24} 90 Z`} fill="#8E3A12" />
+          <Circle cx={cx} cy="92" r="20" fill="#2B2238" />
+          <Circle cx={cx} cy="92" r="10.5" fill="#E4DED8" />
+          <Circle cx={cx} cy="92" r="7" fill="none" stroke="#BFB6AE" strokeWidth={1.5} />
+          <Circle cx={cx} cy="92" r="3.5" fill="#8C837D" />
+        </G>
+      ))}
+    </>
+  );
+}
+
+/** A gold coin in the air, face on or turned away. */
+function Coin({ x, y, r, tilt = false }: { x: number; y: number; r: number; tilt?: boolean }) {
+  const rx = tilt ? r * 0.55 : r;
+  return (
+    <G transform={`translate(${x} ${y})${tilt ? ' rotate(-25)' : ''}`}>
+      <Ellipse rx={rx} ry={r} fill="#FFC83D" stroke="#E39A12" strokeWidth={2} />
+      <Ellipse rx={rx * 0.6} ry={r * 0.6} fill="none" stroke="#E39A12" strokeWidth={1.4} />
+      <Path
+        d={`M ${-rx * 0.35} ${-r * 0.55} Q ${-rx * 0.1} ${-r * 0.75} ${rx * 0.2} ${-r * 0.6}`}
+        stroke="#FFF6D6"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        fill="none"
+      />
+    </G>
+  );
+}
+
+/** A four-pointed spark. */
+function Spark({ x, y, s, fill }: { x: number; y: number; s: number; fill: string }) {
+  const k = s * 0.18;
+  return (
+    <Path
+      d={`M${x} ${y - s} Q${x + k} ${y - k} ${x + s} ${y} Q${x + k} ${y + k} ${x} ${y + s} Q${x - k} ${y + k} ${x - s} ${y} Q${x - k} ${y - k} ${x} ${y - s} Z`}
+      fill={fill}
+    />
+  );
+}
+
+/** A key over the picture: white with ink, as the picture is the same in either scheme. */
+function OverKey({
+  label,
+  icon,
+  text,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  text?: string;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <PressableScale
+      onPress={() => {
+        haptic.selection();
+        onPress();
+      }}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={8}
+      scaleTo={0.92}
+      style={[styles.overKey, text ? styles.overPill : styles.overRound]}
+    >
+      {icon ? (
+        <Ionicons name={icon} size={20} color={PICTURE_INK} />
+      ) : (
+        <Text style={styles.overText}>{text}</Text>
+      )}
+    </PressableScale>
+  );
+}
+
+/** A gain's icon on a tile of its own hue. */
+function GainMark({ gain, theme }: { gain: Gain; theme: Theme }) {
+  const color = theme[gain.hue];
+  return (
+    <View style={[styles.gainArt, { backgroundColor: `${color}1F` }]}>
+      <Ionicons name={gain.icon} size={19} color={color} />
+    </View>
+  );
+}
+
+/**
+ * A plan, or a way to pay, as the app's choice card (onboarding's `ChoiceCard`): raised at rest, the
+ * copper wash every chosen thing wears when it is the one, and a radio that springs into a copper
+ * check. Its head says which (a plan's own badge), the line under it what it holds, and on the right
+ * what it comes to a month — with the month it would have cost struck over it, when yearly saves.
+ * What a yearly price saves rides the top edge as a copper flag.
+ */
+function PlanCard({
+  head,
+  sub,
+  price,
+  compare,
+  saving,
+  said,
+  selected,
+  tab,
+  onPress,
+}: {
+  head: ReactNode;
+  sub: ReactNode;
+  /** What it comes to; null while the store has no price for it. */
+  price: { figure: string; unit: string } | null;
+  /** The month it would have cost paid monthly, struck over a yearly price. */
+  compare: string | null;
+  saving: number;
+  said: string;
+  selected: boolean;
+  /** A word on a tab grown out of the card's top edge: Recommended. */
+  tab?: string;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const [check] = useState(() => new Animated.Value(selected ? 1 : 0));
+  /*
+   * The card's face: filled like the app's other cards at rest, the copper wash when chosen — made
+   * opaque over the page, so the tab and the curves it grows out on are one surface with it.
+   */
+  const face = selected ? composite(theme.primarySoft, theme.background) : theme.muted;
+  // Made once: a new interpolation each render re-attaches its native node.
+  const pop = useMemo(
+    () => ({
+      opacity: check,
+      transform: [{ scale: check.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }],
+    }),
+    [check],
+  );
+  useEffect(() => {
+    const target = selected ? 1 : 0;
+    if (reduce) return check.setValue(target);
+    const animation = Animated.spring(check, {
+      toValue: target,
+      speed: 20,
+      bounciness: 12,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [check, selected, reduce]);
+
+  return (
+    <PressableScale
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      accessibilityLabel={`${said}${tab ? `, ${tab.toLowerCase()}` : ''}${
+        saving >= 5 ? `, saves ${saving}%` : ''
+      }`}
+      scaleTo={0.98}
+      style={[
+        styles.planCard,
+        // Room under the flag, so it never sits on the struck price.
+        saving >= 5 ? styles.planFlagged : null,
+        tab ? styles.planTabbed : null,
+        { backgroundColor: face },
+      ]}
+    >
+      {tab ? (
+        // The tab, rising out of the card's top edge on a curve either side, as the dock's key does.
+        <View pointerEvents="none" style={[styles.tab, { backgroundColor: face }]}>
+          <View style={[styles.fillet, styles.filletLeft, { backgroundColor: face }]}>
+            <View
+              style={[
+                styles.filletCut,
+                styles.filletCutLeft,
+                { backgroundColor: theme.background },
+              ]}
+            />
+          </View>
+          <View style={[styles.fillet, styles.filletRight, { backgroundColor: face }]}>
+            <View
+              style={[
+                styles.filletCut,
+                styles.filletCutRight,
+                { backgroundColor: theme.background },
+              ]}
+            />
+          </View>
+          <Ionicons name="sparkles" size={10} color={theme.primary} />
+          <Text style={[styles.tabText, { color: theme.primary }]}>{tab.toUpperCase()}</Text>
+        </View>
+      ) : null}
+      <View style={[styles.radio, { backgroundColor: theme.cardRaised }]}>
+        <Animated.View
+          style={[StyleSheet.absoluteFill, styles.radioOn, { backgroundColor: theme.primary }, pop]}
+        >
+          <Ionicons name="checkmark" size={15} color={theme.primaryForeground} />
+        </Animated.View>
       </View>
+      <View style={styles.planWords}>
+        {head}
+        {sub}
+      </View>
+      {price ? (
+        <View style={styles.planPrice}>
+          {compare ? (
+            <Text style={[figure, styles.planCompare, { color: theme.mutedForeground }]}>
+              {compare}
+            </Text>
+          ) : null}
+          <Text style={[figure, styles.planFigure, { color: theme.foreground }]}>
+            {price.figure}
+          </Text>
+          <Text style={[styles.planUnit, { color: theme.mutedForeground }]}>{price.unit}</Text>
+        </View>
+      ) : null}
+      {saving >= 5 ? (
+        <View style={[styles.save, { backgroundColor: theme.primary }]}>
+          <Text style={[styles.saveText, { color: theme.primaryForeground }]}>SAVE {saving}%</Text>
+        </View>
+      ) : null}
+    </PressableScale>
+  );
+}
+
+/**
+ * A plan's room for vehicles as a row of little bays, the garage's own picture: the ones your
+ * vehicles take filled in copper, the rest open. Six at most; a figure after them says the rest.
+ */
+function Bays({ room, used }: { room: number; used: number }) {
+  const theme = useTheme();
+  return (
+    <View
+      style={styles.bays}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {Array.from({ length: Math.min(room, BAYS_SHOWN) }, (_, index) => (
+        <View
+          key={index}
+          style={[
+            styles.bay,
+            index < used
+              ? { backgroundColor: theme.primary }
+              : { borderWidth: 1.25, borderColor: theme.borderStrong },
+          ]}
+        />
+      ))}
+      {/* The rest of the room as a figure: six bays, and "+94" for a hundred. */}
+      {room > BAYS_SHOWN ? (
+        <Text style={[figure, styles.planMeta, { color: theme.mutedForeground }]}>
+          +{room - BAYS_SHOWN}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -756,7 +1206,7 @@ function Steps({
           key={row.state}
           style={[
             styles.step,
-            (row.state === 'active' || row.state === 'waiting') && { backgroundColor: theme.card },
+            (row.state === 'active' || row.state === 'waiting') && { backgroundColor: theme.muted },
           ]}
         >
           <View style={styles.stepGlyph}>
@@ -776,9 +1226,8 @@ function Steps({
           </View>
           <Text
             style={[
-              typeScale.label,
+              styles.stepText,
               {
-                flex: 1,
                 color: row.state === 'pending' ? theme.mutedForeground : theme.foreground,
                 fontWeight: row.state === 'pending' ? '400' : '600',
               },
@@ -787,7 +1236,7 @@ function Steps({
             {row.label}
           </Text>
           {row.aside ? (
-            <Text style={[typeScale.caption, figure, { color: theme.mutedForeground }]}>
+            <Text style={[figure, styles.stepAside, { color: theme.mutedForeground }]}>
               {row.aside}
             </Text>
           ) : null}
@@ -797,7 +1246,7 @@ function Steps({
   );
 }
 
-/** Fades a child in and out while `active` — the bays a payment is still confirming. */
+/** Fades a child in and out while `active` — the mark, while a payment is still confirming. */
 function Breathe({ active, children }: { active: boolean; children: ReactNode }) {
   const reduce = useReduceMotion();
   const opacity = useRef(new Animated.Value(1)).current;
@@ -815,19 +1264,21 @@ function Breathe({ active, children }: { active: boolean; children: ReactNode })
     loop.start();
     return () => loop.stop();
   }, [active, reduce, opacity]);
-  return <Animated.View style={{ opacity }}>{children}</Animated.View>;
+  return (
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity }]}>
+      {children}
+    </Animated.View>
+  );
 }
 
-/** The one button: ink, full width, a spinner in place of the label while it works. */
+/** The one button: an ink pill, full width, a spinner in place of the label while it works. */
 function Cta({
   label,
-  icon,
   busy = false,
   disabled = false,
   onPress,
 }: {
   label: string;
-  icon?: keyof typeof Ionicons.glyphMap;
   busy?: boolean;
   disabled?: boolean;
   onPress: () => void;
@@ -841,23 +1292,12 @@ function Cta({
       accessibilityLabel={label}
       accessibilityState={{ busy, disabled }}
       scaleTo={0.98}
-      style={[
-        styles.cta,
-        {
-          backgroundColor: theme.primary,
-          borderTopColor: theme.primarySheen,
-          borderBottomColor: theme.primaryEdge,
-          opacity: disabled ? 0.45 : 1,
-        },
-      ]}
+      style={[styles.cta, { backgroundColor: theme.foreground, opacity: disabled ? 0.45 : 1 }]}
     >
       {busy ? (
-        <ActivityIndicator color={theme.primaryForeground} />
+        <ActivityIndicator color={theme.background} />
       ) : (
-        <>
-          <Text style={[typeScale.headline, { color: theme.primaryForeground }]}>{label}</Text>
-          {icon ? <Ionicons name={icon} size={18} color={theme.primaryForeground} /> : null}
-        </>
+        <Text style={[styles.ctaText, { color: theme.background }]}>{label}</Text>
       )}
     </PressableScale>
   );
@@ -865,105 +1305,120 @@ function Cta({
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  page: { paddingHorizontal: spacing.md, paddingBottom: spacing.md, gap: 10 },
-  title: { fontSize: 22, lineHeight: 27, fontWeight: '700', letterSpacing: -0.6 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  subtitle: { fontSize: 14, lineHeight: 20, fontWeight: '400' },
-  // The bays and the stamp side by side, the stamp on the hero's own edge rather than over it.
-  hero: {
-    ...leaf('lg'),
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.md,
+  scroll: { flexGrow: 1 },
+  sheet: {
+    marginTop: -radius.xxxl,
+    borderTopLeftRadius: radius.xxxl + 4,
+    borderTopRightRadius: radius.xxxl + 4,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg + 2,
+    paddingBottom: spacing.md,
+    gap: spacing.md + 2,
   },
-  bays: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
-  bay: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  fresh: { borderWidth: 1.5, borderStyle: 'dashed' },
-  built: { borderWidth: 1.5 },
-  featureTile: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lock: {
-    position: 'absolute',
-    right: -8,
-    bottom: -8,
-    width: 32,
-    height: 32,
+  heading: { gap: 6 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 },
+  title: { fontSize: 24, lineHeight: 29, fontWeight: '800', letterSpacing: -0.7 },
+  subtitle: { fontSize: 14, lineHeight: 20 },
+  flag: {
+    height: 24,
     borderRadius: 999,
-    borderWidth: 3,
+    borderWidth: 1.5,
+    borderColor: PICTURE_INK,
+    backgroundColor: '#FFE9A8',
+    paddingHorizontal: 9,
+    justifyContent: 'center',
+  },
+  flagText: {
+    fontSize: 10.5,
+    lineHeight: 13,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    color: PICTURE_INK,
+  },
+  billing: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  saveTag: { height: 24, borderRadius: 999, paddingHorizontal: 10, justifyContent: 'center' },
+  saveTagText: { fontSize: 11.5, lineHeight: 15, fontWeight: '700' },
+  gains: { gap: 12 },
+  gain: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  gainArt: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  badge: {
-    width: 50,
-    height: 50,
-    borderRadius: 999,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    transform: [{ rotate: '-8deg' }],
-  },
-  badgeFigure: { fontSize: 15, lineHeight: 18, fontWeight: '700' },
-  tier: {
+  gainWords: { flex: 1, minWidth: 0, gap: 1 },
+  gainTitle: { fontSize: 15, lineHeight: 19, fontWeight: '700', letterSpacing: -0.2 },
+  gainLine: { fontSize: 12.5, lineHeight: 17 },
+  plans: { gap: 10 },
+  planCard: {
+    ...leaf('md'),
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    ...leaf('md'),
-    paddingHorizontal: spacing.md,
+    minHeight: 76,
+    paddingLeft: 14,
+    paddingRight: 16,
     paddingVertical: 12,
   },
-  cadences: { flexDirection: 'row', gap: spacing.sm },
-  cadence: {
-    flex: 1,
-    gap: 2,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    ...leaf('sm'),
-  },
-  radio: {
-    width: 22,
-    height: 22,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  optionName: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  perksTitle: { fontSize: 10.5, lineHeight: 13, fontWeight: '600', letterSpacing: 1.4 },
-  perks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
-  perkCell: { width: '48.5%' },
-  perk: {
-    ...leaf('sm'),
-    flexGrow: 1,
-    minHeight: 46,
+  planFlagged: { paddingTop: 20 },
+  planTabbed: { marginTop: TAB },
+  tab: {
+    position: 'absolute',
+    top: -TAB,
+    left: 30,
+    height: TAB,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 4,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
   },
-  perkWords: { flex: 1, minWidth: 0 },
-  perkIcon: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
+  tabText: { fontSize: 9.5, lineHeight: 12, fontWeight: '800', letterSpacing: 0.7 },
+  // The tab's feet: a square of the face with the page's circle cut from its outer corner.
+  fillet: { position: 'absolute', bottom: 0, width: FILLET, height: FILLET, overflow: 'hidden' },
+  filletLeft: { left: -FILLET },
+  filletRight: { right: -FILLET },
+  filletCut: {
+    position: 'absolute',
+    top: -FILLET,
+    width: FILLET * 2,
+    height: FILLET * 2,
+    borderRadius: FILLET,
+  },
+  filletCutLeft: { left: -FILLET },
+  filletCutRight: { left: 0 },
+  radio: { width: 26, height: 26, borderRadius: 13 },
+  radioOn: { borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  planHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  planSub: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bays: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  bay: { width: 8, height: 10, borderRadius: 2.5 },
+  planMeta: { fontSize: 11.5, lineHeight: 15, fontWeight: '600', marginLeft: 3 },
+  planCompare: {
+    fontSize: 11,
+    lineHeight: 14,
+    textDecorationLine: 'line-through',
+  },
+  planGhost: { opacity: 0.6 },
+  planWords: { flex: 1, minWidth: 0, gap: 7 },
+  planName: { fontSize: 16, lineHeight: 20, fontWeight: '700', letterSpacing: -0.3 },
+  planLine: { fontSize: 12, lineHeight: 16 },
+  planPrice: { alignItems: 'flex-end' },
+  planFigure: { fontSize: 17, lineHeight: 21, fontWeight: '700', letterSpacing: -0.4 },
+  planUnit: { fontSize: 11, lineHeight: 14 },
+  // On the card's tight top-right corner, over the price it is about.
+  save: {
+    position: 'absolute',
+    top: -10,
+    right: 14,
+    height: 20,
+    borderRadius: 999,
+    paddingHorizontal: 8,
     justifyContent: 'center',
   },
-  perkNew: { fontSize: 9, lineHeight: 12, fontWeight: '800', letterSpacing: 0.8 },
-  perkFigure: { fontSize: 17, lineHeight: 20, fontWeight: '700', letterSpacing: -0.4 },
-  perkLabel: { fontSize: 11.5, lineHeight: 15, fontWeight: '500' },
-  perkName: { fontSize: 12, lineHeight: 15, fontWeight: '700' },
+  saveText: { fontSize: 10, lineHeight: 12, fontWeight: '800', letterSpacing: 0.5 },
   step: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -981,52 +1436,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepRing: { width: 12, height: 12, borderRadius: 999, borderWidth: 2 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  included: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: radius.lg,
-    padding: 12,
-  },
-  includedIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  footer: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
+  stepText: { flex: 1, fontSize: 14, lineHeight: 19 },
+  stepAside: { fontSize: 12, lineHeight: 16 },
+  footer: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.sm },
+  fine: { fontSize: 12, lineHeight: 16, textAlign: 'center' },
   status: {
-    height: 48,
-    borderRadius: 16,
+    height: 52,
+    borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
   },
+  statusText: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
   cta: {
-    height: 48,
-    borderRadius: 16,
-    flexDirection: 'row',
+    height: 54,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    borderTopWidth: 1,
-    borderBottomWidth: 1.5,
     shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  links: { flexDirection: 'row', justifyContent: 'center' },
+  ctaText: { fontSize: 16, lineHeight: 21, fontWeight: '700', letterSpacing: -0.2 },
+  top: {
+    position: 'absolute',
+    left: spacing.lg,
+    right: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  overKey: {
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  overRound: { width: 40, height: 40, borderRadius: 20 },
+  overPill: { height: 38, borderRadius: 19, paddingHorizontal: 16 },
+  overText: { fontSize: 14, lineHeight: 18, fontWeight: '600', color: PICTURE_INK },
 });
