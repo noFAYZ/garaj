@@ -255,7 +255,7 @@ export default function EditVehicleScreen() {
                     value={current.registrationIdentifier}
                     onChangeText={(text) => set('registrationIdentifier')(text.toUpperCase())}
                     placeholder="—"
-                    placeholderTextColor={theme.borderStrong}
+                    placeholderTextColor={theme.placeholder}
                     autoCapitalize="characters"
                     accessibilityLabel="Number plate"
                     maxLength={32}
@@ -267,7 +267,7 @@ export default function EditVehicleScreen() {
                     value={current.identificationNumber}
                     onChangeText={(text) => set('identificationNumber')(text.toUpperCase())}
                     placeholder="—"
-                    placeholderTextColor={theme.borderStrong}
+                    placeholderTextColor={theme.placeholder}
                     autoCapitalize="characters"
                     accessibilityLabel="VIN"
                     maxLength={64}
@@ -310,7 +310,7 @@ export default function EditVehicleScreen() {
                         set('purchaseCurrency')(text.toUpperCase().slice(0, 3))
                       }
                       placeholder="USD"
-                      placeholderTextColor={theme.borderStrong}
+                      placeholderTextColor={theme.placeholder}
                       autoCapitalize="characters"
                       accessibilityLabel="Currency"
                       maxLength={3}
@@ -399,7 +399,7 @@ function Field({
         value={value ?? ''}
         onChangeText={onChange}
         placeholder="—"
-        placeholderTextColor={theme.borderStrong}
+        placeholderTextColor={theme.placeholder}
         accessibilityLabel={label}
         maxLength={200}
         style={[typeScale.headline, { color: theme.foreground, paddingVertical: 2 }]}
@@ -471,7 +471,7 @@ function SpecCells({
             value={value}
             onChangeText={onChange(key)}
             placeholder="—"
-            placeholderTextColor={theme.borderStrong}
+            placeholderTextColor={theme.placeholder}
             accessibilityLabel={field.label}
             maxLength={200}
             style={[typeScale.headline, { color: theme.foreground, paddingVertical: 2 }]}

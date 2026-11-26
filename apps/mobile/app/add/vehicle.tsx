@@ -545,7 +545,7 @@ export default function AddVehicleScreen() {
                 value={answers.name}
                 onChangeText={(text) => set('name', text)}
                 placeholder={derived || 'New vehicle'}
-                placeholderTextColor={derived ? theme.mutedForeground : theme.borderStrong}
+                placeholderTextColor={derived ? theme.mutedForeground : theme.placeholder}
                 maxLength={120}
                 autoCorrect={false}
                 accessibilityLabel="Name"
@@ -929,7 +929,7 @@ function OdometerCell({
         </Eyebrow>
         <View style={styles.odometerDigits}>
           {reading === null && !focused ? (
-            <Text style={[typeScale.headline, { color: theme.borderStrong }]}>
+            <Text style={[typeScale.headline, { color: theme.placeholder }]}>
               Tap to enter the reading
             </Text>
           ) : (
@@ -1016,7 +1016,7 @@ function TextCell({
     <View style={{ flex: grow, minWidth: 0 }}>
       <PanelCell label={label}>
         <TextInput
-          placeholderTextColor={theme.borderStrong}
+          placeholderTextColor={theme.placeholder}
           accessibilityLabel={label.replace(' ✦', '')}
           autoCorrect={false}
           maxLength={120}

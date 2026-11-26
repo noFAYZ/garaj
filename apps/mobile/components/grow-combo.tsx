@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
 import { haptic, PressableScale } from '@/lib/motion';
 import { showUpgrade, useOwnPlanGoverns, usePlan } from '@/lib/upgrade';
-import { figure, leaf, typeScale, useTheme } from '@/lib/theme';
+import { figure, radius, typeScale, useTheme } from '@/lib/theme';
 import { pad } from '@/lib/format';
 
 /**
@@ -131,7 +131,8 @@ function Half({
 const styles = StyleSheet.create({
   combo: { flexDirection: 'row', gap: 8 },
   half: {
-    ...leaf('sm'),
+    // A control, as the menu's tiles: symmetric corners, filled, no outline.
+    borderRadius: radius.lg,
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',

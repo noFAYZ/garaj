@@ -85,19 +85,24 @@ export function DashValue({
     narrow ? styles.figureNarrow : null,
     { color: muted ? theme.mutedForeground : theme.foreground },
   ];
+  /*
+   * Held at its own size whatever the phone's font setting. Android's shrink-to-fit never reads
+   * `minimumFontScale` (its floor is 4pt) and counts the line height, which does not shrink, against
+   * the 24pt row: with the font setting above ~110% the line alone outgrew the row, nothing fitted,
+   * and the figure fell to 4pt. At 22pt the line always fits, so only the tile's width shrinks it —
+   * and a tile's width is what bounds the figure anyway.
+   */
+  const fit = {
+    numberOfLines: 1,
+    adjustsFontSizeToFit: true,
+    minimumFontScale: 0.7,
+    maxFontSizeMultiplier: 1,
+  } as const;
   if (count) {
-    return (
-      <CountUp
-        value={count.value}
-        format={count.format}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        style={style}
-      />
-    );
+    return <CountUp value={count.value} format={count.format} {...fit} style={style} />;
   }
   return (
-    <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={style}>
+    <Text {...fit} style={style}>
       {children}
     </Text>
   );

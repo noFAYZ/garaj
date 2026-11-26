@@ -233,10 +233,52 @@ function weekday(today: Date, name: string, side: 'past' | 'future', strict: boo
 const AMOUNT = (whole: string, cents?: string) =>
   `${num(whole)}${cents ? `.${cents.padEnd(2, '0')}` : ''}`;
 
-/** The currency a symbol or word names; `$` stays `$`, since which dollar is the caller's to say. */
+/**
+ * The codes a line may write before an amount: "PKR 9,800", "AED 50". In capitals only, so a word
+ * in the line is never read as one.
+ * ponytail: the codes people here type, not all of ISO 4217; add one when a currency is missing.
+ */
+const CODES = [
+  'PKR',
+  'INR',
+  'AED',
+  'SAR',
+  'QAR',
+  'KWD',
+  'OMR',
+  'BHD',
+  'BDT',
+  'LKR',
+  'NPR',
+  'USD',
+  'EUR',
+  'GBP',
+  'CAD',
+  'AUD',
+  'NZD',
+  'CHF',
+  'JPY',
+  'CNY',
+  'SGD',
+  'MYR',
+  'ZAR',
+  'EGP',
+  'NGN',
+  'KES',
+  'PHP',
+  'IDR',
+  'THB',
+];
+
+/**
+ * The currency a symbol or word names; `$` stays `$`, since which dollar is the caller's to say.
+ * Rs is whichever rupee the vehicle counts in, so it names none of its own.
+ */
 function currencyOf(mark: string | undefined): string | null {
+  if (mark && CODES.includes(mark)) return mark;
   const m = mark?.toLowerCase();
   if (!m) return null;
+  if (m === '₹') return 'INR';
   if (m === '€' || m.startsWith('eur')) return 'EUR';
   if (m === '£' || m === 'gbp' || m.startsWith('pound')) return 'GBP';
   if (m === '¥') return 'JPY';
@@ -258,10 +300,19 @@ export function parseDone(
       re: new RegExp(String.raw`([€$£¥])\s?(${NUMBER})(?:\.(\d{1,2}))?`, 'g'),
       read: (m) => ({ amount: AMOUNT(m[2]!, m[3]), currency: currencyOf(m[1]) }),
     },
+    // Rupees and a currency's code ahead of the amount: without it "Rs 9,800" was a reading.
     {
       kind: 'money',
       re: new RegExp(
-        String.raw`(${NUMBER})(?:\.(\d{1,2}))?\s?(€|£|\$|eur|euros?|usd|gbp|dollars?|pounds?|bucks)(?![a-z])`,
+        String.raw`(?<![A-Za-z])([Rr][Ss]\.?|₨|₹|${CODES.join('|')})\s?(${NUMBER})(?:\.(\d{1,2}))?`,
+        'g',
+      ),
+      read: (m) => ({ amount: AMOUNT(m[2]!, m[3]), currency: currencyOf(m[1]) }),
+    },
+    {
+      kind: 'money',
+      re: new RegExp(
+        String.raw`(${NUMBER})(?:\.(\d{1,2}))?\s?(€|£|\$|eur|euros?|usd|gbp|dollars?|pounds?|bucks|rupees?)(?![a-z])`,
         'gi',
       ),
       read: (m) => ({ amount: AMOUNT(m[1]!, m[2]), currency: currencyOf(m[3]) }),

@@ -30,6 +30,13 @@ const DARK = {
   rim: 'rgba(255,255,255,0.14)',
   scrim: 'rgba(0,0,0,0.52)',
   shadow: '#000000',
+  /**
+   * Hint text in an empty field. Not `borderStrong`: Android's high-contrast text fills text darker
+   * than mid-grey (RGB average under 128) with black and lighter text with white, outlined in the
+   * other. A faint tone on the background's own side of that line is filled in the background's
+   * colour, and the hint reads as a hollow outline. Each theme's hint stays on the foreground's side.
+   */
+  placeholder: oklchToHex('oklch(0.64 0.014 70)'),
   dark: true,
 };
 
@@ -50,6 +57,8 @@ const LIGHT: Theme = {
   scrim: 'rgba(28,22,16,0.38)',
   // The web's light shadow: warm ink at low strength, never black.
   shadow: oklchToHex('oklch(0.2 0.015 65)'),
+  // Under mid-grey, so high-contrast text fills it black (see DARK's).
+  placeholder: oklchToHex('oklch(0.57 0.015 65)'),
   dark: false,
 };
 

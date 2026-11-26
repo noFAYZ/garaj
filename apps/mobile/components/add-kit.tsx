@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type ReactElement } from 'react';
 import {
   Animated,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,9 +13,9 @@ import {
   type ScrollViewInstance,
 } from 'react-native';
 import type { PickedFile } from '@/lib/file-picker';
-import { Eyebrow, Glyph } from '@/lib/instrument';
-import { ease, haptic, Pop, PressableScale, useReduceMotion } from '@/lib/motion';
-import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
+import { Eyebrow, formLabel, Glyph } from '@/lib/instrument';
+import { ease, haptic, Pop, PressableScale, spring, useReduceMotion } from '@/lib/motion';
+import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 
 /**
  * The add forms' own pieces — the web's twins in `add-vehicle-dialog` and `vehicle/add-entry` —
@@ -38,10 +39,8 @@ export function Line({
     <View
       style={[
         styles.line,
-        {
-          backgroundColor: theme.cardRaised,
-          borderColor: focused ? theme.ring : theme.border,
-        },
+        // Filled like the cards and chips round it; the ring only while it is being typed in.
+        { backgroundColor: theme.muted, borderColor: focused ? theme.ring : 'transparent' },
       ]}
     >
       <Ionicons
@@ -50,7 +49,7 @@ export function Line({
         color={lit || focused ? theme.foreground : theme.mutedForeground}
       />
       <TextInput
-        placeholderTextColor={theme.borderStrong}
+        placeholderTextColor={theme.placeholder}
         autoCorrect={false}
         maxLength={200}
         style={[typeScale.headline, styles.lineInput, { color: theme.foreground }]}
@@ -122,7 +121,7 @@ export function Rail({
 
   return (
     <View style={{ gap: 6 }}>
-      {label ? <Eyebrow style={styles.label}>{label}</Eyebrow> : null}
+      {label ? <Eyebrow style={[formLabel, styles.label]}>{label}</Eyebrow> : null}
       <ScrollView
         ref={scroller}
         horizontal
@@ -256,13 +255,213 @@ export function Fact({
   );
 }
 
+/**
+ * A choice made in a sheet, as a card of its own: its picture in a tile, the name and a quiet line
+ * under it (where its odometer stands, how often it is logged) that says what the card is without a
+ * caption, and the chevron that says a press opens the list. Symmetric corners: it is a control.
+ */
+export function SelectCell({
+  value,
+  detail,
+  lead,
+  marked = false,
+  onPress,
+  accessibilityLabel,
+}: {
+  value: string;
+  /** The quiet line under the name. */
+  detail?: string;
+  /** In the tile ahead of the name: the vehicle's photo, the kind's emoji. */
+  lead?: ReactNode;
+  /** Chosen by the line, not a hand: ✦. */
+  marked?: boolean;
+  /** Absent when there is nothing else to choose: the card only says what it is. */
+  onPress?: () => void;
+  accessibilityLabel: string;
+}) {
+  const theme = useTheme();
+  return (
+    <PressableScale
+      onPress={
+        onPress
+          ? () => {
+              haptic.selection();
+              onPress();
+            }
+          : undefined
+      }
+      disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${accessibilityLabel}${marked ? ', read from what you typed' : ''}`}
+      accessibilityHint={onPress ? 'Opens the list to choose from' : undefined}
+      scaleTo={0.98}
+      style={[styles.select, { backgroundColor: theme.muted }]}
+    >
+      <View style={[styles.selectTile, { backgroundColor: theme.cardRaised }]}>{lead}</View>
+      <View style={styles.selectWords}>
+        <Text numberOfLines={1} style={[styles.selectName, { color: theme.foreground }]}>
+          {value}
+        </Text>
+        {detail ? (
+          <Text numberOfLines={1} style={[styles.selectDetail, { color: theme.mutedForeground }]}>
+            {detail}
+          </Text>
+        ) : null}
+      </View>
+      {marked ? <Ionicons name="sparkles" size={11} color={theme.primary} /> : null}
+      {onPress ? <Ionicons name="chevron-expand" size={15} color={theme.mutedForeground} /> : null}
+    </PressableScale>
+  );
+}
+
+/** The switch's track and the knob that runs in it. */
+const TRACK = 38;
+const KNOB = 18;
+const TRACK_PAD = 3;
+
+/**
+ * A switch between two ways of the same thing — Quick or Details, Once or Repeats: a copper knob in
+ * a track between the two names, the side it rests on in ink. A switch, not tabs: it flips how the
+ * form asks, it goes nowhere. A press anywhere on it flips it; the knob runs on the native driver.
+ */
+export function TwoWay({
+  left,
+  right,
+  on,
+  onChange,
+  said,
+}: {
+  left: string;
+  right: string;
+  /** Resting on the right-hand way. */
+  on: boolean;
+  onChange: (on: boolean) => void;
+  /** The right-hand way as a screen reader says it, a switch that is on or off. */
+  said: string;
+}) {
+  const theme = useTheme();
+  const reduce = useReduceMotion();
+  const [x] = useState(() => new Animated.Value(on ? 1 : 0));
+  const knob = useMemo(
+    () => ({
+      transform: [
+        {
+          translateX: x.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, TRACK - KNOB - TRACK_PAD * 2],
+          }),
+        },
+      ],
+    }),
+    [x],
+  );
+  useEffect(() => {
+    if (reduce) return x.setValue(on ? 1 : 0);
+    const slide = Animated.spring(x, {
+      toValue: on ? 1 : 0,
+      useNativeDriver: true,
+      ...spring.glide,
+    });
+    slide.start();
+    return () => slide.stop();
+  }, [on, reduce, x]);
+
+  const word = (text: string, lit: boolean) => (
+    <Text
+      numberOfLines={1}
+      style={[styles.twoWayWord, { color: lit ? theme.foreground : theme.mutedForeground }]}
+    >
+      {text}
+    </Text>
+  );
+  return (
+    <Pressable
+      onPress={() => {
+        haptic.selection();
+        onChange(!on);
+      }}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: on }}
+      accessibilityLabel={said}
+      hitSlop={8}
+      style={styles.twoWay}
+    >
+      {word(left, !on)}
+      <View style={[styles.track, { backgroundColor: theme.primarySoft }]}>
+        <Animated.View style={[styles.knob, { backgroundColor: theme.primary }, knob]} />
+      </View>
+      {word(right, on)}
+    </Pressable>
+  );
+}
+
 /** The primary key beside it at `md`: a 44pt face on its 2pt lip. */
 const KEY = 46;
 
+const MONTH_SHORT = new Intl.DateTimeFormat('en-GB', { month: 'short' });
+
 /**
- * The photo's key, beside Save and the same height: a camera with the reader's spark until
- * something is attached, then the photo itself — dimmed, a copper line sweeping over it while it is
- * read, a tick popping in once it has filled something. The web's receipt key is the same.
+ * The entry's day as a key, beside the photo's and the same size: a calendar leaf in miniature —
+ * TODAY (or the month) small in copper over the day's number in figures. A day other than today
+ * wears the copper ring an attached photo does, so a back-dated entry is seen before it is saved.
+ * Pressed, the calendar. A button, not a field: the day is nearly always today.
+ */
+export function DateKey({
+  day,
+  today,
+  said,
+  marked = false,
+  onPress,
+}: {
+  /** `YYYY-MM-DD`. */
+  day: string;
+  /** Today's `YYYY-MM-DD`, so the key can say so. */
+  today: string;
+  /** The day as a sentence says it: "Today", "Sat 3 Oct". */
+  said: string;
+  /** Read from the line or the photo: ✦. */
+  marked?: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  const date = new Date(`${day}T12:00:00`);
+  const isToday = day === today;
+  return (
+    <PressableScale
+      onPress={() => {
+        haptic.selection();
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={`When: ${said}${marked ? ', read from what you typed' : ''}`}
+      accessibilityHint="Opens the calendar"
+      scaleTo={0.92}
+      style={[
+        styles.key,
+        { backgroundColor: theme.muted },
+        isToday ? rimmed(theme) : { borderWidth: 2, borderColor: theme.primary },
+      ]}
+    >
+      <Text style={[styles.dateMonth, { color: theme.primary }]}>
+        {isToday ? 'Today' : MONTH_SHORT.format(date)}
+      </Text>
+      <Text style={[styles.dateDay, { color: theme.foreground }]}>{date.getDate()}</Text>
+      {marked ? (
+        <View
+          style={[styles.spark, { backgroundColor: theme.primary, borderColor: theme.popover }]}
+        >
+          <Ionicons name="sparkles" size={9} color={theme.primaryForeground} />
+        </View>
+      ) : null}
+    </PressableScale>
+  );
+}
+
+/**
+ * The photo's key, beside Save and the same height: round, as the app's other secondary keys (the
+ * dock's, the onboarding's) — a camera with the reader's spark until something is attached, then
+ * the photo itself in a copper ring: dimmed, a copper line sweeping over it while it is read, a tick
+ * popping in once it has filled something. The web's receipt key is the same.
  */
 export function PhotoKey({
   photo,
@@ -312,20 +511,24 @@ export function PhotoKey({
       scaleTo={0.92}
       style={[
         styles.key,
-        { backgroundColor: theme.muted, borderColor: photo ? theme.primary : theme.border },
+        { backgroundColor: theme.muted },
+        photo ? { borderWidth: 2, borderColor: theme.primary } : rimmed(theme),
       ]}
     >
       {photo ? (
         <>
-          <Image
-            source={{ uri: photo.uri }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            transition={150}
-            accessible={false}
-          />
+          {/* The photo clipped to the circle; the tick sits on its rim, outside the clip. */}
+          <View style={styles.keyClip}>
+            <Image
+              source={{ uri: photo.uri }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              transition={150}
+              accessible={false}
+            />
+          </View>
           {reading ? (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.scrim }]}>
+            <View style={[styles.keyClip, { backgroundColor: theme.scrim }]}>
               <Animated.View
                 style={[
                   styles.sweep,
@@ -355,9 +558,11 @@ export function PhotoKey({
         </>
       ) : (
         <>
-          <Ionicons name="camera-outline" size={22} color={theme.foreground} />
+          <Ionicons name="camera-outline" size={21} color={theme.foreground} />
           {/* It reads what it sees: the spark says so before anyone finds out. */}
-          <View style={[styles.spark, { backgroundColor: theme.primary }]}>
+          <View
+            style={[styles.spark, { backgroundColor: theme.primary, borderColor: theme.popover }]}
+          >
             <Ionicons name="sparkles" size={9} color={theme.primaryForeground} />
           </View>
         </>
@@ -378,8 +583,7 @@ const styles = StyleSheet.create({
     paddingRight: 6,
   },
   lineInput: { flex: 1, fontSize: 15.5, paddingVertical: 9, paddingHorizontal: 0 },
-  // The form's small caps: small and barely tracked, as Stats sets them.
-  label: { paddingHorizontal: 2, fontSize: 10, lineHeight: 13, letterSpacing: 0.5 },
+  label: { paddingHorizontal: 2 },
   chip: {
     height: 34,
     flexDirection: 'row',
@@ -399,6 +603,44 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   factLabel: { flexShrink: 1, fontWeight: '600' },
+  select: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 58,
+    paddingLeft: 9,
+    paddingRight: 14,
+    borderRadius: radius.lg,
+  },
+  selectTile: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectWords: { flex: 1, minWidth: 0, gap: 1 },
+  selectName: { fontSize: 14, lineHeight: 18, fontWeight: '600', letterSpacing: -0.1 },
+  selectDetail: { fontSize: 11.5, lineHeight: 15 },
+  dateMonth: {
+    fontSize: 8.5,
+    lineHeight: 10,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  dateDay: { ...figure, fontSize: 16, lineHeight: 19, fontWeight: '700', letterSpacing: -0.4 },
+  // Its own width wherever it sits: a switch, not a bar across the form.
+  twoWay: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8 },
+  twoWayWord: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  track: {
+    width: TRACK,
+    height: KNOB + TRACK_PAD * 2,
+    borderRadius: 999,
+    padding: TRACK_PAD,
+  },
+  knob: { width: KNOB, height: KNOB, borderRadius: KNOB / 2 },
   factRemove: {
     width: 24,
     height: 24,
@@ -409,11 +651,19 @@ const styles = StyleSheet.create({
   key: {
     width: KEY,
     height: KEY,
-    borderRadius: radius.xl,
-    borderWidth: 1.5,
-    overflow: 'hidden',
+    borderRadius: KEY / 2,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // RN 0.88 has no absoluteFillObject: the fill spelled out.
+  keyClip: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: KEY / 2,
+    overflow: 'hidden',
   },
   sweep: {
     position: 'absolute',
@@ -427,8 +677,8 @@ const styles = StyleSheet.create({
   },
   tick: {
     position: 'absolute',
-    right: 3,
-    bottom: 3,
+    right: -2,
+    bottom: -2,
     width: 16,
     height: 16,
     borderRadius: 8,
@@ -436,13 +686,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // On the key's rim, as a badge: outside its circle, not crowding the camera.
   spark: {
     position: 'absolute',
-    top: 7,
-    right: 7,
-    width: 15,
-    height: 15,
-    borderRadius: 8,
+    top: -3,
+    right: -3,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },

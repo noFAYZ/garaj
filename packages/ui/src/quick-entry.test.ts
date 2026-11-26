@@ -41,6 +41,22 @@ describe('parseDone', () => {
     expect(parseDone('Wash 12.00', { today }).currency).toBeNull();
   });
 
+  it('takes rupees and a currency code, and keeps the reading beside them', () => {
+    const rupees = parseDone('Filled up 40 L, Rs 9,800 at Shell, 52,900 km', { today });
+    expect(rupees.amount).toBe('9800');
+    // Rs is the vehicle's own rupee: no currency of its own.
+    expect(rupees.currency).toBeNull();
+    expect(rupees.odometer).toBe(52900);
+    expect(rupees.title).toBe('Filled up');
+    expect(parseDone('Fuel Rs62', { today }).amount).toBe('62');
+    expect(parseDone('Service 4,500 rupees', { today }).amount).toBe('4500');
+    expect(parseDone('Fuel PKR 9,800', { today }).currency).toBe('PKR');
+    expect(parseDone('Toll ₹450', { today }).currency).toBe('INR');
+    expect(parseDone('Wash AED50', { today }).amount).toBe('50');
+    // Capitals that are not a code stay what they were.
+    expect(parseDone('MOT 52,900 km', { today }).amount).toBeNull();
+  });
+
   it('reads a bare reading, and one said as a distance since the last', () => {
     expect(parseDone('Fuel 52900', { today }).odometer).toBe(52900);
     expect(parseDone('Fuel +150 km', { today, lastReading: 52747 }).odometer).toBe(52897);

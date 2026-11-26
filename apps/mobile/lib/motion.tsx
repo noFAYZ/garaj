@@ -334,6 +334,8 @@ export function CountUp({
   style?: StyleProp<TextStyle>;
   numberOfLines?: number;
   adjustsFontSizeToFit?: boolean;
+  minimumFontScale?: number;
+  maxFontSizeMultiplier?: number;
 }) {
   const reduce = useReduceMotion();
   const [shown, setShown] = useState(reduce ? value : 0);

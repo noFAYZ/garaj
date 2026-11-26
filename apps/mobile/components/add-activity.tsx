@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import type { AiAttachment, EntryDraft, MaintenancePlan, Vehicle } from '@vehicle-os/contracts';
 import {
   EVENT_TYPES,
@@ -37,13 +38,14 @@ import {
   photoRead,
   quantityUnit,
   rankKinds,
+  spanOfDays,
   splitQuantity,
   stampForDay,
   symbolOf,
 } from '@vehicle-os/ui';
 import { newId } from '@vehicle-os/utils';
 import { readDue } from '@/components/activity-feed';
-import { Fact, Line, PhotoKey, Rail } from '@/components/add-kit';
+import { DateKey, Fact, Line, PhotoKey, Rail, SelectCell, TwoWay } from '@/components/add-kit';
 import { BrandLogo } from '@/components/brand-logo';
 import { PartLinesField, toLine, useParts, type PartDraft } from '@/components/parts-kit';
 import { photoKey, RemoteImage } from '@/components/remote-image';
@@ -54,9 +56,18 @@ import { useReportDirty } from '@/lib/discard';
 import { eventEmoji, jobEmoji } from '@/lib/emoji';
 import { pickPhoto, readBase64, type PickedFile } from '@/lib/file-picker';
 import { formatDistance, formatMoney, humanise, toMinorUnits } from '@/lib/format';
-import { Eyebrow, FigureInput, Glyph, Panel, PanelCell, Segmented } from '@/lib/instrument';
+import {
+  Eyebrow,
+  FigureInput,
+  formLabel,
+  Glyph,
+  Panel,
+  PanelCell,
+  Segmented,
+} from '@/lib/instrument';
 import { haptic, PressableScale, Pulse, Rise } from '@/lib/motion';
 import { enqueue, enqueueUpload, flush } from '@/lib/offline';
+import { MenuSheet } from '@/lib/pickers';
 import { askForPush } from '@/lib/push';
 import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
@@ -65,34 +76,42 @@ import { dialog } from '@/lib/dialog';
 
 export type ActivityMode = 'done' | 'planned';
 export type QuickAction = 'fuel' | 'odometer' | 'service';
+/** How it is said: one line that is read, or the fields one by one. Never both at once. */
+export type EntryStyle = 'quick' | 'detailed';
 
 /** The pump-side three the + sheet offers as tiles, and what each starts the form on. */
 export const QUICK_ACTIONS: readonly {
   kind: QuickAction;
   icon: keyof typeof Ionicons.glyphMap;
+  /** Its tile on the + sheet, in the web's own artwork — the dock's hand deals the same. */
+  emoji: string;
   label: string;
   hint: string;
-  starts: { kind: EventType; line: string };
+  starts: { kind: EventType; line: string; entry?: EntryStyle };
 }[] = [
   {
     kind: 'fuel',
     icon: 'water-outline',
+    emoji: '⛽',
     label: 'Fuel',
-    hint: 'Litres, cost, odometer',
+    hint: 'Litres and cost',
     starts: { kind: 'FUEL', line: '' },
   },
   {
     kind: 'odometer',
     icon: 'speedometer-outline',
+    emoji: '🗺️',
     label: 'Odometer',
     hint: 'Just the reading',
-    starts: { kind: 'NOTE', line: 'Odometer reading' },
+    // One figure to type: its field, not a sentence around it.
+    starts: { kind: 'NOTE', line: 'Odometer reading', entry: 'detailed' },
   },
   {
     kind: 'service',
     icon: 'construct-outline',
+    emoji: '🧰',
     label: 'Service',
-    hint: 'What was done, and cost',
+    hint: 'Work and parts',
     starts: { kind: 'MAINTENANCE', line: '' },
   },
 ];
@@ -114,6 +133,8 @@ const PART_KINDS = new Set<EventType>(['MAINTENANCE', 'REPAIR', 'PART_INSTALLED'
  * ponytail: for the session; after a restart the vehicle with the newest entry stands in.
  */
 let lastVehicle: string | null = null;
+/** The way of saying it chosen last, kept for the next entry the same way. */
+let lastEntry: EntryStyle | null = null;
 
 /** A field with something in it: `null` is untouched, and spaces are nothing. */
 const typed = (value: string | null) => Boolean(value?.trim());
@@ -141,6 +162,7 @@ export function AddActivity({
   initialLine = '',
   initialScheduleId = null,
   initialPhoto = null,
+  initialEntry,
   lead,
   inSheet = false,
   footerInset = 0,
@@ -157,6 +179,8 @@ export function AddActivity({
   initialScheduleId?: string | null;
   /** A photo taken before the form opened — the sheet's "A receipt". */
   initialPhoto?: PickedFile | null;
+  /** Opens on this way of saying it; else the one chosen last, else the line. */
+  initialEntry?: EntryStyle;
   /** Beside the mode switch: the sheet's back key. */
   lead?: ReactNode;
   /** In the + sheet: the fields scroll in a bounded box over the footer. */
@@ -170,6 +194,11 @@ export function AddActivity({
 }) {
   const theme = useTheme();
   const [mode, setMode] = useState<ActivityMode>(initialMode);
+  const [entry, setEntryShown] = useState<EntryStyle>(initialEntry ?? lastEntry ?? 'quick');
+  const setEntry = (next: EntryStyle) => {
+    lastEntry = next;
+    setEntryShown(next);
+  };
   const vehicles = useQuery(vehiclesQuery(api));
   const bound = useQuery({ ...vehicleQuery(api, vehicleId ?? ''), enabled: Boolean(vehicleId) });
   // Already in cache from Home: the default vehicle is the one with the newest entry.
@@ -198,11 +227,10 @@ export function AddActivity({
     : // Unbound, the default is the vehicle last logged: known once the dashboard is.
       vehicles.isPending || (dashboard.isPending && !chosen && !lastVehicle);
 
-  // Which vehicle, scrolled with the form it is for rather than fixed over it.
-  const picker = vehicleId ? null : (
-    <VehiclePicker
+  // Which vehicle: a cell of the form's first panel, scrolled with the form it is for.
+  const select = vehicleId ? null : (
+    <VehicleSelect
       vehicles={list}
-      loading={vehicles.isPending}
       value={garageWork ? GARAGE : pickedId}
       garage={mode === 'planned'}
       onChange={setChosen}
@@ -218,19 +246,34 @@ export function AddActivity({
     <View style={inSheet ? styles.sheet : styles.screen}>
       <View style={[styles.top, inSheet ? null : { paddingHorizontal: spacing.lg }]}>
         {lead}
-        {/* Opened for a reminder, the form is for completing it: there is no mode to choose. */}
-        {initialScheduleId ? (
-          <Text style={[typeScale.headline, { flex: 1, color: theme.foreground }]}>
-            Log reminder
+        <View style={styles.heading}>
+          <Text
+            numberOfLines={1}
+            accessibilityRole="header"
+            style={[styles.headingTitle, { color: theme.foreground }]}
+          >
+            {initialScheduleId ? 'Log reminder' : mode === 'done' ? 'Log it' : 'Plan it'}
           </Text>
-        ) : (
-          <View style={{ flex: 1 }}>
+          {/* Bound to one vehicle there is no For to choose: the header says which. */}
+          {vehicleId && vehicle ? (
+            <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
+              {vehicle.displayName}
+            </Text>
+          ) : null}
+        </View>
+        {/*
+         * What the form is, as a switch rather than tabs: it flips the form, it does not go
+         * anywhere. Opened for a reminder, the form is for completing it: nothing to flip.
+         */}
+        {initialScheduleId ? null : (
+          <View style={styles.modeSwitch}>
             <Segmented
               small
+              variant="switch"
               value={mode}
               options={[
-                { value: 'done', label: 'Done' },
-                { value: 'planned', label: 'Reminder' },
+                { value: 'done', label: 'Done', icon: 'checkmark-done' },
+                { value: 'planned', label: 'Reminder', icon: 'alarm-outline' },
               ]}
               onChange={setMode}
             />
@@ -239,12 +282,17 @@ export function AddActivity({
       </View>
 
       {waiting ? (
-        picker
+        <View style={{ gap: spacing.md }}>
+          <Skeleton width="100%" height={66} radius={radius.xl} />
+          <Skeleton width="100%" height={48} radius={radius.xl} />
+        </View>
       ) : mode === 'done' ? (
         vehicle ? (
           <DoneForm
             key={vehicle.id}
-            head={picker}
+            head={select}
+            entry={entry}
+            onEntry={setEntry}
             vehicle={vehicle}
             initialKind={initialKind}
             initialLine={initialLine}
@@ -261,7 +309,9 @@ export function AddActivity({
       ) : (
         <PlannedForm
           key={garageWork ? GARAGE : (vehicle?.id ?? GARAGE)}
-          head={picker}
+          head={select}
+          entry={entry}
+          onEntry={setEntry}
           vehicle={garageWork ? null : (vehicle ?? null)}
           inSheet={inSheet}
           footerInset={footerInset}
@@ -287,6 +337,28 @@ function dayChip(day: string): string {
   });
 }
 
+/**
+ * Quick or Details, at the head of what it switches: the line that is read, or the fields one by
+ * one. What either says is kept when switching, so a line half typed is a form half filled.
+ */
+function EntrySwitch({
+  value,
+  onChange,
+}: {
+  value: EntryStyle;
+  onChange: (next: EntryStyle) => void;
+}) {
+  return (
+    <TwoWay
+      left="Quick"
+      right="Details"
+      on={value === 'detailed'}
+      onChange={(on) => onChange(on ? 'detailed' : 'quick')}
+      said="Details: each field on its own"
+    />
+  );
+}
+
 /** Whether a schedule is named in the line: any word of its title of three letters or more. */
 function names(line: string, title: string): boolean {
   const words = new Set(line.toLowerCase().split(/[^a-z]+/));
@@ -304,6 +376,8 @@ type Scan =
 
 function DoneForm({
   head,
+  entry,
+  onEntry,
   vehicle,
   initialKind,
   initialLine,
@@ -314,8 +388,10 @@ function DoneForm({
   onDirty,
   onDone,
 }: {
-  /** What scrolls above the form: the vehicle picker. */
+  /** Beside the kind in the form's first panel: the vehicle's selector. */
   head: ReactNode;
+  entry: EntryStyle;
+  onEntry: (next: EntryStyle) => void;
   vehicle: Vehicle;
   initialKind: EventType | null;
   initialLine: string;
@@ -346,6 +422,9 @@ function DoneForm({
   // Set by hand; `null` is "not touched", and then the line, the photo, the default decide.
   const [kindSet, setKind] = useState<EventType | null>(initialKind);
   const [scheduleId, setScheduleId] = useState<string | null>(initialScheduleId);
+  const [choosingKind, setChoosingKind] = useState(false);
+  // The title as Details types it; `null` until then, and the line says it.
+  const [titleSet, setTitle] = useState<string | null>(null);
   const [daySet, setDay] = useState<string | null>(null);
   const [odometerSet, setOdometer] = useState<string | null>(null);
   const [costSet, setCost] = useState<string | null>(null);
@@ -364,7 +443,7 @@ function DoneForm({
   useReportDirty(
     !saved &&
       (line.trim() !== initialLine.trim() ||
-        [odometerSet, costSet, quantitySet, placeSet, distanceSet, rate].some(typed) ||
+        [titleSet, odometerSet, costSet, quantitySet, placeSet, distanceSet, rate].some(typed) ||
         linesSet !== null ||
         photo !== initialPhoto),
     onDirty,
@@ -426,7 +505,8 @@ function DoneForm({
     said?.amount ??
     (measure === 'L' && receipt?.litres !== undefined ? String(receipt.litres) : '');
   const place = placeSet ?? parsed.place ?? receipt?.provider ?? '';
-  const title = parsed.title.trim() || receipt?.note?.trim() || '';
+  const titleShown = titleSet ?? (parsed.title.trim() || receipt?.note?.trim() || '');
+  const title = titleShown.trim();
   const auto = {
     kind: !schedule && kindSet === null && parsed.kind !== null,
     odometer: odometerSet === null && odometer !== '',
@@ -694,6 +774,7 @@ function DoneForm({
     : `Add ${humanise(kind).toLowerCase()}${price ? ` · ${price}` : ''}`;
   const empty =
     !line.trim() &&
+    !title &&
     !odometer &&
     !cost &&
     !quantity &&
@@ -703,6 +784,40 @@ function DoneForm({
     lines.length === 0;
   const odometerError =
     reading !== null && reading > 100_000_000 ? 'That is past 100,000,000' : null;
+  // The day as a key in the footer, beside the photo's: nearly always today, so a button, not a field.
+  const dateKey = (
+    <DateField
+      value={day}
+      onChange={setDay}
+      max={today}
+      label="When"
+      trigger={(_said, open) => (
+        <DateKey day={day} today={today} said={dayChip(day)} marked={auto.day} onPress={open} />
+      )}
+    />
+  );
+  // Under the kind, when this vehicle last had one: what the card is, without a caption.
+  const lastOfKind = logged?.find((event) => event.eventType === kind);
+  const sinceLast = lastOfKind
+    ? Math.max(0, Math.round((Date.now() - Date.parse(lastOfKind.occurredAt)) / 86_400_000))
+    : null;
+  const kindDetail = auto.kind
+    ? 'Read from your line'
+    : sinceLast === null
+      ? 'None logged yet'
+      : sinceLast === 0
+        ? 'Last one today'
+        : sinceLast === 1
+          ? 'Last one yesterday'
+          : `Last one ${spanOfDays(sinceLast)} ago`;
+  const starts = line.trim() === '' && !schedule && again.length > 0;
+  const chips =
+    starts ||
+    Boolean(price) ||
+    Boolean(measure && quantity) ||
+    (reading !== null && asksOdometer(kind)) ||
+    Boolean(place) ||
+    lines.length > 0;
 
   // Half a row each, so every note is a few words.
   const odometerCell = asksOdometer(kind) ? (
@@ -772,33 +887,38 @@ function DoneForm({
           inSheet ? styles.sheetContent : styles.screenContent,
         ]}
       >
-        {head}
         {schedule ? (
-          <Completing
-            schedule={schedule}
-            unit={odometerUnit}
-            onUnlink={() => {
-              haptic.selection();
-              setScheduleId(null);
-            }}
-          />
+          <>
+            {head}
+            <Completing
+              schedule={schedule}
+              unit={odometerUnit}
+              onUnlink={() => {
+                haptic.selection();
+                setScheduleId(null);
+              }}
+            />
+          </>
         ) : scheduleId !== null && activity.isPending ? (
           // The reminder it was opened for, while the vehicle's list arrives.
           <Skeleton width="100%" height={60} radius={radius.xl} />
         ) : (
           <>
-            <Rail
-              label="Kind"
-              inset={spacing.lg}
-              items={kinds.map((option) => ({
-                key: option,
-                label: humanise(option),
-                glyph: eventEmoji(option),
-                selected: option === kind,
-                marked: option === kind && auto.kind,
-                onPress: () => setKind(option),
-              }))}
-            />
+            {/*
+             * Which vehicle and what kind, a card each: what the entry is about, settled before what
+             * happened is said. Each card's quiet line says what it is; a press opens its list.
+             */}
+            <View style={styles.selects}>
+              {head}
+              <SelectCell
+                value={humanise(kind)}
+                detail={kindDetail}
+                lead={<Glyph size={22}>{eventEmoji(kind)}</Glyph>}
+                marked={auto.kind}
+                onPress={() => setChoosingKind(true)}
+                accessibilityLabel={`Kind: ${humanise(kind)}`}
+              />
+            </View>
             {/* Up here, not under the figures: completing one decides what the rest are for. */}
             {offered.length > 0 ? (
               <Rail
@@ -807,21 +927,14 @@ function DoneForm({
                 items={offered.map((item) => ({
                   key: item.id,
                   label: item.title,
-                  glyph: jobEmoji(item.title),
+                  // Pulled into the chip's round end, so the ring sits concentric with it.
+                  glyph: (
+                    <View style={{ marginLeft: -6 }}>
+                      <DueRing plan={item} unit={odometerUnit} size={26} glyph={13} />
+                    </View>
+                  ),
                   selected: false,
                   marked: names(line, item.title),
-                  trailing:
-                    item.status === 'OVERDUE' || item.status === 'DUE_SOON' ? (
-                      <View
-                        style={[
-                          styles.dot,
-                          {
-                            backgroundColor:
-                              item.status === 'OVERDUE' ? theme.destructive : theme.warning,
-                          },
-                        ]}
-                      />
-                    ) : undefined,
                   onPress: () => setScheduleId(item.id),
                 }))}
               />
@@ -829,132 +942,205 @@ function DoneForm({
           </>
         )}
 
-        <View style={{ gap: 6 }}>
-          <Line
-            value={line}
-            onChangeText={setLine}
-            lit={parsed.tokens.length > 0}
-            placeholder={
-              schedule
-                ? `${schedule.title}, ${symbolOf(currency)}80`
-                : exampleLine(kind, humanise(kind), symbolOf(currency))
-            }
-            accessibilityLabel={schedule ? 'Work done' : 'What happened'}
-            accessibilityHint="Amounts, kilometres, the day and “at” a place are picked out"
-            returnKeyType="done"
-          />
-          {line.trim() === '' && again.length > 0 && !schedule ? (
-            // One row that scrolls, however long the vehicle's own titles run.
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              style={{ marginHorizontal: -spacing.lg }}
-              contentContainerStyle={styles.again}
-            >
-              {again.map((words) => (
-                <Fact
-                  key={words}
-                  icon="refresh"
-                  label={words}
-                  onPress={() => setLine(`${words} `)}
-                />
-              ))}
-            </ScrollView>
-          ) : line.trim() !== '' || receipt?.note ? (
-            <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
-              Saved as “{title || schedule?.title || humanise(kind)}”
-            </Text>
-          ) : null}
-        </View>
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Eyebrow style={[formLabel, { flex: 1 }]}>
+              {schedule ? 'Work done' : 'What happened'}
+            </Eyebrow>
+            <EntrySwitch value={entry} onChange={onEntry} />
+          </View>
 
-        {/*
-         * The figures a logbook line is made of, two to a row: a fill's cost and litres side by
-         * side with the odometer under them; anything else its odometer beside its cost.
-         */}
-        <Panel>
-          {measure ? (
-            <>
-              <View style={styles.row}>
-                {costCell}
-                {quantityCell}
-              </View>
-              {odometerCell}
-            </>
-          ) : (
-            <View style={styles.row}>
-              {odometerCell}
-              {costCell}
-            </View>
-          )}
-          {trip && purpose ? (
-            <View style={styles.row}>
-              <PanelCell
-                label={mark('Distance', distanceSet === null && measured !== '')}
-                note={
-                  tripShort
-                    ? 'Needed for the log'
-                    : distanceSet === null && measured
-                      ? 'From the odometer'
-                      : 'Or the odometer'
+          {entry === 'quick' ? (
+            /*
+             * Quick: one line, read as it is typed, and under it what was read from it — each a chip
+             * that opens Details to change it. The fields themselves are not drawn beside the line.
+             */
+            <Rise key="quick" style={styles.body}>
+              <Line
+                value={line}
+                onChangeText={setLine}
+                lit={parsed.tokens.length > 0}
+                placeholder={
+                  schedule
+                    ? `${schedule.title}, ${symbolOf(currency)}80`
+                    : exampleLine(kind, humanise(kind), symbolOf(currency))
                 }
-                noteTone={tripShort ? 'warning' : undefined}
-              >
-                <FigureInput
-                  unit={unit}
-                  value={distance ? Number(distance).toLocaleString() : ''}
-                  onChangeText={(text) => setDistance(digitsOnly(text))}
-                  placeholder="0"
-                  keyboardType="number-pad"
-                  accessibilityLabel={`Distance in ${unit}`}
-                />
-              </PanelCell>
-              <PanelCell label={`Rate per ${unit}`} note="Kept on this trip">
-                <FigureInput
-                  unit={currency}
-                  value={rate}
-                  onChangeText={(text) => setRate(amountOnly(text))}
-                  placeholder="0.00"
-                  keyboardType="decimal-pad"
-                  accessibilityLabel={`Rate per ${unit} in ${currency}`}
-                />
-              </PanelCell>
-            </View>
-          ) : null}
-        </Panel>
-
-        {/* The facts around it, as chips: the day, the place, a trip's purpose. */}
-        <View style={styles.wrap}>
-          <DateField
-            value={day}
-            onChange={setDay}
-            max={today}
-            label="When"
-            trigger={(_said, open) => (
-              <Fact icon="calendar-outline" label={dayChip(day)} marked={auto.day} onPress={open} />
-            )}
-          />
-          {place ? (
-            <Fact
-              icon="location-outline"
-              label={place}
-              marked={auto.place}
-              onRemove={() => setPlace('')}
-            />
-          ) : null}
-          {trip
-            ? TRIP_PURPOSES.map((option) => (
-                <Fact
-                  key={option}
-                  label={humanise(option)}
-                  selected={purpose === option}
-                  onPress={() => setPurpose(purpose === option ? null : option)}
-                />
-              ))
-            : null}
+                accessibilityLabel={schedule ? 'Work done' : 'What happened'}
+                accessibilityHint="Amounts, kilometres, the day and “at” a place are picked out"
+                returnKeyType="done"
+              />
+              {chips ? (
+                <View style={styles.wrap}>
+                  {line.trim() === '' && !schedule
+                    ? again.map((words) => (
+                        <Fact
+                          key={words}
+                          icon="refresh"
+                          label={words}
+                          onPress={() => setLine(`${words} `)}
+                        />
+                      ))
+                    : null}
+                  {price ? (
+                    <Fact
+                      icon="cash-outline"
+                      label={price}
+                      marked={auto.cost}
+                      onPress={() => onEntry('detailed')}
+                    />
+                  ) : null}
+                  {measure && quantity ? (
+                    <Fact
+                      icon={measure === 'L' ? 'water-outline' : 'flash-outline'}
+                      label={`${quantity} ${quantityIn}`}
+                      marked={auto.quantity}
+                      onPress={() => onEntry('detailed')}
+                    />
+                  ) : null}
+                  {reading !== null && asksOdometer(kind) ? (
+                    <Fact
+                      icon="speedometer-outline"
+                      label={`${reading.toLocaleString()} ${unit}`}
+                      marked={auto.odometer}
+                      onPress={() => onEntry('detailed')}
+                    />
+                  ) : null}
+                  {place ? (
+                    <Fact
+                      icon="location-outline"
+                      label={place}
+                      marked={auto.place}
+                      onRemove={() => setPlace('')}
+                    />
+                  ) : null}
+                  {lines.length > 0 ? (
+                    <Fact
+                      icon="construct-outline"
+                      label={`${lines.length} ${lines.length === 1 ? 'part' : 'parts'}`}
+                      onPress={() => onEntry('detailed')}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {odometerError || tripShort ? (
+                <Text
+                  accessibilityRole="alert"
+                  style={[typeScale.caption, styles.hint, { color: theme.destructive }]}
+                >
+                  {odometerError ?? 'The mileage log needs how far: add it in Details.'}
+                </Text>
+              ) : line.trim() !== '' || title ? (
+                <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
+                  Saved as “{title || schedule?.title || humanise(kind)}”
+                </Text>
+              ) : null}
+            </Rise>
+          ) : (
+            /*
+             * Details: each thing on its own — the title as the line it will become, then the
+             * figures, the day and the place as one panel, the way a logbook line reads.
+             */
+            <Rise key="detailed" style={styles.body}>
+              <Panel>
+                <View style={styles.row}>
+                  <PanelCell label={schedule ? 'Work done' : 'Title'}>
+                    <TextInput
+                      value={titleShown}
+                      onChangeText={setTitle}
+                      placeholder={schedule?.title ?? humanise(kind)}
+                      placeholderTextColor={theme.placeholder}
+                      maxLength={200}
+                      returnKeyType="done"
+                      accessibilityLabel="Title"
+                      style={[typeScale.headline, styles.textCell, { color: theme.foreground }]}
+                    />
+                  </PanelCell>
+                </View>
+                {measure ? (
+                  <>
+                    <View style={styles.row}>
+                      {costCell}
+                      {quantityCell}
+                    </View>
+                    {/*
+                     * A row of its own, as every line of the panel: a cell is `flex: 1` to share a
+                     * row, and straight in the column that let it shrink under its own label.
+                     */}
+                    {odometerCell ? <View style={styles.row}>{odometerCell}</View> : null}
+                  </>
+                ) : (
+                  <View style={styles.row}>
+                    {odometerCell}
+                    {costCell}
+                  </View>
+                )}
+                {trip && purpose ? (
+                  <View style={styles.row}>
+                    <PanelCell
+                      label={mark('Distance', distanceSet === null && measured !== '')}
+                      note={
+                        tripShort
+                          ? 'Needed for the log'
+                          : distanceSet === null && measured
+                            ? 'From the odometer'
+                            : 'Or the odometer'
+                      }
+                      noteTone={tripShort ? 'warning' : undefined}
+                    >
+                      <FigureInput
+                        unit={unit}
+                        value={distance ? Number(distance).toLocaleString() : ''}
+                        onChangeText={(text) => setDistance(digitsOnly(text))}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                        accessibilityLabel={`Distance in ${unit}`}
+                      />
+                    </PanelCell>
+                    <PanelCell label={`Rate per ${unit}`} note="Kept on this trip">
+                      <FigureInput
+                        unit={currency}
+                        value={rate}
+                        onChangeText={(text) => setRate(amountOnly(text))}
+                        placeholder="0.00"
+                        keyboardType="decimal-pad"
+                        accessibilityLabel={`Rate per ${unit} in ${currency}`}
+                      />
+                    </PanelCell>
+                  </View>
+                ) : null}
+                <View style={styles.row}>
+                  <PanelCell label={mark('Where', auto.place)}>
+                    <TextInput
+                      value={place}
+                      onChangeText={setPlace}
+                      placeholder="Optional"
+                      placeholderTextColor={theme.placeholder}
+                      maxLength={120}
+                      returnKeyType="done"
+                      accessibilityLabel="Where"
+                      style={[typeScale.headline, styles.textCell, { color: theme.foreground }]}
+                    />
+                  </PanelCell>
+                </View>
+              </Panel>
+              {trip ? (
+                <View style={styles.wrap}>
+                  {TRIP_PURPOSES.map((option) => (
+                    <Fact
+                      key={option}
+                      label={humanise(option)}
+                      selected={purpose === option}
+                      onPress={() => setPurpose(purpose === option ? null : option)}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {takesParts ? (
+                <PartLinesField vehicle={vehicle} lines={lines} onChange={setLines} />
+              ) : null}
+            </Rise>
+          )}
         </View>
-
-        {takesParts ? <PartLinesField vehicle={vehicle} lines={lines} onChange={setLines} /> : null}
 
         {scan ? <ScanNote scan={scan} photo={photoIs} /> : null}
 
@@ -992,17 +1178,27 @@ function DoneForm({
           onPress={photo ? photoOptions : () => void attach('camera')}
           onLongPress={() => void attach('library')}
         />
+        {dateKey}
         <View style={{ flex: 1 }}>
           <Button
             label={action}
             icon={schedule ? 'checkmark' : undefined}
             variant="primary"
+            pill
             loading={save.isPending}
             disabled={empty || tripShort || Boolean(odometerError)}
             onPress={() => save.mutate()}
           />
         </View>
       </View>
+      {choosingKind ? (
+        <KindSheet
+          kinds={kinds}
+          value={kind}
+          onChange={setKind}
+          onClose={() => setChoosingKind(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1033,12 +1229,9 @@ function Completing({
       <View
         accessible
         accessibilityLabel={`Completing ${schedule.title}, ${headline}`}
-        style={[
-          styles.completing,
-          { backgroundColor: theme.cardRaised, borderColor: theme.border },
-        ]}
+        style={[styles.completing, { backgroundColor: theme.muted }]}
       >
-        <Glyph size={28}>{jobEmoji(schedule.title)}</Glyph>
+        <DueRing plan={schedule} unit={unit} size={44} glyph={22} />
         <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
           <Text numberOfLines={1} style={[styles.completingTitle, { color: theme.foreground }]}>
             {schedule.title}
@@ -1053,12 +1246,71 @@ function Completing({
           accessibilityLabel={`Not ${schedule.title}: log something else`}
           hitSlop={8}
           scaleTo={0.88}
-          style={[styles.unlink, { backgroundColor: theme.muted }]}
+          style={[styles.unlink, { backgroundColor: theme.cardRaised }]}
         >
           <Ionicons name="close" size={15} color={theme.mutedForeground} />
         </PressableScale>
       </View>
     </Rise>
+  );
+}
+
+/**
+ * How far along a reminder is, as a thin ring round its glyph, the way the Due tab's gauges read:
+ * copper while it is coming, amber when it is close, full and red once it is late. Drawn still —
+ * a ring per chip, so no sweep on the JS thread while the sheet opens.
+ */
+export function DueRing({
+  plan,
+  unit,
+  size,
+  glyph,
+}: {
+  plan: MaintenancePlan;
+  unit: Vehicle['odometerUnit'];
+  size: number;
+  /** The glyph's own size inside the ring. */
+  glyph: number;
+}) {
+  const theme = useTheme();
+  const { tone, gauge } = readDue(plan, unit);
+  const stroke = size > 32 ? 3 : 2.25;
+  const r = (size - stroke) / 2;
+  const round = 2 * Math.PI * r;
+  // No baseline yet: an empty track, unless the plan is already late.
+  const progress = Math.min(1, Math.max(0, gauge?.progress ?? (tone === 'destructive' ? 1 : 0)));
+  const color =
+    tone === 'destructive' ? theme.destructive : tone === 'warning' ? theme.warning : theme.primary;
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg
+        width={size}
+        height={size}
+        style={[StyleSheet.absoluteFill, { transform: [{ rotate: '-90deg' }] }]}
+      >
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke={theme.border}
+          strokeWidth={stroke}
+          fill="none"
+        />
+        {progress > 0 ? (
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            stroke={color}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${round * progress} ${round}`}
+            fill="none"
+          />
+        ) : null}
+      </Svg>
+      <Glyph size={glyph}>{jobEmoji(plan.title)}</Glyph>
+    </View>
   );
 }
 
@@ -1100,14 +1352,18 @@ function ScanNote({ scan, photo }: { scan: Scan; photo: string }) {
 
 function PlannedForm({
   head,
+  entry,
+  onEntry,
   vehicle,
   inSheet,
   footerInset,
   onDirty,
   onDone,
 }: {
-  /** What scrolls above the form: the vehicle picker. */
+  /** The form's first panel: the vehicle's selector. */
   head: ReactNode;
+  entry: EntryStyle;
+  onEntry: (next: EntryStyle) => void;
   /** Null for garage-wide work: a one-off for no vehicle in particular. */
   vehicle: Vehicle | null;
   inSheet: boolean;
@@ -1133,8 +1389,10 @@ function PlannedForm({
   const [dueSet, setDue] = useState<string | null>(null);
   const [monthsSet, setMonths] = useState<string | null>(null);
   const [distanceSet, setDistance] = useState<string | null>(null);
+  // The title as Details types it; `null` until then, and the line says it.
+  const [titleSet, setTitle] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  useReportDirty(!saved && [line, monthsSet, distanceSet].some(typed), onDirty);
+  useReportDirty(!saved && [line, titleSet, monthsSet, distanceSet].some(typed), onDirty);
 
   // A repeat counts a vehicle's months and odometer: garage-wide work is always a one-off.
   const repeats =
@@ -1150,7 +1408,8 @@ function PlannedForm({
     months: monthsSet === null && parsed.everyMonths !== null,
     distance: distanceSet === null && parsed.everyDistance !== null,
   };
-  const title = parsed.title.trim();
+  const titleShown = titleSet ?? parsed.title.trim();
+  const title = titleShown.trim();
   const jobs = commonJobs(unit);
   const presets = duePresets();
   const today = localDay();
@@ -1239,6 +1498,7 @@ function PlannedForm({
 
   const fillLine = (text: string) => {
     setLine(text);
+    setTitle(null);
     // A job's own cadence decides once or repeats, so a choice made before it does not stick.
     setRepeats(null);
     setMonths(null);
@@ -1265,7 +1525,7 @@ function PlannedForm({
             key: job.label,
             label: job.label,
             glyph: jobEmoji(job.label),
-            selected: line === job.line,
+            selected: line === job.line && titleSet === null,
             trailing:
               planned(job.label) && line !== job.line ? (
                 <Ionicons name="checkmark" size={14} color={theme.success} />
@@ -1274,39 +1534,184 @@ function PlannedForm({
           }))}
         />
 
-        <View style={{ gap: 6 }}>
-          <Line
-            value={line}
-            onChangeText={setLine}
-            lit={parsed.tokens.length > 0}
-            placeholder={
-              repeats ? `Rotate tyres every 10,000 ${unit}` : 'Renew insurance on 11 Nov'
-            }
-            accessibilityLabel="What needs doing"
-            accessibilityHint="“Every 10,000 km”, “on 11 Nov” and “next month” are picked out"
-            returnKeyType="done"
-          />
-          {/* The placeholder and the jobs above say how; under it, only what it read back. */}
-          {line.trim() !== '' ? (
-            <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
-              {title ? `Saved as “${title}”` : 'Say what needs doing, then when.'}
-            </Text>
-          ) : null}
-        </View>
-
-        {vehicle ? (
-          <View style={styles.cadence}>
-            <Segmented
-              small
-              value={repeats ? 'repeats' : 'once'}
-              options={[
-                { value: 'once', label: 'Once' },
-                { value: 'repeats', label: auto.repeats ? 'Repeats ✦' : 'Repeats' },
-              ]}
-              onChange={(next) => setRepeats(next === 'repeats')}
-            />
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Eyebrow style={[formLabel, { flex: 1 }]}>What needs doing</Eyebrow>
+            <EntrySwitch value={entry} onChange={onEntry} />
           </View>
-        ) : null}
+
+          {entry === 'quick' ? (
+            // Quick: the line, and under it when it was read to come due. A chip opens Details.
+            <Rise key="quick" style={styles.body}>
+              <Line
+                value={line}
+                onChangeText={setLine}
+                lit={parsed.tokens.length > 0}
+                placeholder={
+                  repeats ? `Rotate tyres every 10,000 ${unit}` : 'Renew insurance on 11 Nov'
+                }
+                accessibilityLabel="What needs doing"
+                accessibilityHint="“Every 10,000 km”, “on 11 Nov” and “next month” are picked out"
+                returnKeyType="done"
+              />
+              <View style={styles.wrap}>
+                <Fact
+                  icon={repeats ? 'repeat' : 'calendar-outline'}
+                  label={
+                    repeats
+                      ? every
+                        ? `Every ${every}`
+                        : 'Repeats'
+                      : due
+                        ? `Due ${dayChip(due)}`
+                        : 'No date'
+                  }
+                  marked={repeats ? auto.repeats : auto.due}
+                  onPress={() => onEntry('detailed')}
+                />
+                {comesDue ? (
+                  <Fact
+                    icon="flag-outline"
+                    label={`First due ${comesDue}`}
+                    onPress={() => onEntry('detailed')}
+                  />
+                ) : null}
+              </View>
+              {missingInterval ? (
+                <Text
+                  accessibilityRole="alert"
+                  style={[typeScale.caption, styles.hint, { color: theme.destructive }]}
+                >
+                  A repeat needs how often: say it, or set it in Details.
+                </Text>
+              ) : line.trim() !== '' ? (
+                <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
+                  {title ? `Saved as “${title}”` : 'Say what needs doing, then when.'}
+                </Text>
+              ) : null}
+            </Rise>
+          ) : (
+            // Details: the title on its own, once or on a repeat, and its day or its interval.
+            <Rise key="detailed" style={styles.body}>
+              <Panel>
+                <View style={styles.row}>
+                  <PanelCell label="Title">
+                    <TextInput
+                      value={titleShown}
+                      onChangeText={setTitle}
+                      placeholder={repeats ? 'Rotate tyres' : 'Renew insurance'}
+                      placeholderTextColor={theme.placeholder}
+                      maxLength={200}
+                      returnKeyType="done"
+                      accessibilityLabel="Title"
+                      style={[typeScale.headline, styles.textCell, { color: theme.foreground }]}
+                    />
+                  </PanelCell>
+                </View>
+              </Panel>
+              {vehicle ? (
+                <TwoWay
+                  left="Once"
+                  right={auto.repeats ? 'Repeats ✦' : 'Repeats'}
+                  on={repeats}
+                  onChange={setRepeats}
+                  said="Repeats on an interval"
+                />
+              ) : null}
+              {repeats ? (
+                <Rise key="repeats" style={{ gap: spacing.sm }}>
+                  <Panel direction="row">
+                    <PanelCell label={auto.months ? 'Every ✦' : 'Every'} note="By the calendar">
+                      <FigureInput
+                        unit="mo"
+                        value={everyMonths}
+                        onChangeText={(text) => setMonths(digitsOnly(text, 3))}
+                        placeholder="—"
+                        keyboardType="number-pad"
+                        accessibilityLabel="Every how many months"
+                      />
+                    </PanelCell>
+                    <PanelCell
+                      label={auto.distance ? 'Or every ✦' : 'Or every'}
+                      note={missingInterval ? 'Set at least one' : 'Whichever comes first'}
+                      noteTone={missingInterval ? 'warning' : undefined}
+                    >
+                      <FigureInput
+                        unit={unit}
+                        value={everyDistance ? Number(everyDistance).toLocaleString() : ''}
+                        onChangeText={(text) => setDistance(digitsOnly(text))}
+                        placeholder="—"
+                        keyboardType="number-pad"
+                        accessibilityLabel={`Or every how many ${unit}`}
+                      />
+                    </PanelCell>
+                  </Panel>
+                  <View style={styles.wrap}>
+                    {intervalPresets(unit).map((preset) => (
+                      <Fact
+                        key={preset.label}
+                        label={preset.label}
+                        selected={
+                          everyMonths === preset.months && everyDistance === preset.distance
+                        }
+                        onPress={() => {
+                          setMonths(preset.months);
+                          setDistance(preset.distance);
+                        }}
+                      />
+                    ))}
+                  </View>
+                  {comesDue ? (
+                    <Text
+                      style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}
+                    >
+                      First due{' '}
+                      <Text style={[figure, { fontWeight: '600', color: theme.foreground }]}>
+                        {comesDue}
+                      </Text>
+                    </Text>
+                  ) : null}
+                </Rise>
+              ) : (
+                <Rise key="once" style={{ gap: spacing.sm }}>
+                  <View style={styles.wrap}>
+                    {presets.map((option) => (
+                      <Fact
+                        key={option.label}
+                        label={option.label}
+                        selected={due === option.day}
+                        marked={due === option.day && auto.due && option.day !== ''}
+                        onPress={() => setDue(option.day)}
+                      />
+                    ))}
+                    <DateField
+                      value={due}
+                      onChange={setDue}
+                      min={today}
+                      label="Due"
+                      trigger={(_said, open) => (
+                        <Fact
+                          icon="calendar-outline"
+                          label={custom ? dayChip(due) : 'Pick a day'}
+                          selected={custom}
+                          marked={custom && auto.due}
+                          onPress={open}
+                        />
+                      )}
+                    />
+                  </View>
+                  <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
+                    {due
+                      ? `Due ${dayChip(due).toLowerCase() === 'today' ? 'today' : `on ${dayChip(due)}`}`
+                      : vehicle
+                        ? 'No date — it waits on the list until it is done.'
+                        : 'Garage-wide, with no date — it waits on the list until it is done.'}
+                  </Text>
+                </Rise>
+              )}
+            </Rise>
+          )}
+        </View>
 
         {/* A second schedule for the same job is usually a mistake; said, not refused. */}
         {twin && repeats ? (
@@ -1318,94 +1723,6 @@ function PlannedForm({
             </Text>
           </Rise>
         ) : null}
-
-        {repeats ? (
-          <Rise key="repeats" style={{ gap: spacing.sm }}>
-            <Panel direction="row">
-              <PanelCell label={auto.months ? 'Every ✦' : 'Every'} note="By the calendar">
-                <FigureInput
-                  unit="mo"
-                  value={everyMonths}
-                  onChangeText={(text) => setMonths(digitsOnly(text, 3))}
-                  placeholder="—"
-                  keyboardType="number-pad"
-                  accessibilityLabel="Every how many months"
-                />
-              </PanelCell>
-              <PanelCell
-                label={auto.distance ? 'Or every ✦' : 'Or every'}
-                note={missingInterval ? 'Set at least one' : 'Whichever comes first'}
-                noteTone={missingInterval ? 'warning' : undefined}
-              >
-                <FigureInput
-                  unit={unit}
-                  value={everyDistance ? Number(everyDistance).toLocaleString() : ''}
-                  onChangeText={(text) => setDistance(digitsOnly(text))}
-                  placeholder="—"
-                  keyboardType="number-pad"
-                  accessibilityLabel={`Or every how many ${unit}`}
-                />
-              </PanelCell>
-            </Panel>
-            <View style={styles.wrap}>
-              {intervalPresets(unit).map((preset) => (
-                <Fact
-                  key={preset.label}
-                  label={preset.label}
-                  selected={everyMonths === preset.months && everyDistance === preset.distance}
-                  onPress={() => {
-                    setMonths(preset.months);
-                    setDistance(preset.distance);
-                  }}
-                />
-              ))}
-            </View>
-            {comesDue ? (
-              <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
-                First due{' '}
-                <Text style={[figure, { fontWeight: '600', color: theme.foreground }]}>
-                  {comesDue}
-                </Text>
-              </Text>
-            ) : null}
-          </Rise>
-        ) : (
-          <Rise key="once" style={{ gap: spacing.sm }}>
-            <View style={styles.wrap}>
-              {presets.map((option) => (
-                <Fact
-                  key={option.label}
-                  label={option.label}
-                  selected={due === option.day}
-                  marked={due === option.day && auto.due && option.day !== ''}
-                  onPress={() => setDue(option.day)}
-                />
-              ))}
-              <DateField
-                value={due}
-                onChange={setDue}
-                min={today}
-                label="Due"
-                trigger={(_said, open) => (
-                  <Fact
-                    icon="calendar-outline"
-                    label={custom ? dayChip(due) : 'Pick a day'}
-                    selected={custom}
-                    marked={custom && auto.due}
-                    onPress={open}
-                  />
-                )}
-              />
-            </View>
-            <Text style={[typeScale.caption, styles.hint, { color: theme.mutedForeground }]}>
-              {due
-                ? `Due ${dayChip(due).toLowerCase() === 'today' ? 'today' : `on ${dayChip(due)}`}`
-                : vehicle
-                  ? 'No date — it waits on the list until it is done.'
-                  : 'Garage-wide, with no date — it waits on the list until it is done.'}
-            </Text>
-          </Rise>
-        )}
 
         {save.isError ? (
           <View style={[styles.banner, { backgroundColor: theme.destructiveSoft }]}>
@@ -1437,6 +1754,7 @@ function PlannedForm({
           <Button
             label={action}
             variant="primary"
+            pill
             loading={save.isPending}
             disabled={!title || missingInterval || (!repeats && !garageId)}
             onPress={() => save.mutate()}
@@ -1450,107 +1768,194 @@ function PlannedForm({
 /* ------------------------------------------------------------------------------------------- */
 
 /**
- * Which vehicle it is for: each a card in a row — its picture or badge, its name, where its
- * odometer stands — the chosen one washed in copper and ticked. A reminder may be for the garage.
+ * Which vehicle it is for, as a selector: the chosen one's picture and name in a cell, and pressed,
+ * a sheet of every vehicle on the road — its picture, its name, where its odometer stands — the
+ * chosen one washed in copper and ticked. A reminder may be for the garage as a whole.
  */
-function VehiclePicker({
+function VehicleSelect({
   vehicles,
-  loading,
   value,
   garage,
   onChange,
 }: {
   vehicles: readonly Vehicle[];
-  loading: boolean;
   value: string | null;
   /** Offer garage-wide work, for a one-off reminder. */
   garage: boolean;
   onChange: (id: string) => void;
 }) {
   const theme = useTheme();
-  if (loading) {
-    return (
-      <View style={styles.pickRow}>
-        <Skeleton width={150} height={52} radius={radius.lg} />
-        <Skeleton width={150} height={52} radius={radius.lg} />
-      </View>
-    );
-  }
+  const { height } = useWindowDimensions();
+  const [open, setOpen] = useState(false);
   if (vehicles.length === 0 && !garage) return null;
   const options: { id: string; vehicle: Vehicle | null }[] = [
     ...vehicles.map((vehicle) => ({ id: vehicle.id, vehicle })),
     ...(garage ? [{ id: GARAGE, vehicle: null }] : []),
   ];
+  const current = options.find((option) => option.id === value) ?? null;
+  const name = (option: { vehicle: Vehicle | null } | null) =>
+    option ? (option.vehicle?.displayName ?? 'Garage work') : 'Choose';
+
   return (
-    <View style={{ gap: 6 }}>
-      <Eyebrow>For</Eyebrow>
+    <>
+      <SelectCell
+        value={name(current)}
+        detail={
+          current?.vehicle
+            ? current.vehicle.currentOdometer !== null
+              ? formatDistance(current.vehicle.currentOdometer, current.vehicle.odometerUnit)
+              : humanise(current.vehicle.vehicleType)
+            : current
+              ? 'No vehicle in particular'
+              : undefined
+        }
+        lead={
+          current?.vehicle ? (
+            <VehicleThumb vehicle={current.vehicle} />
+          ) : (
+            <Ionicons name="home-outline" size={17} color={theme.mutedForeground} />
+          )
+        }
+        // One vehicle and nothing else to choose: the cell says which, and opens nothing.
+        onPress={options.length > 1 ? () => setOpen(true) : undefined}
+        accessibilityLabel={`For: ${name(current)}`}
+      />
+      {open ? (
+        <MenuSheet
+          title="Which vehicle?"
+          message={garage ? 'A one-off can be for the garage as a whole.' : undefined}
+          onClose={() => setOpen(false)}
+        >
+          <ScrollView
+            style={{ maxHeight: Math.round(height * 0.55) }}
+            contentContainerStyle={styles.choices}
+            accessibilityRole="radiogroup"
+          >
+            {options.map((option) => {
+              const selected = option.id === value;
+              return (
+                <PressableScale
+                  key={option.id}
+                  onPress={() => {
+                    if (!selected) {
+                      haptic.selection();
+                      onChange(option.id);
+                    }
+                    setOpen(false);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={
+                    option.vehicle?.displayName ?? 'The garage, no vehicle in particular'
+                  }
+                  scaleTo={0.97}
+                  style={[
+                    styles.choice,
+                    { backgroundColor: selected ? theme.primarySoft : theme.muted },
+                  ]}
+                >
+                  <View style={[styles.thumb, { backgroundColor: theme.cardRaised }]}>
+                    {option.vehicle ? (
+                      <VehicleThumb vehicle={option.vehicle} />
+                    ) : (
+                      <Ionicons name="home-outline" size={17} color={theme.mutedForeground} />
+                    )}
+                  </View>
+                  <View style={styles.choiceWords}>
+                    <Text numberOfLines={1} style={[typeScale.label, { color: theme.foreground }]}>
+                      {name(option)}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      style={[figure, styles.choiceReading, { color: theme.mutedForeground }]}
+                    >
+                      {option.vehicle
+                        ? option.vehicle.currentOdometer !== null
+                          ? formatDistance(
+                              option.vehicle.currentOdometer,
+                              option.vehicle.odometerUnit,
+                            )
+                          : humanise(option.vehicle.vehicleType)
+                        : 'No vehicle'}
+                    </Text>
+                  </View>
+                  {selected ? (
+                    <View style={[styles.check, { backgroundColor: theme.primary }]}>
+                      <Ionicons name="checkmark" size={13} color={theme.primaryForeground} />
+                    </View>
+                  ) : null}
+                </PressableScale>
+              );
+            })}
+          </ScrollView>
+        </MenuSheet>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Every kind, as a sheet of tiles three to a row — the ones this vehicle logs most first, as the
+ * form ranks them — the chosen one washed in copper and ticked. A press chooses and closes.
+ */
+function KindSheet({
+  kinds,
+  value,
+  onChange,
+  onClose,
+}: {
+  kinds: readonly EventType[];
+  value: EventType;
+  onChange: (kind: EventType) => void;
+  onClose: () => void;
+}) {
+  const theme = useTheme();
+  const { height } = useWindowDimensions();
+  return (
+    <MenuSheet title="What kind?" message="The ones you log most come first." onClose={onClose}>
       <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
+        style={{ maxHeight: Math.round(height * 0.6) }}
+        contentContainerStyle={styles.kindGrid}
         accessibilityRole="radiogroup"
-        style={styles.pickRail}
-        contentContainerStyle={styles.pickRow}
       >
-        {options.map(({ id, vehicle }) => {
-          const selected = id === value;
+        {kinds.map((option) => {
+          const selected = option === value;
           return (
             <PressableScale
-              key={id}
+              key={option}
               onPress={() => {
-                if (selected) return;
-                haptic.selection();
-                onChange(id);
+                if (!selected) haptic.selection();
+                onChange(option);
+                onClose();
               }}
               accessibilityRole="radio"
               accessibilityState={{ selected }}
-              accessibilityLabel={vehicle?.displayName ?? 'The garage, no vehicle in particular'}
-              scaleTo={0.95}
+              accessibilityLabel={humanise(option)}
+              scaleTo={0.94}
               style={[
-                styles.pick,
-                {
-                  backgroundColor: selected ? theme.primarySoft : theme.muted,
-                  borderColor: selected ? theme.primary : 'transparent',
-                },
+                styles.kindTile,
+                { backgroundColor: selected ? theme.primarySoft : theme.muted },
               ]}
             >
-              <View style={[styles.thumb, { backgroundColor: theme.cardRaised }]}>
-                {vehicle ? (
-                  <VehicleThumb vehicle={vehicle} />
-                ) : (
-                  <Ionicons name="home-outline" size={17} color={theme.mutedForeground} />
-                )}
-              </View>
-              <View style={styles.pickWords}>
-                <Text
-                  numberOfLines={1}
-                  style={[typeScale.label, styles.pickName, { color: theme.foreground }]}
-                >
-                  {vehicle?.displayName ?? 'Garage work'}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={[figure, styles.pickReading, { color: theme.mutedForeground }]}
-                >
-                  {vehicle
-                    ? vehicle.currentOdometer !== null
-                      ? formatDistance(vehicle.currentOdometer, vehicle.odometerUnit)
-                      : humanise(vehicle.vehicleType)
-                    : 'No vehicle'}
-                </Text>
-              </View>
+              <Glyph size={24}>{eventEmoji(option)}</Glyph>
+              <Text numberOfLines={2} style={[styles.kindLabel, { color: theme.foreground }]}>
+                {humanise(option)}
+              </Text>
               {selected ? (
-                <Ionicons name="checkmark-circle" size={17} color={theme.primary} />
+                <View style={[styles.check, styles.kindCheck, { backgroundColor: theme.primary }]}>
+                  <Ionicons name="checkmark" size={12} color={theme.primaryForeground} />
+                </View>
               ) : null}
             </PressableScale>
           );
         })}
       </ScrollView>
-    </View>
+    </MenuSheet>
   );
 }
 
 /** A vehicle in miniature: its photo or cutout, else its make's badge, else its kind. */
-function VehicleThumb({ vehicle }: { vehicle: Vehicle }) {
+function VehicleThumb({ vehicle, logo = 24 }: { vehicle: Vehicle; logo?: number }) {
   const theme = useTheme();
   const photo = vehicle.primaryPhoto?.thumbnailUrl ? vehicle.primaryPhoto : null;
   return photo ? (
@@ -1562,7 +1967,7 @@ function VehicleThumb({ vehicle }: { vehicle: Vehicle }) {
       accessible={false}
     />
   ) : vehicle.make ? (
-    <BrandLogo make={vehicle.make} size={24} />
+    <BrandLogo make={vehicle.make} size={logo} />
   ) : (
     <Ionicons name={vehicleIcon(vehicle.vehicleType)} size={17} color={theme.mutedForeground} />
   );
@@ -1589,23 +1994,61 @@ const styles = StyleSheet.create({
    * sheet's edges so a rail scrolls under them, padded back in.
    */
   sheet: { flexShrink: 1, gap: spacing.md },
-  top: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  fields: { gap: spacing.sm + 4 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 40 },
+  heading: { flex: 1, minWidth: 0 },
+  headingTitle: { fontSize: 18, lineHeight: 23, fontWeight: '700', letterSpacing: -0.45 },
+  // Each side holds "Reminder" with its icon: a switch, not a bar across the sheet.
+  modeSwitch: { width: 184 },
+  section: { gap: spacing.sm },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingLeft: 4 },
+  body: { gap: spacing.sm },
+  // The cards that say what the entry is about, apart from one another.
+  selects: { gap: spacing.sm },
+  // A word field in the panel (the title, the place), the height of the figures around it.
+  textCell: { minHeight: 26, padding: 0 },
+  fields: { gap: spacing.md },
   sheetFields: { flexShrink: 1, marginHorizontal: -spacing.lg },
   sheetContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
   screenContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
   row: { flexDirection: 'row', gap: StyleSheet.hairlineWidth },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm - 2 },
   hint: { paddingHorizontal: 4 },
-  again: { gap: spacing.sm - 2, paddingHorizontal: spacing.lg },
-  cadence: { width: 220 },
+  choices: { gap: 6 },
+  choice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minHeight: 58,
+    paddingLeft: 8,
+    paddingRight: spacing.md,
+    ...leaf('sm'),
+  },
+  choiceWords: { flex: 1, minWidth: 0 },
+  choiceReading: { fontSize: 11.5, lineHeight: 15 },
+  check: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kindGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
+  kindTile: {
+    width: '31.9%',
+    minHeight: 80,
+    padding: 10,
+    gap: 8,
+    justifyContent: 'space-between',
+    ...leaf('sm'),
+  },
+  kindLabel: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  kindCheck: { position: 'absolute', top: 8, right: 8 },
   twin: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
-  dot: { width: 7, height: 7, borderRadius: 999 },
   scan: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 4 },
   banner: { borderRadius: radius.lg, padding: 14 },
   footer: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: spacing.sm,
     paddingTop: spacing.sm,
   },
@@ -1613,11 +2056,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    ...leaf('sm'),
-    borderWidth: 1,
-    paddingVertical: 10,
-    paddingLeft: spacing.md,
-    paddingRight: 8,
+    // A card like the selectors above it: filled, symmetric, no outline.
+    borderRadius: radius.lg,
+    paddingVertical: 8,
+    paddingLeft: 9,
+    paddingRight: 10,
   },
   completingTitle: { fontSize: 15, lineHeight: 19, fontWeight: '700', letterSpacing: -0.2 },
   completingDue: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
@@ -1635,19 +2078,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: spacing.sm,
   },
-  pickRail: { marginHorizontal: -spacing.lg },
-  pickRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.lg },
-  pick: {
-    height: 54,
-    maxWidth: 220,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingLeft: 7,
-    paddingRight: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-  },
   thumb: {
     width: 38,
     height: 38,
@@ -1656,9 +2086,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pickWords: { flexShrink: 1, minWidth: 0 },
-  pickName: { fontSize: 13.5, lineHeight: 18 },
-  pickReading: { fontSize: 11, lineHeight: 14 },
   noVehicle: {
     alignItems: 'center',
     gap: spacing.xs,
