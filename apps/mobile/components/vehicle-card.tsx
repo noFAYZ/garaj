@@ -13,7 +13,7 @@ import { photoKey, RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
 import { formatMoney, humanise } from '@/lib/format';
 import { ease, PressableScale, useReduceMotion } from '@/lib/motion';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { figure, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 const TYPE_ICONS: Partial<Record<VehicleType, keyof typeof Ionicons.glyphMap>> = {
@@ -100,7 +100,7 @@ export function VehicleStage({
       style={[
         styles.badge,
         { width: logoSize, height: logoSize, backgroundColor: theme.cardRaised },
-        lift(theme),
+        rimmed(theme),
       ]}
     >
       <BrandLogo make={make} size={logoSize} />

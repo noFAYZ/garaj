@@ -14,7 +14,7 @@ import letterRLight from '@/assets/launch/letter-r-light.png';
 import streaks from '@/assets/launch/streaks.png';
 import tyre from '@/assets/launch/tyre.png';
 import tyreDark from '@/assets/launch/tyre-dark.png';
-import { ease, haptic, useReduceMotion } from '@/lib/motion';
+import { ease, useReduceMotion } from '@/lib/motion';
 
 /*
  * The launch: the native splash, brought to life. It opens on exactly the native splash's frame —
@@ -114,9 +114,7 @@ export function Launch({
   const [introDone, setIntroDone] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const started = useRef(false);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const idle = useRef<Animated.CompositeAnimation | null>(null);
-  const later = (ms: number, run: () => void) => timers.current.push(setTimeout(run, ms));
 
   // Where the mark goes in the wordmark, the wordmark drawn as wide as the screen allows.
   const lockupWidth = Math.min(250, width * 0.62);
@@ -135,9 +133,6 @@ export function Launch({
 
   const intro = () => {
     if (reduce) return setIntroDone(true);
-    // Felt as heard: the catch as the streaks are drawn in, the rev as they blast out.
-    later(120, haptic.light);
-    later(300, haptic.light);
     Animated.sequence([
       // A beat on the still mark, so the eye has it before it moves.
       Animated.delay(120),
@@ -189,11 +184,9 @@ export function Launch({
   useEffect(() => {
     const timer = setTimeout(handOver, HANDOVER_MS);
     const cap = setTimeout(() => setLeaving(true), MAX_MS);
-    const pending = timers.current;
     return () => {
       clearTimeout(timer);
       clearTimeout(cap);
-      pending.forEach(clearTimeout);
       idle.current?.stop();
     };
     // Once, on mount.
@@ -227,7 +220,6 @@ export function Launch({
       timing(values.ground, 0, 240, ease.standard).start(onDone);
       return;
     }
-    later(140, haptic.medium);
     Animated.parallel([
       Animated.stagger(
         30,

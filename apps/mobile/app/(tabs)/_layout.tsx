@@ -5,7 +5,6 @@ import { Dock, type DockAction, type DockItem } from '@/components/dock';
 import type { QuickAction } from '@/components/add-activity';
 import { useAddRequests, type AddRequest } from '@/lib/add-request';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
-import { haptic } from '@/lib/motion';
 import { startStore } from '@/lib/store';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -93,7 +92,6 @@ function TabBar({ state, emitter, navigateToTab }: TabBarProps) {
   const activeName = state.routes[state.index]?.name ?? '';
 
   const camera = async () => {
-    haptic.success();
     try {
       const file = await pickPhoto('camera');
       if (file) setSheet({ file });

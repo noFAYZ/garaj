@@ -115,3 +115,19 @@ export function fileSize(bytes: number): string {
   if (bytes < 1000 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** Cascadia Mono advances every glyph 1200/2048 em, so a figure's width is its length times this. */
+const MONO_ADVANCE = 1200 / 2048;
+const SMALLEST = 10;
+
+/**
+ * The size that fits `text` in `room`: its own size when there is space, smaller only by what the
+ * width demands. Worked out rather than left to Android's shrink-to-fit, which counts the fixed line
+ * height against the row, ignores `minimumFontScale` and can drop a figure to 4pt.
+ */
+export function fitFigure(text: string, room: number | null, size: number): number {
+  if (room === null || text.length === 0) return size;
+  // Each glyph is exactly its advance (the figure is untracked); a point spare so rounding never clips.
+  const fits = (room - 1) / text.length / MONO_ADVANCE;
+  return Math.max(SMALLEST, Math.min(size, fits));
+}

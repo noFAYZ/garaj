@@ -2,6 +2,7 @@ import {
   BarChart3,
   Car,
   LayoutDashboard,
+  Mail,
   ScrollText,
   Server,
   SlidersHorizontal,
@@ -19,6 +20,7 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   garages: Warehouse,
   vehicles: Car,
   settings: SlidersHorizontal,
+  emails: Mail,
 };
 
 /** Three kinds of visit, in the order a visit tends to go: look, act on records, configure. */
@@ -40,5 +42,11 @@ export const NAV_GROUPS: { label: string; items: { section: string; label: strin
       { section: 'vehicles', label: 'Vehicles' },
     ],
   },
-  { label: 'Configure', items: [{ section: 'settings', label: 'Settings' }] },
+  {
+    label: 'Configure',
+    items: [
+      { section: 'settings', label: 'Settings' },
+      { section: 'emails', label: 'Emails' },
+    ],
+  },
 ];

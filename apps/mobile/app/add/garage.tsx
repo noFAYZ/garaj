@@ -8,7 +8,7 @@ import { queryKeys } from '@vehicle-os/api-client/react';
 import { api } from '@/lib/api';
 import { useDiscardGuard } from '@/lib/discard';
 import { Chip, Eyebrow, Headline } from '@/lib/instrument';
-import { haptic, Rise } from '@/lib/motion';
+import { Rise } from '@/lib/motion';
 import { figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
@@ -43,7 +43,6 @@ export default function NewGarageScreen() {
     mutationFn: () =>
       api.garages.create({ name: trimmed, ...(currency ? { defaultCurrency: currency } : {}) }),
     onSuccess: () => {
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.garages() });
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.plan() });
@@ -135,7 +134,6 @@ export default function NewGarageScreen() {
                   label={suggestion}
                   selected={trimmed === suggestion}
                   onPress={() => {
-                    haptic.selection();
                     setName(suggestion);
                   }}
                 />

@@ -1,4 +1,4 @@
-import * as Haptics from 'expo-haptics';
+import * as Device from 'expo-device';
 import { useFocusEffect } from 'expo-router';
 import {
   Fragment,
@@ -16,12 +16,11 @@ import {
   AppState,
   Animated,
   Easing,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   type PressableProps,
   type StyleProp,
   type TextStyle,
@@ -77,14 +76,23 @@ export const spring = {
   pop: { speed: 14, bounciness: 12 },
 } as const;
 
+/**
+ * A phone with 4 GB of memory or less (Android reports a little under the label): a low-end phone,
+ * which gets the app still and plain. Every decorative motion takes its reduce-motion path — no
+ * fades on arrival, no count-ups, no sweeping needles, no loops — and the page drops its painted
+ * backdrop. On such a phone each of those costs frames the next tap is waiting for.
+ * ponytail: memory as the only signal; add the CPU (`Device.deviceYearClass`) if it misjudges.
+ */
+export const LITE = Platform.OS === 'android' && (Device.totalMemory ?? Infinity) < 5 * 1024 ** 3;
+
 /*
- * The OS reduce-motion setting, read once and kept current.
+ * The OS reduce-motion setting, read once and kept current — always on for a `LITE` phone.
  * ponytail: one app-lifetime subscription at import, instead of one listener per pressable.
  */
-let reduceMotion = false;
+let reduceMotion = LITE;
 const listeners = new Set<() => void>();
 function setReduceMotion(value: boolean) {
-  reduceMotion = value;
+  reduceMotion = value || LITE;
   listeners.forEach((listener) => listener());
 }
 void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
@@ -551,61 +559,6 @@ function Drum({
   );
 }
 
-/**
- * A bar that fills to `progress` (0–1) from the left on mount — the web's `dial-fill`, 700ms — and
- * glides when it changes. Native-driven: the fill is full width, scaled from its left edge.
- */
-export function Meter({
-  progress,
-  color,
-  track,
-  height = 6,
-  style,
-}: {
-  progress: number;
-  color: string;
-  track: string;
-  height?: number;
-  style?: StyleProp<ViewStyle>;
-}) {
-  const reduce = useReduceMotion();
-  const target = Math.max(0, Math.min(1, progress));
-  const [fill] = useState(() => new Animated.Value(reduce ? target : 0));
-  useEffect(() => {
-    if (reduce) {
-      fill.setValue(target);
-      return;
-    }
-    const animation = Animated.timing(fill, {
-      toValue: target,
-      duration: duration.dial,
-      delay: 120,
-      easing: ease.out,
-      useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [fill, target, reduce]);
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={[{ height, borderRadius: height, backgroundColor: track, overflow: 'hidden' }, style]}
-    >
-      <Animated.View
-        style={{
-          height: '100%',
-          width: '100%',
-          borderRadius: height,
-          backgroundColor: color,
-          transformOrigin: 'left',
-          transform: [{ scaleX: fill }],
-        }}
-      />
-    </View>
-  );
-}
-
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 /**
@@ -891,7 +844,6 @@ export function useIgnition(fraction: number) {
     });
     sweep.start(({ finished }) => {
       if (!finished) return;
-      haptic.light();
       settle = Animated.timing(progress, {
         toValue: target,
         duration: 935,
@@ -912,47 +864,14 @@ export function useIgnition(fraction: number) {
 /**
  * A scroll position for the collapsing large-title header: hand `onScroll` to an
  * `Animated.ScrollView` / `FlatList` / `SectionList`, and `y` to `CompactHeader`.
- *
- * `listener` hears each offset on the JS thread — for a haptic, never for drawing, which rides `y`.
- * Whether there is one is settled on the first render.
  */
-export function useScrollY(listener?: (y: number) => void) {
+export function useScrollY() {
   const [y] = useState(() => new Animated.Value(0));
-  const heard = useRef(listener);
-  useEffect(() => {
-    heard.current = listener;
-  });
   const [onScroll] = useState(() =>
-    Animated.event([{ nativeEvent: { contentOffset: { y } } }], {
-      useNativeDriver: true,
-      listener: listener
-        ? (event: NativeSyntheticEvent<NativeScrollEvent>) =>
-            heard.current?.(event.nativeEvent.contentOffset.y)
-        : undefined,
-    }),
+    Animated.event([{ nativeEvent: { contentOffset: { y } } }], { useNativeDriver: true }),
   );
   return { y, onScroll };
 }
-
-/**
- * Haptics for confirmations and choices, not for every tap — a phone that buzzes on
- * everything teaches its owner to ignore it.
- * ponytail: fire and forget; a device without a haptic engine simply does nothing.
- */
-export const haptic = {
-  /** A choice changed: a chip, a tab. */
-  selection: () => void Haptics.selectionAsync().catch(() => undefined),
-  /** A physical-feeling press: the key going down, a sheet opening. */
-  light: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined),
-  /** Weight leaving: the launch screen's tyre driving off. */
-  medium: () => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined),
-  /** Something was saved. */
-  success: () =>
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined),
-  /** Something needs a second look. */
-  warning: () =>
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined),
-};
 
 const styles = StyleSheet.create({
   odometer: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start' },

@@ -123,7 +123,11 @@ describe('delivery', () => {
     );
 
     expect(outcome).toMatchObject({ status: 'sent', channels: ['EMAIL', 'PUSH'] });
-    expect(sentEmail.at(-1)).toMatchObject({ subject: 'Oil change due', text: 'Due in 300 km.' });
+    expect(sentEmail.at(-1)).toMatchObject({
+      subject: 'Due soon: Oil change due',
+      text: expect.stringContaining('Due in 300 km.'),
+      html: expect.stringContaining('Due in 300 km.'),
+    });
     expect(pushed.at(-1)).toHaveLength(2);
 
     const left = await context.database.db.select().from(schema.deviceTokens);

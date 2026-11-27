@@ -16,7 +16,7 @@ import type { VehicleType } from '@vehicle-os/domain';
 import { BrandLogo } from '@/components/brand-logo';
 import { photoKey, RemoteImage } from '@/components/remote-image';
 import { vehicleIcon } from '@/components/vehicle-card';
-import { figure, lift, radius, useTheme, type Theme } from '@/lib/theme';
+import { rimmed, figure, radius, useTheme, type Theme } from '@/lib/theme';
 import { pad } from '@/lib/format';
 
 /** Where the back wall meets the floor, down the stage. */
@@ -108,7 +108,7 @@ export function BayStage({
         styles.badge,
         { width: tile, height: tile, borderRadius: Math.round(tile * 0.3) },
         { backgroundColor: theme.cardRaised },
-        lift(theme),
+        rimmed(theme),
       ]}
     >
       {make ? (

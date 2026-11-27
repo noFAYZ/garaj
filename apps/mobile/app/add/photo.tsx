@@ -10,7 +10,7 @@ import { useDiscardGuard } from '@/lib/discard';
 import { enqueueUpload, flush } from '@/lib/offline';
 import { fromParams, type FileParams } from '@/lib/file-picker';
 import { Eyebrow, Segmented } from '@/lib/instrument';
-import { haptic, PressableScale } from '@/lib/motion';
+import { PressableScale } from '@/lib/motion';
 import { radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty } from '@/lib/ui';
 
@@ -58,7 +58,6 @@ export default function AddPhotoScreen() {
       void flush();
     },
     onSuccess: () => {
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.vehicles() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
       release();
@@ -102,7 +101,6 @@ export default function AddPhotoScreen() {
                   <PressableScale
                     key={vehicle.id}
                     onPress={() => {
-                      if (!selected) haptic.selection();
                       setVehicleId(vehicle.id);
                     }}
                     accessibilityRole="button"
@@ -138,19 +136,18 @@ export default function AddPhotoScreen() {
 
         <View style={{ gap: spacing.sm }}>
           <Eyebrow>Caption</Eyebrow>
-          <TextInput
-            value={caption}
-            onChangeText={setCaption}
-            placeholder="Optional"
-            placeholderTextColor={theme.mutedForeground}
-            accessibilityLabel="Caption"
-            maxLength={500}
-            style={[
-              typeScale.body,
-              styles.input,
-              { backgroundColor: theme.card, color: theme.foreground },
-            ]}
-          />
+          {/* The ground on a wrapper, so the input itself stays clear (see font-text-input.tsx). */}
+          <View style={[styles.inputGround, { backgroundColor: theme.card }]}>
+            <TextInput
+              value={caption}
+              onChangeText={setCaption}
+              placeholder="Optional"
+              placeholderTextColor={theme.placeholder}
+              accessibilityLabel="Caption"
+              maxLength={500}
+              style={[typeScale.body, styles.input, { color: theme.foreground }]}
+            />
+          </View>
         </View>
 
         <View style={{ gap: spacing.sm }}>
@@ -205,6 +202,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  input: { minHeight: 44, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10 },
+  inputGround: { borderRadius: radius.md },
+  input: { minHeight: 44, paddingHorizontal: 12, paddingVertical: 10 },
   banner: { borderRadius: radius.lg, padding: 14 },
 });

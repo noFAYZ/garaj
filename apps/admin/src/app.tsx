@@ -17,6 +17,7 @@ import { SettingsPage } from './pages/settings';
 import { SystemPage } from './pages/system';
 import { AnalyticsPage } from './pages/analytics';
 import { LogsPage } from './pages/logs';
+import { EmailsPage } from './pages/emails';
 
 const PAGES: Record<string, () => React.JSX.Element> = {
   overview: OverviewPage,
@@ -27,6 +28,7 @@ const PAGES: Record<string, () => React.JSX.Element> = {
   system: SystemPage,
   settings: SettingsPage,
   logs: LogsPage,
+  emails: EmailsPage,
 };
 
 // --- The gate: signed in, then on the admin list, then the console.

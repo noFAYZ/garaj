@@ -4,3 +4,6 @@
 
 expo-env.d.ts
 # @end expo-cli
+# Firebase client config. The repo is public, so it stays local; EAS still uploads it (builds
+# read .easignore, which does not list it).
+google-services.json

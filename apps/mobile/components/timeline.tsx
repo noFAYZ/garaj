@@ -16,7 +16,7 @@ import Svg, { Circle, Rect } from 'react-native-svg';
 import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { Glyph } from '@/lib/instrument';
 import { monthSpend, type Dated } from '@/lib/ledger';
-import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { ease, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { cardSurface, figure, spacing, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
@@ -305,7 +305,6 @@ export function LedgerRow({
           onPress={
             onPress
               ? () => {
-                  haptic.selection();
                   onPress();
                 }
               : undefined

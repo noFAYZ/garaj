@@ -21,8 +21,8 @@ import { BayStage } from '@/components/bay-stage';
 import { Footer, Kicker, TextKey, TwoTone } from '@/components/onboarding-kit';
 import { useScheme } from '@/lib/appearance';
 import { Glyph } from '@/lib/instrument';
-import { ease, Gauge, haptic, PressableScale, useReduceMotion } from '@/lib/motion';
-import { figure, leaf, lift, rimmed, spacing, useTheme, type Theme } from '@/lib/theme';
+import { ease, Gauge, PressableScale, useReduceMotion } from '@/lib/motion';
+import { figure, leaf, rimmed, spacing, useTheme, type Theme } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 
 /*
@@ -99,12 +99,10 @@ export function Welcome({ onFinish }: { onFinish: (mode: Mode) => void }) {
 
   const settle = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const next = Math.round(event.nativeEvent.contentOffset.x / width);
-    if (next !== index) haptic.selection();
     setIndex(next);
   };
 
   const finish = (mode: Mode) => {
-    haptic.light();
     onFinish(mode);
   };
 
@@ -179,11 +177,7 @@ export function Welcome({ onFinish }: { onFinish: (mode: Mode) => void }) {
 }
 
 /** The stage a scene plays on: the app's lead card, raised. */
-const stageSurface = (theme: Theme) => [
-  { backgroundColor: theme.cardRaised },
-  rimmed(theme),
-  lift(theme, 'low'),
-];
+const stageSurface = (theme: Theme) => [{ backgroundColor: theme.cardRaised }, rimmed(theme)];
 
 /** Which scene: a copper pill for this one, dots for the others. */
 function Dots({ index, count }: { index: number; count: number }) {
@@ -246,7 +240,6 @@ function BayScene({ active, width, height }: { active: boolean; width: number; h
     card.setValue(0);
     const flick = (toValue: number, duration: number) =>
       Animated.timing(lit, { toValue, duration, useNativeDriver: false });
-    const timers = [setTimeout(haptic.light, 260), setTimeout(haptic.light, 1150)];
     const run = Animated.sequence([
       Animated.delay(200),
       // The tube: a stutter, a catch, then on.
@@ -271,7 +264,6 @@ function BayScene({ active, width, height }: { active: boolean; width: number; h
     run.start();
     return () => {
       run.stop();
-      timers.forEach(clearTimeout);
     };
   }, [active, reduce, lit, roll, card]);
 
@@ -434,7 +426,6 @@ function FactChip({ color, text, glyph }: { color: string; text: string; glyph: 
   const [pop] = useState(() => new Animated.Value(reduce ? 1 : 0));
   useEffect(() => {
     if (reduce) return;
-    haptic.selection();
     Animated.spring(pop, { toValue: 1, speed: 18, bounciness: 12, useNativeDriver: true }).start();
   }, [pop, reduce]);
   return (
@@ -476,7 +467,6 @@ function AheadScene({ active, height }: { active: boolean; height: number }) {
     if (!active || reduce) return;
     sweep.setValue(0);
     note.setValue(0);
-    const timer = setTimeout(haptic.light, 1450);
     const run = Animated.parallel([
       Animated.timing(sweep, {
         toValue: 0.86,
@@ -493,7 +483,6 @@ function AheadScene({ active, height }: { active: boolean; height: number }) {
     run.start();
     return () => {
       run.stop();
-      clearTimeout(timer);
     };
   }, [active, reduce, sweep, note]);
 
@@ -504,7 +493,6 @@ function AheadScene({ active, height }: { active: boolean; height: number }) {
           styles.notice,
           { backgroundColor: `${theme.popover}F5` },
           rimmed(theme),
-          lift(theme, 'low'),
           {
             opacity: note,
             transform: [

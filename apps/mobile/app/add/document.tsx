@@ -29,7 +29,7 @@ import {
   type PickedFile,
 } from '@/lib/file-picker';
 import { DATE_LOCALE, fileSize, humanise } from '@/lib/format';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { enqueueUpload, flush } from '@/lib/offline';
 import { addMonths, countdown, validity } from '@/lib/papers';
 import { cardSurface, figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
@@ -136,7 +136,6 @@ export default function AddDocumentScreen() {
     try {
       const picked = source === 'files' ? await pickFile() : await pickPhoto(source);
       if (picked) {
-        haptic.selection();
         setFile(picked);
       }
     } catch (error) {
@@ -170,7 +169,6 @@ export default function AddDocumentScreen() {
       void flush();
     },
     onSuccess: () => {
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: ['vehicles'] });
       void queryClient.invalidateQueries({ queryKey: ['documents'] });
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
@@ -392,7 +390,6 @@ function FileCard({ file, onRemove }: { file: PickedFile; onRemove: () => void }
       </View>
       <PressableScale
         onPress={() => {
-          haptic.selection();
           onRemove();
         }}
         accessibilityRole="button"

@@ -8,7 +8,6 @@ import { pressingPapers } from '@/components/vehicle-documents';
 import { useAddRequests, type AddRequest } from '@/lib/add-request';
 import { api } from '@/lib/api';
 import { pickPhoto, type PickedFile } from '@/lib/file-picker';
-import { haptic } from '@/lib/motion';
 
 export type VehicleTab = 'activity' | 'planned' | 'parts' | 'statistics' | 'documents';
 
@@ -121,7 +120,6 @@ export function VehicleDock({
   };
 
   const camera = async () => {
-    haptic.success();
     try {
       const file = await pickPhoto('camera');
       if (file) setSheet({ file, quick: null });

@@ -22,9 +22,9 @@ import { vehicleIcon } from '@/components/vehicle-card';
 import { api } from '@/lib/api';
 import { pad, humanise } from '@/lib/format';
 import { Chip, Eyebrow, SectionHeading, SectionLink, ToneChip } from '@/lib/instrument';
-import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { figure, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty, Face, Field, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -80,7 +80,6 @@ export default function GarageScreen() {
   const canAddVehicle = garage ? capabilitiesFor(garage.role).includes('vehicle.write') : false;
   // The form opens with this garage already chosen.
   const addVehicle = () => {
-    haptic.selection();
     router.push({ pathname: '/add/vehicle', params: { garageId: id } });
   };
 
@@ -146,14 +145,7 @@ export default function GarageScreen() {
         </View>
         {/* The garage's plate: what it is, who is in it, and how its keys are spread. */}
         <Rise>
-          <View
-            style={[
-              styles.plate,
-              { backgroundColor: theme.cardRaised },
-              rimmed(theme),
-              lift(theme, 'low'),
-            ]}
-          >
+          <View style={[styles.plate, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
             <View style={{ gap: 4 }}>
               <Eyebrow>
                 Garage
@@ -298,7 +290,6 @@ export default function GarageScreen() {
                     holders={holdersOf(vehicle.id)}
                     index={index}
                     onPress={() => {
-                      haptic.selection();
                       if (canManage) setSheet({ kind: 'keys', vehicleId: vehicle.id });
                       else openVehicle(vehicle.id);
                     }}
@@ -328,7 +319,6 @@ export default function GarageScreen() {
                   onPress={
                     canManage
                       ? () => {
-                          haptic.selection();
                           setSheet({ kind: 'person', memberId: member.id });
                         }
                       : undefined
@@ -338,7 +328,6 @@ export default function GarageScreen() {
               {canManage ? (
                 <PressableScale
                   onPress={() => {
-                    haptic.selection();
                     setSheet({ kind: 'add' });
                   }}
                   accessibilityRole="button"
@@ -464,7 +453,7 @@ function Key({
               // On the hook: a quiet tag of the board's own grey. Out: raised, with a copper band.
               free
                 ? { backgroundColor: theme.muted }
-                : [{ backgroundColor: theme.cardRaised }, lift(theme, 'low')],
+                : [{ backgroundColor: theme.cardRaised }, rimmed(theme)],
             ]}
           >
             {/* The tag's punched hole, and a copper band on a key that is out. */}
@@ -693,7 +682,6 @@ function TickRow({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="checkbox"
@@ -770,7 +758,6 @@ function KeysSheet({
   const save = useMutation({
     mutationFn: () => api.garages.assignDrivers(garageId, vehicle.id, [...picked]),
     onSuccess: () => {
-      haptic.success();
       onClose();
     },
     onSettled: () =>
@@ -851,7 +838,6 @@ function PersonSheet({
       if (keysChanged) await api.garages.assignVehicles(garage.id, member.id, [...picked]);
     },
     onSuccess: () => {
-      haptic.success();
       onClose();
     },
     // Settled, not success: the role can land and the keys fail, and the list should say so.
@@ -860,7 +846,6 @@ function PersonSheet({
   const remove = useMutation({
     mutationFn: () => api.garages.removeMember(garage.id, member.id),
     onSuccess: () => {
-      haptic.success();
       invalidate();
       onClose();
       if (isYou) onLeft();
@@ -987,7 +972,6 @@ function AddSheet({
   const add = useMutation({
     mutationFn: () => api.garages.addMember(garageId, { email: trimmed, role }),
     onSuccess: (member) => {
-      haptic.success();
       // In the list before the refetch lands, so their sheet can open on them at once.
       queryClient.setQueryData<GarageMember[]>(queryKeys.garageMembers(garageId), (list) =>
         list ? [...list, member] : list,

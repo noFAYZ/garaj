@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { avatarFor } from '@vehicle-os/contracts';
 import Svg, { Circle, Defs, Mask, Pattern, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { ease, PressableScale, useReduceMotion } from './motion';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from './theme';
+import { figure, radius, rimmed, spacing, typeScale, useTheme, leaf } from './theme';
 
 /**
  * The handful of primitives every screen uses: the web's materials — the resting card, the copper
@@ -63,35 +63,6 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
     <View style={[styles.card, { backgroundColor: theme.card }, rimmed(theme), style]}>
       {children}
     </View>
-  );
-}
-
-/**
- * A tappable card: the whole surface is the target, and it gives under the thumb — the web card's
- * `active:scale-[0.99]`. For cards that open something; one that does nothing stays `Card`.
- */
-export function PressableCard({
-  onPress,
-  accessibilityLabel,
-  children,
-  style,
-}: {
-  onPress: () => void;
-  accessibilityLabel: string;
-  children: ReactNode;
-  style?: StyleProp<ViewStyle>;
-}) {
-  const theme = useTheme();
-  return (
-    <PressableScale
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      scaleTo={0.985}
-      style={[styles.card, { backgroundColor: theme.card }, rimmed(theme), style]}
-    >
-      {children}
-    </PressableScale>
   );
 }
 
@@ -418,30 +389,34 @@ export function Field({
           { backgroundColor: focused && !error ? theme.primarySoft : 'transparent' },
         ]}
       >
-        <TextInput
-          placeholderTextColor={theme.mutedForeground}
+        {/* The fill and line on a wrapper, so the input itself stays clear (font-text-input.tsx). */}
+        <View
           style={[
-            styles.input,
+            styles.inputGround,
             {
               backgroundColor: theme.input,
-              color: theme.foreground,
               borderColor: error ? theme.destructive : focused ? theme.ring : theme.borderStrong,
             },
           ]}
-          accessibilityLabel={label}
-          // The visible hint and error are separate `Text`s a screen reader never links to the
-          // input; as its hint they are read out when the field is focused.
-          accessibilityHint={error ?? hint}
-          {...props}
-          onFocus={(event) => {
-            setFocused(true);
-            props.onFocus?.(event);
-          }}
-          onBlur={(event) => {
-            setFocused(false);
-            props.onBlur?.(event);
-          }}
-        />
+        >
+          <TextInput
+            placeholderTextColor={theme.placeholder}
+            style={[styles.input, { color: theme.foreground }]}
+            accessibilityLabel={label}
+            // The visible hint and error are separate `Text`s a screen reader never links to the
+            // input; as its hint they are read out when the field is focused.
+            accessibilityHint={error ?? hint}
+            {...props}
+            onFocus={(event) => {
+              setFocused(true);
+              props.onFocus?.(event);
+            }}
+            onBlur={(event) => {
+              setFocused(false);
+              props.onBlur?.(event);
+            }}
+          />
+        </View>
       </View>
       {error ? (
         <Text
@@ -455,27 +430,6 @@ export function Field({
       ) : hint ? (
         <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>{hint}</Text>
       ) : null}
-    </View>
-  );
-}
-
-export function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  /** `undefined` while it loads: the label is known up front, only the figure waits. */
-  value: string | undefined;
-}) {
-  const theme = useTheme();
-  return (
-    <View style={{ flex: 1, minWidth: 90, gap: 4 }}>
-      <Text style={[typeScale.overline, { color: theme.mutedForeground }]}>{label}</Text>
-      {value === undefined ? (
-        <Skeleton width={64} height={22} />
-      ) : (
-        <Text style={[typeScale.headline, figure, { color: theme.foreground }]}>{value}</Text>
-      )}
     </View>
   );
 }
@@ -645,7 +599,6 @@ export function CompactHeader({ title, y }: { title: string; y: Animated.Value }
       importantForAccessibility="no-hide-descendants"
       style={[
         styles.compact,
-        lift(theme, 'low'),
         {
           paddingTop: insets.top,
           backgroundColor: `${theme.background}E6`,
@@ -743,13 +696,9 @@ const styles = StyleSheet.create({
   },
   iconButton: { borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   halo: { borderRadius: radius.xl + 4, padding: 3, margin: -3 },
-  input: {
-    minHeight: 48,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    paddingHorizontal: spacing.md + 2,
-    fontSize: 16,
-  },
+  inputGround: { borderRadius: radius.xl, borderWidth: 1 },
+  // 48 tall with the ground's two hairlines.
+  input: { minHeight: 46, paddingHorizontal: spacing.md + 1, fontSize: 16 },
   largeHeader: {
     flexDirection: 'row',
     alignItems: 'flex-end',

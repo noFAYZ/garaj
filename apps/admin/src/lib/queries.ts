@@ -67,5 +67,22 @@ export const useHealth = () =>
 export const useFlags = () =>
   useQuery({ queryKey: ['admin', 'flags'], queryFn: () => get<FlagState[]>('/flags') });
 
+/** Every email the product sends, rendered by the API with sample content. */
+export interface EmailPreview {
+  id: string;
+  name: string;
+  kind: 'Account' | 'Reminder';
+  when: string;
+  subject: string;
+  html: string;
+  text: string;
+}
+
+export const useEmails = () =>
+  useQuery({
+    queryKey: ['admin', 'emails'],
+    queryFn: () => get<{ data: EmailPreview[] }>('/emails').then((body) => body.data),
+  });
+
 export const useAdmins = () =>
   useQuery({ queryKey: ['admin', 'admins'], queryFn: () => get<AdminAccount[]>('/admins') });

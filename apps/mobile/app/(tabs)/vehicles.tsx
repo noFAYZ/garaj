@@ -124,7 +124,7 @@ export default function VehiclesScreen() {
                   value={query}
                   onChangeText={setQuery}
                   placeholder="Search name, make or plate"
-                  placeholderTextColor={theme.mutedForeground}
+                  placeholderTextColor={theme.placeholder}
                   accessibilityLabel="Search vehicles"
                   autoCorrect={false}
                   returnKeyType="search"

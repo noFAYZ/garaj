@@ -3,7 +3,7 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { fitLabels } from '@vehicle-os/ui';
 import { STATUS } from '@/lib/chart-colors';
-import { ease, haptic, PressableScale, useReduceMotion } from '@/lib/motion';
+import { ease, PressableScale, useReduceMotion } from '@/lib/motion';
 import { figure, spacing, typeScale, useTheme } from '@/lib/theme';
 
 /*
@@ -470,7 +470,6 @@ export function ColumnChart({
               <PressableScale
                 key={bucket.key}
                 onPress={() => {
-                  haptic.selection();
                   setChosen(selected ? null : index);
                 }}
                 accessibilityRole="button"
@@ -653,7 +652,6 @@ export function SplitBar({
             onPress={
               onSelect
                 ? () => {
-                    haptic.selection();
                     onSelect(part.key);
                   }
                 : undefined

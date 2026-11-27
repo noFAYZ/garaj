@@ -8,6 +8,8 @@ import { useTheme } from '@/lib/theme';
  * A publishable logo.dev key, inlined at bundle time from `apps/mobile/.env` — the same key the
  * web reads as `NEXT_PUBLIC_LOGO_DEV_TOKEN`. Expo only inlines `EXPO_PUBLIC_*` names, and only
  * from the app's own directory, which is why it is not picked up from the repository root.
+ * EAS builds never see that file (it is git-ignored), so the key is also an EAS environment
+ * variable on the project, for production, preview and development; without it logos are blank.
  */
 const TOKEN = process.env.EXPO_PUBLIC_LOGO_DEV_TOKEN;
 

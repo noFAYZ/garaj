@@ -39,8 +39,8 @@ import { photoKey, RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
 import { Glyph } from '@/lib/instrument';
 import { compactMoney, pad, DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
-import { ease, Gauge, haptic, PressableScale, useIgnition, useReduceMotion } from '@/lib/motion';
-import { figure, lift, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { ease, Gauge, PressableScale, useIgnition, useReduceMotion } from '@/lib/motion';
+import { figure, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 // UTC, as the spend is bucketed.
@@ -188,7 +188,6 @@ export function VehicleHero({
 
   const openStage = () => {
     if (frames.length === 0) return onAddPhoto?.();
-    haptic.light();
     setViewing(true);
   };
 
@@ -240,7 +239,7 @@ export function VehicleHero({
                     style={[
                       styles.plateMount,
                       { backgroundColor: theme.cardRaised },
-                      lift(theme, 'low'),
+                      rimmed(theme),
                     ]}
                   >
                     <Plate value={plate} />
@@ -304,9 +303,7 @@ export function VehicleHero({
                 </View>
               ) : frames.length === 0 && onAddPhoto ? (
                 // Without a photo the stage is the way to add one, and says so where the thumb is.
-                <View
-                  style={[styles.addPhoto, { backgroundColor: theme.primary }, lift(theme, 'low')]}
-                >
+                <View style={[styles.addPhoto, { backgroundColor: theme.primary }]}>
                   <Ionicons name="camera" size={13} color={theme.primaryForeground} />
                   <Text style={[styles.addPhotoText, { color: theme.primaryForeground }]}>
                     Add photo
@@ -410,7 +407,6 @@ function BarButton({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -448,7 +444,6 @@ function Dash({
   onOpenStats?: () => void;
   onOpenPlanned?: () => void;
 }) {
-  const theme = useTheme();
   // This calendar month's spend: the hero answers "what has it cost lately" without a year to unpick.
   const thisMonth = new Date().toISOString().slice(0, 7);
   const spent =
@@ -468,8 +463,7 @@ function Dash({
   const fuel = useFuelAverage(vehicle);
 
   return (
-    // The lift on a wrapper: a shadow on the view that clips its corners is clipped with them.
-    <View style={[styles.dock, lift(theme)]}>
+    <View style={styles.dock}>
       <DashCard>
         <DashReadings>
           <DashCell
@@ -485,11 +479,10 @@ function Dash({
             narrow={narrow}
             onPress={onLogOdometer}
           >
-            <DashReading>
+            <DashReading beside={reading !== null ? <DashUnit>{unit}</DashUnit> : null}>
               <DashValue muted={reading === null} narrow={narrow}>
                 {reading === null ? '—' : Math.round(reading).toLocaleString()}
               </DashValue>
-              {reading !== null ? <DashUnit>{unit}</DashUnit> : null}
             </DashReading>
             {vehicle.currentEngineHours !== null ? (
               <DashNote>{vehicle.currentEngineHours.toLocaleString()} H ENGINE</DashNote>
@@ -511,7 +504,14 @@ function Dash({
             narrow={narrow}
             onPress={onOpenStats}
           >
-            <DashReading>
+            <DashReading
+              beside={
+                // A small phone's tile has no room for both: the figure keeps it.
+                monthly && monthly.points.length > 1 && !narrow ? (
+                  <Spark points={monthly.points} month={thisMonth} />
+                ) : null
+              }
+            >
               {spent === undefined ? (
                 <Skeleton width={48} height={16} />
               ) : (
@@ -519,10 +519,6 @@ function Dash({
                   {spent ? spentFigure(spent) : '—'}
                 </DashValue>
               )}
-              {/* A small phone's tile has no room for both: the figure keeps it. */}
-              {monthly && monthly.points.length > 1 && !narrow ? (
-                <Spark points={monthly.points} month={thisMonth} />
-              ) : null}
             </DashReading>
           </DashCell>
           <DashStack>
@@ -706,7 +702,6 @@ function PhotoViewer({
   const onScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (!width) return;
     const next = Math.round(event.nativeEvent.contentOffset.x / width);
-    if (next !== position) haptic.selection();
     setPosition(next);
   };
 

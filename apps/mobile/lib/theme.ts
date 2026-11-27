@@ -31,12 +31,11 @@ const DARK = {
   scrim: 'rgba(0,0,0,0.52)',
   shadow: '#000000',
   /**
-   * Hint text in an empty field. Not `borderStrong`: Android's high-contrast text fills text darker
-   * than mid-grey (RGB average under 128) with black and lighter text with white, outlined in the
-   * other. A faint tone on the background's own side of that line is filled in the background's
-   * colour, and the hint reads as a hollow outline. Each theme's hint stays on the foreground's side.
+   * Hint text in an empty field: soft, well below the text it stands in for. Android's high-contrast
+   * text setting ignores it (it redraws text solid black or white); the TextInput wrapper
+   * (`font-text-input.tsx`) fades an empty field there instead.
    */
-  placeholder: oklchToHex('oklch(0.64 0.014 70)'),
+  placeholder: oklchToHex('oklch(0.52 0.012 70)'),
   dark: true,
 };
 
@@ -50,15 +49,14 @@ const LIGHT: Theme = {
   // Lighter than the web's muted (0.925), to sit softly on the white page (user asked).
   muted: oklchToHex('oklch(0.96 0.006 78)'),
   card: resting(LIGHT_TOKENS),
-  // Raised surfaces are the page's own solid white (user asked); a hairline and a shadow lift them.
+  // Raised surfaces are the page's own solid white (user asked), edged by a hairline; cards cast no shadow.
   cardRaised: '#ffffff',
   hairline: 'rgba(40,30,20,0.08)',
   rim: 'rgba(255,255,255,0.9)',
   scrim: 'rgba(28,22,16,0.38)',
   // The web's light shadow: warm ink at low strength, never black.
   shadow: oklchToHex('oklch(0.2 0.015 65)'),
-  // Under mid-grey, so high-contrast text fills it black (see DARK's).
-  placeholder: oklchToHex('oklch(0.57 0.015 65)'),
+  placeholder: oklchToHex('oklch(0.73 0.012 70)'),
   dark: false,
 };
 
@@ -106,14 +104,6 @@ export function leaf(size: LeafSize = 'md', inset = 0): ViewStyle {
 }
 
 /** Only a leaf's top corners, for what heads a card (a photo, a stage), its foot meeting the rest. */
-export function leafTop(size: LeafSize = 'md', inset = 0, foot = 0): ViewStyle {
-  return {
-    ...leaf(size, inset),
-    borderBottomRightRadius: foot,
-    borderBottomLeftRadius: foot,
-  };
-}
-
 /**
  * The type scale: a screen picks a role, not a number. Albert Sans, as the web sets it, at the web's
  * sizes; figures in mono (`figure`).
@@ -155,20 +145,20 @@ export const figure: TextStyle = {
 };
 
 /**
- * The web's `shadow-float`, as one shadow: something floating over the page. `low` is the soft
- * ambient one a resting card would carry, for the few places that lift without floating.
+ * The web's `shadow-float`: something floating over the page — the dock, a sheet, a dialog. Cards
+ * stay flat (user asked): a shadow per card is a cost on every frame of a scroll on a cheap phone.
  */
-export const lift = (theme: Theme, strength: 'low' | 'float' = 'float') => ({
+export const lift = (theme: Theme) => ({
   shadowColor: theme.shadow,
-  shadowOpacity: theme.dark ? 0.5 : strength === 'float' ? 0.16 : 0.06,
-  shadowRadius: strength === 'float' ? 22 : 10,
-  shadowOffset: { width: 0, height: strength === 'float' ? 12 : 4 },
-  elevation: strength === 'float' ? 12 : 2,
+  shadowOpacity: theme.dark ? 0.5 : 0.16,
+  shadowRadius: 22,
+  shadowOffset: { width: 0, height: 12 },
+  elevation: 12,
 });
 
 /**
  * A floating surface's edge: in the dark a lit line along the top and a faint ring all round —
- * the web's dialog rim — and in daylight a hairline, the shadow doing the lifting.
+ * the web's dialog rim — and in daylight a hairline.
  */
 export const rimmed = (theme: Theme) => ({
   borderWidth: 1,
@@ -177,23 +167,11 @@ export const rimmed = (theme: Theme) => ({
 });
 
 /**
- * A card on a detail page: white and lifted by a soft shadow by day; at night the resting card with
- * a hairline edge and a little of the page through it.
+ * A card on a detail page, flat: white by day; at night the resting card with a little of the page
+ * through it. A hairline edges both.
  */
-export const cardSurface = (theme: Theme) =>
-  theme.dark
-    ? {
-        backgroundColor: `${theme.card}E8`,
-        borderColor: theme.hairline,
-        borderWidth: StyleSheet.hairlineWidth,
-      }
-    : {
-        backgroundColor: theme.cardRaised,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.hairline,
-        shadowColor: theme.shadow,
-        shadowOpacity: 0.06,
-        shadowRadius: 14,
-        shadowOffset: { width: 0, height: 5 },
-        elevation: 2,
-      };
+export const cardSurface = (theme: Theme) => ({
+  backgroundColor: theme.dark ? `${theme.card}E8` : theme.cardRaised,
+  borderColor: theme.hairline,
+  borderWidth: StyleSheet.hairlineWidth,
+});

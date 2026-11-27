@@ -11,7 +11,7 @@ import { Group, groupSurface, SettingsHeader } from '@/components/settings-kit';
 import { api } from '@/lib/api';
 import { jobEmoji, NOTICE } from '@/lib/emoji';
 import { Glyph, Segmented, type Tone } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
@@ -86,7 +86,6 @@ export default function NotificationsScreen() {
     mutationFn: () => api.notifications.markAllRead(),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: ['notifications'] });
-      haptic.success();
       return markLocally('all');
     },
     onError: (_error, _variables, rollback) => rollback?.(),
@@ -109,7 +108,6 @@ export default function NotificationsScreen() {
     }
   };
   const read = (notification: Notification) => {
-    haptic.selection();
     markRead.mutate(notification.id);
   };
 

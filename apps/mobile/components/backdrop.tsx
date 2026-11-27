@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Image, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Svg, { Defs, LinearGradient, RadialGradient, Rect, Stop } from 'react-native-svg';
 import grain from '@/assets/grain.png';
+import { LITE } from '@/lib/motion';
 import { useTheme } from '@/lib/theme';
 
 /**
@@ -14,8 +15,16 @@ import { useTheme } from '@/lib/theme';
  * Drawn once per screen by the root stack's `screenLayout`, under each screen's own content —
  * every screen stays opaque, so a push never shows the screen beneath through it. Gradients and a
  * tiled noise image only: react-native-svg filters (a blur, `feTurbulence` grain) crash Android.
+ *
+ * Not on a low-end phone (`LITE`): four screen-sized gradients and a screen of blended grain, drawn
+ * again for every screen in a push, are more than its GPU has to spare. The page colour stands in.
  */
 export function Backdrop() {
+  if (LITE) return null;
+  return <Painted />;
+}
+
+function Painted() {
   const theme = useTheme();
   const screen = useWindowDimensions();
   /*

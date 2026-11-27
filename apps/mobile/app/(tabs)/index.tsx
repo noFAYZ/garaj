@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter, type Href } from 'expo-router';
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import {
   Animated,
   Platform,
@@ -30,7 +30,6 @@ import {
   DashRows,
   DashTag,
   DashValue,
-  DASH_SHAPE,
 } from '@/components/dash';
 import { useDockSpace } from '@/components/dock';
 import { NotificationBell } from '@/components/notification-bell';
@@ -56,7 +55,6 @@ import { SectionHeading } from '@/lib/instrument';
 import {
   ease,
   Gauge,
-  haptic,
   PressableScale,
   Rise,
   useNow,
@@ -64,7 +62,7 @@ import {
   useReduceMotion,
   useScrollY,
 } from '@/lib/motion';
-import { figure, lift, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Empty, Face, Skeleton } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -104,18 +102,7 @@ export default function GarageScreen() {
   const insets = useSafeAreaInsets();
   const dockSpace = useDockSpace();
   const [refreshing, setRefreshing] = useState(false);
-  // The rev's last thousand and whether it is refreshing, read by the scroll listener.
-  const engine = useRef({ rpm: 0, refreshing: false });
-  const { y, onScroll } = useScrollY(
-    REV
-      ? (offset) => {
-          if (engine.current.refreshing) return;
-          const rpm = Math.max(0, Math.min(8, Math.floor((-offset / REV_FULL) * 8)));
-          if (rpm > engine.current.rpm) haptic.selection();
-          engine.current.rpm = rpm;
-        }
-      : undefined,
-  );
+  const { y, onScroll } = useScrollY();
   const dashboard = useQuery(dashboardQuery(api));
   const vehicles = useQuery(vehiclesQuery(api));
   const garages = useQuery(garagesQuery(api));
@@ -145,15 +132,9 @@ export default function GarageScreen() {
   }, [noGarage, router]);
 
   const refresh = () => {
-    engine.current.refreshing = true;
-    // On iOS the needle has just hit the stop: the limiter, felt.
-    if (REV) haptic.warning();
     setRefreshing(true);
-    void Promise.allSettled([dashboard.refetch(), vehicles.refetch(), garages.refetch()]).then(
-      () => {
-        engine.current.refreshing = false;
-        setRefreshing(false);
-      },
+    void Promise.allSettled([dashboard.refetch(), vehicles.refetch(), garages.refetch()]).then(() =>
+      setRefreshing(false),
     );
   };
 
@@ -368,29 +349,27 @@ function GarageDash({
 
   if (!data) {
     return (
-      <View style={[DASH_SHAPE, lift(theme, 'low')]}>
-        <DashCard>
-          <DashReadings>
-            <View style={styles.fleetSlot}>
-              <View style={styles.fleet}>
-                <Skeleton width={22} height={26} radius={6} />
-                <View style={styles.fleetSide}>
-                  <Skeleton width={44} height={14} />
-                  <Skeleton width={40} height={8} />
-                </View>
+      <DashCard>
+        <DashReadings>
+          <View style={styles.fleetSlot}>
+            <View style={styles.fleet}>
+              <Skeleton width={22} height={26} radius={6} />
+              <View style={styles.fleetSide}>
+                <Skeleton width={44} height={14} />
+                <Skeleton width={40} height={8} />
               </View>
             </View>
-            <DashCellSkeleton label="Worth" />
-            <DashCellSkeleton label="Spent" />
-          </DashReadings>
-          <DashRows>
-            <View style={styles.rowSkeleton}>
-              <Skeleton width={18} height={18} radius={9} />
-              <Skeleton width="48%" height={12} />
-            </View>
-          </DashRows>
-        </DashCard>
-      </View>
+          </View>
+          <DashCellSkeleton label="Worth" />
+          <DashCellSkeleton label="Spent" />
+        </DashReadings>
+        <DashRows>
+          <View style={styles.rowSkeleton}>
+            <Skeleton width={18} height={18} radius={9} />
+            <Skeleton width="48%" height={12} />
+          </View>
+        </DashRows>
+      </DashCard>
     );
   }
 
@@ -414,171 +393,163 @@ function GarageDash({
   const plural = vehicles.length === 1 ? 'vehicle' : 'vehicles';
 
   return (
-    // The lift on a wrapper: a shadow on the view that clips its corners is clipped with them.
-    <View style={[DASH_SHAPE, lift(theme, 'low')]}>
-      <DashCard>
-        <DashReadings>
-          {/*
-           * The fleet, the dash's lead: no tile, a figure a size up from the rest, and each vehicle's
-           * mark bare in the colour of what it waits on — the copper of the garage when nothing.
-           */}
-          <Rise index={2} style={styles.fleetSlot}>
-            <PressableScale
-              onPress={() => {
-                haptic.selection();
-                router.push('/vehicles');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`${vehicles.length} ${plural}${waiting ? `, ${waiting} due` : ''}`}
-              accessibilityHint="Opens Vehicles"
-              scaleTo={0.96}
-              style={styles.fleet}
-            >
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.6}
-                style={[figure, styles.fleetCount, { color: theme.foreground }]}
-              >
-                {vehicles.length}
-              </Text>
-              <View style={styles.fleetSide}>
-                <FleetMarks vehicles={vehicles} toneOf={toneOf} max={narrow ? 2 : 3} />
-                <Text
-                  numberOfLines={1}
-                  style={[styles.fleetWord, { color: theme.mutedForeground }]}
-                >
-                  {plural.toUpperCase()}
-                </Text>
-              </View>
-            </PressableScale>
-          </Rise>
-          <DashCell
-            icon="pricetag-outline"
-            label="Worth"
-            said={`Worth ${worth ? compactMoney(worth.amountMinor, worth.currency) : 'not known'}`}
-            index={3}
-            narrow={narrow}
+    <DashCard>
+      <DashReadings>
+        {/*
+         * The fleet, the dash's lead: no tile, a figure a size up from the rest, and each vehicle's
+         * mark bare in the colour of what it waits on — the copper of the garage when nothing.
+         */}
+        <Rise index={2} style={styles.fleetSlot}>
+          <PressableScale
+            onPress={() => {
+              router.push('/vehicles');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${vehicles.length} ${plural}${waiting ? `, ${waiting} due` : ''}`}
+            accessibilityHint="Opens Vehicles"
+            scaleTo={0.96}
+            style={styles.fleet}
           >
-            <DashReading>
-              {worth ? (
-                <DashValue
-                  narrow={narrow}
-                  count={{
-                    value: worth.amountMinor,
-                    format: (amount) => compactMoney(amount, worth.currency),
-                  }}
-                />
-              ) : (
-                <DashValue muted narrow={narrow}>
-                  —
-                </DashValue>
-              )}
-            </DashReading>
-          </DashCell>
-          <DashCell
-            icon="wallet-outline"
-            label="Spent"
-            said={`Spent ${currency ? compactMoney(total, currency) : 'nothing'} to run${month && month.amountMinor > 0 ? `, ${compactMoney(month.amountMinor, month.currency)} of it this month` : ''}`}
-            aside={
-              month && month.amountMinor > 0 && !narrow ? (
-                <DashTag color={theme.primary} wash={theme.primarySoft}>
-                  +{compactMoney(month.amountMinor, month.currency)}
-                </DashTag>
-              ) : null
-            }
-            index={4}
-            narrow={narrow}
-          >
-            <DashReading>
-              {currency ? (
-                <DashValue
-                  narrow={narrow}
-                  count={{ value: total, format: (amount) => compactMoney(amount, currency) }}
-                />
-              ) : (
-                <DashValue muted narrow={narrow}>
-                  —
-                </DashValue>
-              )}
-            </DashReading>
-          </DashCell>
-        </DashReadings>
-
-        <DashRows>
-          {items.length === 0 ? (
-            <DashRow
-              emoji={<Ionicons name="checkmark-circle" size={18} color={theme.primary} />}
-              title="Nothing needs you"
-              whose={data.briefing[0] ?? 'Every service, paper and recall is in hand.'}
-              tone="neutral"
-              accessibilityLabel={`All clear. ${data.briefing[0] ?? 'Every service, paper and recall is in hand.'}`}
-              trailing={
-                <DashAction
-                  icon="add"
-                  label="Plan a reminder"
-                  quiet
-                  onPress={() => openAdd({ mode: 'planned' })}
-                />
-              }
-            />
-          ) : (
-            shown.map((item, place) => {
-              const act = actionFor(item);
-              return (
-                <DashRow
-                  key={item.key}
-                  emoji={item.emoji}
-                  title={item.title}
-                  whose={item.vehicle}
-                  status={item.short}
-                  tone={item.tone === 'late' ? 'destructive' : 'warning'}
-                  onPress={() =>
-                    router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
-                  }
-                  accessibilityLabel={`${item.title}, ${item.vehicle}, ${item.due}`}
-                  accessibilityHint={`Opens ${item.vehicle}`}
-                  index={5 + Math.min(place, NEXT_SHOWN)}
-                  divided={place > 0}
-                  trailing={
-                    <DashAction
-                      icon={act.icon}
-                      label={`${act.label}: ${item.title}`}
-                      onPress={() => {
-                        if ('add' in act) openAdd(act.add);
-                        else router.push(act.href);
-                      }}
-                    />
-                  }
-                />
-              );
-            })
-          )}
-          {hidden > 0 ? (
-            <PressableScale
-              onPress={() => {
-                haptic.selection();
-                setOpen((was) => !was);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={open ? 'Show fewer' : `Show ${hidden} more`}
-              scaleTo={0.97}
-              style={styles.more}
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              style={[figure, styles.fleetCount, { color: theme.foreground }]}
             >
-              <View style={[styles.moreRule, { backgroundColor: theme.border }]} />
-              <Text style={[styles.moreText, { color: theme.mutedForeground }]}>
-                {open ? 'Show fewer' : `${hidden} more`}
+              {vehicles.length}
+            </Text>
+            <View style={styles.fleetSide}>
+              <FleetMarks vehicles={vehicles} toneOf={toneOf} max={narrow ? 2 : 3} />
+              <Text numberOfLines={1} style={[styles.fleetWord, { color: theme.mutedForeground }]}>
+                {plural.toUpperCase()}
               </Text>
-              <Ionicons
-                name={open ? 'chevron-up' : 'chevron-down'}
-                size={12}
-                color={theme.mutedForeground}
+            </View>
+          </PressableScale>
+        </Rise>
+        <DashCell
+          icon="pricetag-outline"
+          label="Worth"
+          said={`Worth ${worth ? compactMoney(worth.amountMinor, worth.currency) : 'not known'}`}
+          index={3}
+          narrow={narrow}
+        >
+          <DashReading>
+            {worth ? (
+              <DashValue
+                narrow={narrow}
+                count={{
+                  value: worth.amountMinor,
+                  format: (amount) => compactMoney(amount, worth.currency),
+                }}
               />
-            </PressableScale>
-          ) : null}
-        </DashRows>
-      </DashCard>
-    </View>
+            ) : (
+              <DashValue muted narrow={narrow}>
+                —
+              </DashValue>
+            )}
+          </DashReading>
+        </DashCell>
+        <DashCell
+          icon="wallet-outline"
+          label="Spent"
+          said={`Spent ${currency ? compactMoney(total, currency) : 'nothing'} to run${month && month.amountMinor > 0 ? `, ${compactMoney(month.amountMinor, month.currency)} of it this month` : ''}`}
+          aside={
+            month && month.amountMinor > 0 && !narrow ? (
+              <DashTag color={theme.primary} wash={theme.primarySoft}>
+                +{compactMoney(month.amountMinor, month.currency)}
+              </DashTag>
+            ) : null
+          }
+          index={4}
+          narrow={narrow}
+        >
+          <DashReading>
+            {currency ? (
+              <DashValue
+                narrow={narrow}
+                count={{ value: total, format: (amount) => compactMoney(amount, currency) }}
+              />
+            ) : (
+              <DashValue muted narrow={narrow}>
+                —
+              </DashValue>
+            )}
+          </DashReading>
+        </DashCell>
+      </DashReadings>
+
+      <DashRows>
+        {items.length === 0 ? (
+          <DashRow
+            emoji={<Ionicons name="checkmark-circle" size={18} color={theme.primary} />}
+            title="Nothing needs you"
+            whose={data.briefing[0] ?? 'Every service, paper and recall is in hand.'}
+            tone="neutral"
+            accessibilityLabel={`All clear. ${data.briefing[0] ?? 'Every service, paper and recall is in hand.'}`}
+            trailing={
+              <DashAction
+                icon="add"
+                label="Plan a reminder"
+                quiet
+                onPress={() => openAdd({ mode: 'planned' })}
+              />
+            }
+          />
+        ) : (
+          shown.map((item, place) => {
+            const act = actionFor(item);
+            return (
+              <DashRow
+                key={item.key}
+                emoji={item.emoji}
+                title={item.title}
+                whose={item.vehicle}
+                status={item.short}
+                tone={item.tone === 'late' ? 'destructive' : 'warning'}
+                onPress={() =>
+                  router.push({ pathname: '/vehicle/[id]', params: { id: item.vehicleId } })
+                }
+                accessibilityLabel={`${item.title}, ${item.vehicle}, ${item.due}`}
+                accessibilityHint={`Opens ${item.vehicle}`}
+                index={5 + Math.min(place, NEXT_SHOWN)}
+                divided={place > 0}
+                trailing={
+                  <DashAction
+                    icon={act.icon}
+                    label={`${act.label}: ${item.title}`}
+                    onPress={() => {
+                      if ('add' in act) openAdd(act.add);
+                      else router.push(act.href);
+                    }}
+                  />
+                }
+              />
+            );
+          })
+        )}
+        {hidden > 0 ? (
+          <PressableScale
+            onPress={() => {
+              setOpen((was) => !was);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={open ? 'Show fewer' : `Show ${hidden} more`}
+            scaleTo={0.97}
+            style={styles.more}
+          >
+            <View style={[styles.moreRule, { backgroundColor: theme.border }]} />
+            <Text style={[styles.moreText, { color: theme.mutedForeground }]}>
+              {open ? 'Show fewer' : `${hidden} more`}
+            </Text>
+            <Ionicons
+              name={open ? 'chevron-up' : 'chevron-down'}
+              size={12}
+              color={theme.mutedForeground}
+            />
+          </PressableScale>
+        ) : null}
+      </DashRows>
+    </DashCard>
   );
 }
 
@@ -1115,7 +1086,6 @@ function NewGarageTile({ onPress }: { onPress: () => void }) {
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       onPressIn={() => to(1)}

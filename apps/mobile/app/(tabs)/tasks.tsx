@@ -14,7 +14,7 @@ import { openAdd } from '@/lib/add-request';
 import { api } from '@/lib/api';
 import { pad, humanise } from '@/lib/format';
 import { ToneTile, type Tone } from '@/lib/instrument';
-import { CountUp, haptic, Pop, PressableScale, Pulse, Rise, useScrollY } from '@/lib/motion';
+import { CountUp, Pop, PressableScale, Pulse, Rise, useScrollY } from '@/lib/motion';
 import { enqueue, flush } from '@/lib/offline';
 import { figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, IconButton, LargeHeader, Skeleton } from '@/lib/ui';
@@ -130,7 +130,6 @@ export default function TasksScreen() {
   const jump = (key: BucketKey) => {
     const index = sections.findIndex((section) => section.key === key);
     if (index < 0) return;
-    haptic.selection();
     list.current?.scrollToLocation({ sectionIndex: index, itemIndex: 0, viewOffset: 48 });
   };
 
@@ -337,8 +336,6 @@ const TaskRow = memo(function TaskRow({
 
   const toggle = () => {
     // A tick you can feel: the one confirmation that works with the phone in a pocket.
-    if (done) haptic.selection();
-    else haptic.success();
     onToggle(task);
   };
 

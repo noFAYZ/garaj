@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ComponentProps, ReactNode } from 'react';
+import { createContext, useContext, useState, type ComponentProps, type ReactNode } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Glyph, useToneColors, type Tone } from '@/lib/instrument';
-import { CountUp, haptic, PressableScale, Rise } from '@/lib/motion';
+import { CountUp, PressableScale, Rise } from '@/lib/motion';
+import { fitFigure } from '@/lib/format';
 import { figure, rimmed, spacing, useTheme, leaf } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
@@ -16,9 +17,6 @@ import { Skeleton } from '@/lib/ui';
 export const DIAL = 24;
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
-
-/** The dash card's shape, for a wrapper that lifts it: a shadow has to follow the same corners. */
-export const DASH_SHAPE = leaf('lg');
 
 /** The dash's card: one raised surface, its corners clipping what is drawn on it. */
 export function DashCard({
@@ -41,10 +39,30 @@ export function DashReadings({ children }: { children: ReactNode }) {
   return <View style={styles.readings}>{children}</View>;
 }
 
-/** Under a tile's label: the figure and whatever stands beside it, on the dial's height. */
-export function DashReading({ children }: { children: ReactNode }) {
-  return <View style={styles.reading}>{children}</View>;
+/** The width a reading's figure may take, measured by its row; `null` until it has been laid out. */
+const Room = createContext<number | null>(null);
+
+/**
+ * Under a tile's label: the figure, and `beside` it whatever qualifies it (a unit, a spark), on the
+ * dial's height. The row measures itself so the figure can be sized to what is left.
+ */
+export function DashReading({ children, beside }: { children: ReactNode; beside?: ReactNode }) {
+  const [row, setRow] = useState<number | null>(null);
+  const [side, setSide] = useState(0);
+  const room = row === null ? null : row - (beside ? side + GAP : 0);
+  return (
+    <View style={styles.reading} onLayout={(event) => setRow(event.nativeEvent.layout.width)}>
+      <Room.Provider value={room}>{children}</Room.Provider>
+      {beside ? (
+        <View onLayout={(event) => setSide(event.nativeEvent.layout.width)}>{beside}</View>
+      ) : null}
+    </View>
+  );
 }
+
+const FIGURE = 17;
+const FIGURE_NARROW = 15;
+const GAP = 5;
 
 /** A figure's unit beside it: KM, MI. */
 export function DashUnit({ children }: { children: ReactNode }) {
@@ -79,25 +97,20 @@ export function DashValue({
   children?: ReactNode;
 }) {
   const theme = useTheme();
+  const room = useContext(Room);
+  // Sized for the final figure, so a count-up does not change size on its way there.
+  const final = count ? count.format(count.value) : typeof children === 'string' ? children : '';
+  const size = narrow ? FIGURE_NARROW : FIGURE;
   const style = [
     figure,
     styles.figure,
-    narrow ? styles.figureNarrow : null,
-    { color: muted ? theme.mutedForeground : theme.foreground },
+    {
+      fontSize: fitFigure(final, room, size),
+      color: muted ? theme.mutedForeground : theme.foreground,
+    },
   ];
-  /*
-   * Held at its own size whatever the phone's font setting. Android's shrink-to-fit never reads
-   * `minimumFontScale` (its floor is 4pt) and counts the line height, which does not shrink, against
-   * the 24pt row: with the font setting above ~110% the line alone outgrew the row, nothing fitted,
-   * and the figure fell to 4pt. At 22pt the line always fits, so only the tile's width shrinks it —
-   * and a tile's width is what bounds the figure anyway.
-   */
-  const fit = {
-    numberOfLines: 1,
-    adjustsFontSizeToFit: true,
-    minimumFontScale: 0.7,
-    maxFontSizeMultiplier: 1,
-  } as const;
+  // Held at its own size whatever the phone's font setting: the tile's width is what bounds it.
+  const fit = { numberOfLines: 1, maxFontSizeMultiplier: 1 } as const;
   if (count) {
     return <CountUp value={count.value} format={count.format} {...fit} style={style} />;
   }
@@ -148,7 +161,6 @@ export function DashCell({
         onPress={
           onPress
             ? () => {
-                haptic.selection();
                 onPress();
               }
             : undefined
@@ -217,7 +229,6 @@ export function DashMini({
         onPress={
           onPress
             ? () => {
-                haptic.selection();
                 onPress();
               }
             : undefined
@@ -345,7 +356,6 @@ export function DashRow({
           onPress={
             onPress
               ? () => {
-                  haptic.selection();
                   onPress();
                 }
               : undefined
@@ -407,7 +417,6 @@ export function DashAction({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -458,11 +467,10 @@ const styles = StyleSheet.create({
   // Taller than the label, so it hangs over the line rather than pushing the figure down.
   aside: { marginLeft: 'auto', flexShrink: 0, marginVertical: -2 },
   // Every figure keeps the dial's height, so the three sit on one line.
-  reading: { height: DIAL, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  reading: { height: DIAL, flexDirection: 'row', alignItems: 'center', gap: GAP },
   unit: { fontSize: 8, lineHeight: 10, fontWeight: '600', letterSpacing: 0.15 },
   // The web's figure: its mono at semibold, untracked.
-  figure: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
-  figureNarrow: { fontSize: 15 },
+  figure: { flexShrink: 1, fontSize: FIGURE, lineHeight: 22, fontWeight: '600', letterSpacing: 0 },
   tag: { height: 14, justifyContent: 'center', paddingHorizontal: 4, borderRadius: 4 },
   tagText: { fontSize: 8.5, lineHeight: 11, fontWeight: '700', letterSpacing: 0 },
   rows: { marginTop: -2, paddingBottom: 4 },

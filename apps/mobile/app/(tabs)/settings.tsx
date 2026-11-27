@@ -34,7 +34,7 @@ import { setAppearance, useAppearance } from '@/lib/appearance';
 import { LegalLinks } from '@/lib/legal';
 import { Segmented } from '@/lib/instrument';
 import { deviceTimeZone } from '@/lib/locale-options';
-import { haptic, PressableScale, Rise, useNow } from '@/lib/motion';
+import { PressableScale, Rise, useNow } from '@/lib/motion';
 import { pendingCount } from '@/lib/offline';
 import { PlanBadge } from '@/lib/plan-kit';
 import { usePlan } from '@/lib/upgrade';
@@ -74,7 +74,7 @@ export default function SettingsScreen() {
   const garages = useQuery(garagesQuery(api));
   const unread = useQuery({ ...unreadCountQuery(api), staleTime: 60_000 });
   const { data: planState, plan } = usePlan();
-  const update = useProfileUpdate({ quiet: true });
+  const update = useProfileUpdate();
   const { leave, leaving } = useSignOut();
   const appearance = useAppearance();
   const [pending, setPending] = useState<number | null>(null);
@@ -284,7 +284,6 @@ function You({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"

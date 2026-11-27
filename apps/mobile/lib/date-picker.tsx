@@ -3,7 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { localDay } from '@vehicle-os/ui';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { figure, radius, spacing, typeScale, useTheme } from '@/lib/theme';
 import { DATE_LOCALE } from '@/lib/format';
 
@@ -14,9 +14,6 @@ import { DATE_LOCALE } from '@/lib/format';
  * useless for a receipt from March — eleven presses, each one a re-render, with no sight of what
  * day of the week any of them were. A month at a time answers both: today is one tap, March is
  * two, and the shape of the month is visible while choosing.
- *
- * One component for a single day and for a span, because a range is a single date chosen twice
- * and a second calendar would be the same arithmetic written again, differently.
  */
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -27,7 +24,6 @@ const TRIGGER_LABEL = new Intl.DateTimeFormat(DATE_LOCALE, {
   day: 'numeric',
   month: 'short',
 });
-const SHORT_LABEL = new Intl.DateTimeFormat(DATE_LOCALE, { day: 'numeric', month: 'short' });
 
 /** A `YYYY-MM-DD` day as a local `Date` at noon, which no time zone can push into another day. */
 const asDate = (day: string) => new Date(`${day}T12:00:00`);
@@ -90,57 +86,11 @@ export function DateField({
       {open ? (
         <Calendar
           start={value || localDay()}
-          end={null}
           min={min}
           max={max}
           onClose={() => setOpen(false)}
           onPick={(day) => {
             onChange(day);
-            setOpen(false);
-          }}
-        />
-      ) : null}
-    </>
-  );
-}
-
-export interface DateRangeFieldProps {
-  from: string;
-  to: string;
-  onChange: (range: { from: string; to: string }) => void;
-  min?: string;
-  max?: string;
-  label?: string;
-}
-
-/** A span: the same calendar, tapped twice, with the days between it shaded. */
-export function DateRangeField({
-  from,
-  to,
-  onChange,
-  min,
-  max,
-  label = 'Between',
-}: DateRangeFieldProps) {
-  const [open, setOpen] = useState(false);
-  const text =
-    from && to
-      ? `${SHORT_LABEL.format(asDate(from))} – ${SHORT_LABEL.format(asDate(to))}`
-      : 'Any dates';
-
-  return (
-    <>
-      <Trigger text={text} muted={!from || !to} label={label} onPress={() => setOpen(true)} />
-      {open ? (
-        <Calendar
-          start={from || localDay()}
-          end={to || null}
-          range
-          min={min}
-          max={max}
-          onClose={() => setOpen(false)}
-          onPickRange={(range) => {
-            onChange(range);
             setOpen(false);
           }}
         />
@@ -164,7 +114,6 @@ function Trigger({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -196,31 +145,22 @@ function Trigger({
  */
 function Calendar({
   start,
-  end,
-  range = false,
   min,
   max,
   onClose,
   onPick,
-  onPickRange,
 }: {
   start: string;
-  end: string | null;
-  range?: boolean;
   min?: string;
   max?: string;
   onClose: () => void;
-  onPick?: (day: string) => void;
-  onPickRange?: (range: { from: string; to: string }) => void;
+  onPick: (day: string) => void;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const today = localDay();
 
   const [anchor, setAnchor] = useState(start);
-  // While a range is half-made: the first tap is held here until the second lands.
-  const [from, setFrom] = useState(range ? start : '');
-  const [to, setTo] = useState(range ? (end ?? '') : '');
 
   const cells = useMemo(() => monthGrid(anchor), [anchor]);
   const allowed = (day: string) => (!min || day >= min) && (!max || day <= max);
@@ -228,44 +168,12 @@ function Calendar({
   const shiftMonth = (by: -1 | 1) => {
     const date = asDate(anchor);
     setAnchor(asDay(new Date(date.getFullYear(), date.getMonth() + by, 1)));
-    haptic.selection();
   };
 
-  const choose = (day: string) => {
-    haptic.selection();
-    if (!range) {
-      onPick?.(day);
-      return;
-    }
-    // First tap sets the start and clears the end; the second closes the span.
-    if (!from || (from && to) || day < from) {
-      setFrom(day);
-      setTo('');
-      return;
-    }
-    setTo(day);
-    onPickRange?.({ from, to: day });
-  };
-
-  const quick: { label: string; apply: () => void }[] = range
-    ? [
-        {
-          label: '30 days',
-          apply: () => onPickRange?.({ from: localDay({ days: -29 }), to: today }),
-        },
-        {
-          label: '3 months',
-          apply: () => onPickRange?.({ from: localDay({ months: -3 }), to: today }),
-        },
-        {
-          label: 'A year',
-          apply: () => onPickRange?.({ from: localDay({ months: -12 }), to: today }),
-        },
-      ]
-    : [
-        { label: 'Today', apply: () => onPick?.(today) },
-        { label: 'Yesterday', apply: () => onPick?.(localDay({ days: -1 })) },
-      ].filter((option) => allowed(option.label === 'Today' ? today : localDay({ days: -1 })));
+  const quick = [
+    { label: 'Today', day: today },
+    { label: 'Yesterday', day: localDay({ days: -1 }) },
+  ].filter((option) => allowed(option.day));
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
@@ -323,15 +231,12 @@ function Calendar({
             <View style={styles.grid}>
               {cells.map(({ day, inMonth }) => {
                 const enabled = allowed(day);
-                const isFrom = range && day === from;
-                const isTo = range && day === to;
-                const inSpan = range && from && to && day > from && day < to;
-                const selected = range ? isFrom || isTo : day === start;
+                const selected = day === start;
 
                 return (
                   <PressableScale
                     key={day}
-                    onPress={() => choose(day)}
+                    onPress={() => onPick(day)}
                     disabled={!enabled}
                     accessibilityRole="button"
                     accessibilityState={{ selected, disabled: !enabled }}
@@ -340,11 +245,7 @@ function Calendar({
                     style={[
                       styles.cell,
                       styles.day,
-                      selected
-                        ? { backgroundColor: theme.primary }
-                        : inSpan
-                          ? { backgroundColor: theme.primarySoft }
-                          : null,
+                      selected ? { backgroundColor: theme.primary } : null,
                     ]}
                   >
                     <Text
@@ -377,10 +278,7 @@ function Calendar({
               {quick.map((option) => (
                 <PressableScale
                   key={option.label}
-                  onPress={() => {
-                    haptic.selection();
-                    option.apply();
-                  }}
+                  onPress={() => onPick(option.day)}
                   accessibilityRole="button"
                   accessibilityLabel={option.label}
                   scaleTo={0.95}
@@ -391,11 +289,6 @@ function Calendar({
                   </Text>
                 </PressableScale>
               ))}
-              {range && from && !to ? (
-                <Text style={[typeScale.caption, { color: theme.mutedForeground }]}>
-                  Now pick the last day
-                </Text>
-              ) : null}
             </View>
           </Pressable>
         </Rise>

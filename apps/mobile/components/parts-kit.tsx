@@ -45,7 +45,7 @@ import { dialog, FAILED } from '@/lib/dialog';
 import { DATE_LOCALE, formatDistance, humanise } from '@/lib/format';
 import { Eyebrow, FigureInput, Panel, PanelCell, Segmented } from '@/lib/instrument';
 import { usePendingWrites, type PendingWrite, type SentWrite } from '@/lib/offline';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { cardSurface, figure, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Skeleton } from '@/lib/ui';
 
@@ -413,7 +413,6 @@ function LineRow({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onToggle();
       }}
       accessibilityRole="button"
@@ -456,7 +455,6 @@ function LineRow({
       />
       <PressableScale
         onPress={() => {
-          haptic.selection();
           onRemove();
         }}
         accessibilityRole="button"
@@ -603,7 +601,6 @@ function useLineActions(vehicleId: string) {
   const removal = useMutation({
     mutationFn: (partId: string) => api.parts.remove(vehicleId, partId),
     onSuccess: () => {
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.parts(vehicleId) });
     },
     onError: (error) => dialog('Could not remove it', (error as Error).message, undefined, FAILED),
@@ -649,7 +646,6 @@ function useLineActions(vehicleId: string) {
   };
   // Held: the same two, asked.
   const hold = (part: PartLike) => {
-    haptic.selection();
     if (waiting(part)) return;
     dialog(positionLabel(part.position), partSummary(part), [
       { text: 'Edit', onPress: () => edit(part) },
@@ -695,7 +691,6 @@ function FittedRow({
     <View>
       <PressableScale
         onPress={() => {
-          haptic.selection();
           onToggle();
         }}
         onLongPress={() => actions.hold(part)}
@@ -819,7 +814,6 @@ function FittedRow({
                 <PressableScale
                   key={paper.id}
                   onPress={() => {
-                    haptic.selection();
                     actions.open(paper);
                   }}
                   accessibilityRole="button"
@@ -946,7 +940,6 @@ export function PartForm({
       await api.parts.update(vehicle.id, part.id, body);
     },
     onSuccess: () => {
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.parts(vehicle.id) });
       onDone();
     },
@@ -1070,7 +1063,6 @@ export function PositionGrid({
                     <PressableScale
                       key={position}
                       onPress={() => {
-                        haptic.selection();
                         onPick(position);
                       }}
                       accessibilityRole="button"
@@ -1123,7 +1115,6 @@ export function VehicleParts({ vehicle }: { vehicle: Vehicle }) {
     return byPart;
   }, [documents.data]);
   const add = (position?: string) => {
-    haptic.selection();
     router.push(partRoute(vehicle.id, position ? { position } : {}));
   };
 

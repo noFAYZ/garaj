@@ -23,7 +23,7 @@ import {
   useProfileUpdate,
 } from '@/components/settings-kit';
 import { Icon, Segmented } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { PlanBadge, PlanTag as Tag, tierLook } from '@/lib/plan-kit';
 import {
   CADENCE_LABEL,
@@ -163,7 +163,6 @@ export default function PlanScreen() {
                 shown={shown}
                 priceOf={priceOf}
                 onPick={(tier) => {
-                  haptic.selection();
                   setPicked(tier);
                 }}
               />
@@ -178,12 +177,10 @@ export default function PlanScreen() {
                 elsewhere={elsewhere}
                 store={store}
                 onUpgrade={() => {
-                  haptic.selection();
                   router.push({ pathname: '/upgrade', params: { plan: shown } });
                 }}
                 // The second press is a screen of its own: the change drawn as a diff, then the store.
                 onDowngrade={() => {
-                  haptic.selection();
                   router.push({ pathname: '/plan-change', params: { to: shown } });
                 }}
               />
@@ -237,7 +234,6 @@ export default function PlanScreen() {
                   destructive
                   chevron={false}
                   onPress={() => {
-                    haptic.selection();
                     router.push({ pathname: '/plan-change', params: { to: 'FREE' } });
                   }}
                 />

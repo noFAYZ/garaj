@@ -12,7 +12,7 @@ import { RemoteImage } from '@/components/remote-image';
 import { api } from '@/lib/api';
 import { DATE_LOCALE, fileSize, humanise } from '@/lib/format';
 import { SectionHeading } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { countdown, current, urgency, validity, type PaperState } from '@/lib/papers';
 import {
   cardSurface,
@@ -365,7 +365,6 @@ function Pass({ vehicleId, paper }: { vehicleId: string; paper: KeyPaper }) {
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         router.push({
           pathname: '/document/[id]',
           params: { id: document.id, vehicleId, title: document.title },
@@ -469,7 +468,6 @@ function Slot({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         router.push({ pathname: '/add/document', params: { vehicleId, documentType: type } });
       }}
       accessibilityRole="button"
@@ -524,7 +522,6 @@ function PaperRow({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         router.push({
           pathname: '/document/[id]',
           params: { id: document.id, vehicleId, title: document.title },

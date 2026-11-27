@@ -65,7 +65,7 @@ import {
   PanelCell,
   Segmented,
 } from '@/lib/instrument';
-import { haptic, PressableScale, Pulse, Rise } from '@/lib/motion';
+import { PressableScale, Pulse, Rise } from '@/lib/motion';
 import { enqueue, enqueueUpload, flush } from '@/lib/offline';
 import { MenuSheet } from '@/lib/pickers';
 import { askForPush } from '@/lib/push';
@@ -578,7 +578,6 @@ function DoneForm({
         found.some((value) => value !== undefined) ||
         Boolean(draft.note) ||
         Boolean(draft.parts?.length);
-      if (filled) haptic.success();
       setScan(filled ? { state: 'read', draft } : { state: 'nothing' });
     } catch {
       // Offline, reading off, the provider down: the photo is attached all the same.
@@ -605,7 +604,6 @@ function DoneForm({
       if (source === 'camera') picked = await pickPhoto('library', 0.55).catch(() => null);
     }
     if (!picked) return;
-    haptic.light();
     setPhoto(picked);
     void read(picked);
   };
@@ -744,7 +742,6 @@ function DoneForm({
     },
     onSuccess: () => {
       // Felt as well as seen: at a pump the phone is often already on its way to a pocket.
-      haptic.success();
       setSaved(true);
       // Long enough to read the confirmation, short enough not to be in the way.
       setTimeout(onDone, 900);
@@ -894,7 +891,6 @@ function DoneForm({
               schedule={schedule}
               unit={odometerUnit}
               onUnlink={() => {
-                haptic.selection();
                 setScheduleId(null);
               }}
             />
@@ -1456,7 +1452,6 @@ function PlannedForm({
       void flush();
     },
     onSuccess: () => {
-      haptic.success();
       setSaved(true);
       // A reminder is the one thing here that wants to reach the phone later: ask now, once.
       void askForPush();
@@ -1838,7 +1833,6 @@ function VehicleSelect({
                   key={option.id}
                   onPress={() => {
                     if (!selected) {
-                      haptic.selection();
                       onChange(option.id);
                     }
                     setOpen(false);
@@ -1924,7 +1918,6 @@ function KindSheet({
             <PressableScale
               key={option}
               onPress={() => {
-                if (!selected) haptic.selection();
                 onChange(option);
                 onClose();
               }}

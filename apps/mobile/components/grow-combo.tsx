@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
-import { haptic, PressableScale } from '@/lib/motion';
+import { PressableScale } from '@/lib/motion';
 import { showUpgrade, useOwnPlanGoverns, usePlan } from '@/lib/upgrade';
 import { figure, radius, typeScale, useTheme } from '@/lib/theme';
 import { pad } from '@/lib/format';
@@ -34,7 +34,6 @@ export function GrowCombo({
   const garageFull = data ? data.usage.garages >= data.limits.garages : false;
 
   const press = (kind: 'vehicles' | 'garages') => {
-    haptic.selection();
     const wall = kind === 'garages' || governsVehicles ? limitWall(kind) : null;
     if (wall) {
       onClose();

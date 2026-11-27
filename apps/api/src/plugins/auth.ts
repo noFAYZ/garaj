@@ -23,6 +23,10 @@ import {
   isDeliverableAddress,
   type EmailMessage,
 } from '../modules/notifications/application/services/deliver';
+import {
+  confirmEmailEmail,
+  passwordResetEmail,
+} from '../modules/notifications/application/services/email-templates';
 
 export type Auth = ReturnType<typeof createAuth>;
 
@@ -47,7 +51,8 @@ function sendAccountEmail(log: FastifyBaseLogger, message: EmailMessage, link: s
 
 export function createAuth(db: Database, log: FastifyBaseLogger) {
   const config = env();
-  const web = config.WEB_URL.replace(/\/$/, '');
+  // The account emails link to pages the API serves itself (`account-pages.ts`).
+  const api = config.AUTH_URL.replace(/\/$/, '');
 
   return betterAuth({
     database: drizzleAdapter(db, {
@@ -77,29 +82,14 @@ export function createAuth(db: Database, log: FastifyBaseLogger) {
        */
       requireEmailVerification: false,
       /*
-       * The link opens the web app's reset page with the token, wherever the request came from —
-       * the phone has no page of its own to set a password on, and Better Auth's redirect only
-       * goes to a trusted origin anyway. A reset ends every other session: whoever knew the old
-       * password is signed out with it.
+       * The link opens the API's own reset page with the token, wherever the request came from —
+       * the phone has no page of its own to set a password on, and the web app may not be
+       * deployed. A reset ends every other session: whoever knew the old password is signed out
+       * with it.
        */
       sendResetPassword: async ({ user, token }) => {
-        const link = `${web}/reset-password?token=${encodeURIComponent(token)}`;
-        sendAccountEmail(
-          log,
-          {
-            to: user.email,
-            subject: 'Reset your Garaj password',
-            text: [
-              'Someone asked to reset the password for this Garaj account.',
-              '',
-              'Choose a new one here (the link works for an hour):',
-              link,
-              '',
-              "If it wasn't you, ignore this email — your password stays as it is.",
-            ].join('\n'),
-          },
-          link,
-        );
+        const link = `${api}/account/reset-password?token=${encodeURIComponent(token)}`;
+        sendAccountEmail(log, { to: user.email, ...passwordResetEmail(link) }, link);
       },
       resetPasswordTokenExpiresIn: 60 * 60,
       revokeSessionsOnPasswordReset: true,
@@ -108,24 +98,11 @@ export function createAuth(db: Database, log: FastifyBaseLogger) {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
       expiresIn: 60 * 60 * 24,
-      // The API checks the token, then sends the person on to the web app's home.
+      // The API checks the token, then shows its own "confirmed" page (or why it failed).
       sendVerificationEmail: async ({ user, token }) => {
-        const back = encodeURIComponent(`${web}/?verified=1`);
-        const link = `${config.AUTH_URL.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}&callbackURL=${back}`;
-        sendAccountEmail(
-          log,
-          {
-            to: user.email,
-            subject: 'Confirm your email for Garaj',
-            text: [
-              'Confirm this address for your Garaj account:',
-              link,
-              '',
-              'Until it is confirmed, nobody can add you to their garage. The link works for a day.',
-            ].join('\n'),
-          },
-          link,
-        );
+        const back = encodeURIComponent(`${api}/account/email-confirmed`);
+        const link = `${api}/api/auth/verify-email?token=${encodeURIComponent(token)}&callbackURL=${back}`;
+        sendAccountEmail(log, { to: user.email, ...confirmEmailEmail(link) }, link);
       },
     },
     session: {

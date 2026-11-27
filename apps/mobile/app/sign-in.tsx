@@ -19,7 +19,7 @@ import logoText from '@/assets/logo-text.png';
 import { useScheme } from '@/lib/appearance';
 import { requestPasswordReset, signIn, signUp, useSession } from '@/lib/auth';
 import { Eyebrow, Segmented } from '@/lib/instrument';
-import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button, Ground } from '@/lib/ui';
 import { dialog, FAILED } from '@/lib/dialog';
@@ -68,7 +68,6 @@ export default function SignInScreen() {
       queryClient.clear();
       if (signingUp) await signUp({ name: name.trim(), email: email.trim(), password });
       else await signIn({ email: email.trim(), password });
-      haptic.success();
     } catch (caught) {
       setError((caught as Error).message);
     } finally {

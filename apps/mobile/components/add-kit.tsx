@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import type { PickedFile } from '@/lib/file-picker';
 import { Eyebrow, formLabel, Glyph } from '@/lib/instrument';
-import { ease, haptic, Pop, PressableScale, spring, useReduceMotion } from '@/lib/motion';
+import { ease, Pop, PressableScale, spring, useReduceMotion } from '@/lib/motion';
 import { figure, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 
 /**
@@ -152,7 +152,6 @@ export function Rail({
                 if (item.selected) reveal(spot);
               }}
               onPress={() => {
-                if (!item.selected) haptic.selection();
                 item.onPress();
               }}
               disabled={item.disabled}
@@ -213,7 +212,6 @@ export function Fact({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress?.();
       }}
       disabled={!onPress}
@@ -239,7 +237,6 @@ export function Fact({
       {onRemove ? (
         <PressableScale
           onPress={() => {
-            haptic.selection();
             onRemove();
           }}
           accessibilityRole="button"
@@ -285,7 +282,6 @@ export function SelectCell({
       onPress={
         onPress
           ? () => {
-              haptic.selection();
               onPress();
             }
           : undefined
@@ -377,7 +373,6 @@ export function TwoWay({
   return (
     <Pressable
       onPress={() => {
-        haptic.selection();
         onChange(!on);
       }}
       accessibilityRole="switch"
@@ -429,7 +424,6 @@ export function DateKey({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -498,7 +492,6 @@ export function PhotoKey({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       onLongPress={onLongPress}

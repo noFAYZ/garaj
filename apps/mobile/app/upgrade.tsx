@@ -40,7 +40,7 @@ import { TwoWay } from '@/components/add-kit';
 import { api } from '@/lib/api';
 import { LegalLinks } from '@/lib/legal';
 import { pad } from '@/lib/format';
-import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { PlanBadge, PlanPass } from '@/lib/plan-kit';
 import {
   buy,
@@ -346,7 +346,6 @@ export default function UpgradeScreen() {
   // The only thing that says "upgraded": the plan, from the server.
   useEffect(() => {
     if (order && data?.plan === order.to && phase !== 'done') {
-      haptic.success();
       setPhase('done');
     }
   }, [data?.plan, order, phase]);
@@ -584,7 +583,6 @@ export default function UpgradeScreen() {
                         tab={index === 0 ? 'Recommended' : undefined}
                         onPress={() => {
                           if (tier === chosen) return;
-                          haptic.selection();
                           setPicked(tier);
                         }}
                       />
@@ -620,7 +618,6 @@ export default function UpgradeScreen() {
                       selected={way === offer}
                       onPress={() => {
                         if (way === offer) return;
-                        haptic.selection();
                         setPickedCadence(way.cadence);
                       }}
                     />
@@ -714,7 +711,6 @@ export default function UpgradeScreen() {
             disabled={unavailable || !offer || !userId}
             onPress={() => {
               if (!offer) return;
-              haptic.selection();
               purchase.mutate(offer);
             }}
           />
@@ -978,7 +974,6 @@ function OverKey({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       disabled={disabled}

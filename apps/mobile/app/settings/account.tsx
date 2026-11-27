@@ -17,7 +17,7 @@ import { dialog, FAILED } from '@/lib/dialog';
 import { pad } from '@/lib/format';
 import { api } from '@/lib/api';
 import { ToneChip } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { pendingCount } from '@/lib/offline';
 import { sendConfirmationEmail } from '@/lib/auth';
 import { openStoreManagement, storeBilled, storeName } from '@/lib/store';
@@ -66,7 +66,6 @@ export default function AccountScreen() {
   const inStore = storeBilled(plan);
   const confirm = useMutation({
     mutationFn: () => sendConfirmationEmail(me!.email),
-    onSuccess: () => haptic.success(),
   });
   const removeAccount = async () => {
     setDeleting(true);
@@ -107,7 +106,6 @@ export default function AccountScreen() {
         {/* The face is its own control: a press opens the faces to choose from. */}
         <PressableScale
           onPress={() => {
-            haptic.selection();
             setPicking(true);
           }}
           disabled={!me}
@@ -152,7 +150,7 @@ export default function AccountScreen() {
             returnKeyType="done"
             onSubmitEditing={() => valid && changed && update.mutate({ name: trimmed })}
             placeholder="Your name"
-            placeholderTextColor={theme.mutedForeground}
+            placeholderTextColor={theme.placeholder}
             accessibilityLabel="Name"
             style={[typeScale.body, styles.nameInput, { color: theme.foreground }]}
           />
@@ -261,7 +259,6 @@ export default function AccountScreen() {
           loading={deleting}
           disabled={leaving}
           onPress={() => {
-            haptic.warning();
             askToDelete();
           }}
         />
@@ -281,7 +278,6 @@ export default function AccountScreen() {
               <PressableScale
                 key={seed}
                 onPress={() => {
-                  haptic.success();
                   // Queued like the name: saved on this phone first, sent when there is signal.
                   updatePicture.mutate({ image: avatarUrl(seed) });
                   setPicking(false);

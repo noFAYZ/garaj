@@ -8,7 +8,6 @@ import { Group, Row, SettingsPage } from '@/components/settings-kit';
 import { pad } from '@/lib/format';
 import { api } from '@/lib/api';
 import { humanise } from '@/lib/format';
-import { haptic } from '@/lib/motion';
 import { ListPicker } from '@/lib/pickers';
 import { shareGarageExport, type GarageExport } from '@/lib/share-export';
 import { typeScale, useTheme } from '@/lib/theme';
@@ -53,7 +52,6 @@ export default function DataScreen() {
   };
 
   const confirmDelete = (garage: Garage) => {
-    haptic.selection();
     dialog(
       `Delete ${garage.name}?`,
       `${garage.vehicleCount} ${garage.vehicleCount === 1 ? 'vehicle' : 'vehicles'} and all their records go, for every member. This cannot be undone.`,
@@ -67,7 +65,6 @@ export default function DataScreen() {
             void api.garages
               .remove(garage.id)
               .then(() => {
-                haptic.success();
                 void queryClient.invalidateQueries({ queryKey: queryKeys.garages() });
                 void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
                 void queryClient.invalidateQueries({ queryKey: ['vehicles'] });

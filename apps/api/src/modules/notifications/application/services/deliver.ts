@@ -11,13 +11,17 @@
  */
 
 import { and, eq, inArray } from 'drizzle-orm';
+import { env } from '@vehicle-os/config';
 import { schema, type Database } from '@vehicle-os/database';
 import type { NotificationChannel } from '@vehicle-os/domain';
+import { notificationEmail } from './email-templates';
 
 export interface EmailMessage {
   readonly to: string;
   readonly subject: string;
   readonly text: string;
+  /** The designed version (`email-templates.ts`); `text` is the part plain-text clients show. */
+  readonly html?: string;
 }
 
 /**
@@ -75,6 +79,7 @@ export function createResendEmail(apiKey: string, from: string): EmailPort {
           to: message.to,
           subject: message.subject,
           text: message.text,
+          html: message.html,
         }),
         signal: AbortSignal.timeout(10_000),
       });
@@ -266,7 +271,10 @@ export async function deliverNotification(
    */
   if (ports.email && !off.has('EMAIL') && isDeliverableAddress(row.email)) {
     try {
-      await ports.email.send({ to: row.email, subject: title, text: body });
+      await ports.email.send({
+        to: row.email,
+        ...notificationEmail(row.notification, env().WEB_URL),
+      });
       channels.push('EMAIL');
       await log('EMAIL');
     } catch (error) {
