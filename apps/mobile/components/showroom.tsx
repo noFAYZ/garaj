@@ -353,7 +353,17 @@ function Bay({
          */}
         <View style={styles.info}>
           <View style={styles.nameRow}>
-            {photo && vehicle.make ? <BrandLogo make={vehicle.make} size={16} /> : null}
+            {photo && vehicle.make ? (
+              // Round (user asked): logo.dev's squares, clipped to a coin on the card.
+              <View
+                style={[
+                  styles.logo,
+                  { backgroundColor: theme.cardRaised, borderColor: theme.border },
+                ]}
+              >
+                <BrandLogo make={vehicle.make} size={LOGO - 6} />
+              </View>
+            ) : null}
             <Text numberOfLines={1} style={[styles.name, { color: theme.foreground }]}>
               {vehicle.displayName}
             </Text>
@@ -412,6 +422,8 @@ function Bay({
 }
 
 const SLAT = 11;
+/** The make's coin beside the name. */
+const LOGO = 26;
 
 /**
  * The roller door: slats with a lit edge and a shadowed one, the bottom rail and its handle, the
@@ -615,7 +627,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: 14,
   },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  logo: {
+    width: LOGO,
+    height: LOGO,
+    borderRadius: LOGO / 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   name: { flexShrink: 1, fontSize: 17, lineHeight: 22, fontWeight: '700', letterSpacing: -0.35 },
   swatch: { width: 9, height: 9, borderRadius: 5, borderWidth: 1 },
   readings: { flexDirection: 'row', ...leaf('sm') },

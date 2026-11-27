@@ -128,7 +128,10 @@ export function BayStage({
       style={[
         styles.stage,
         // The wall's own top colour, so a scene moved down inside its frame shows no seam.
-        { height, backgroundColor: plain || theme.dark ? theme.background : theme.muted },
+        {
+          height,
+          backgroundColor: plain ? 'transparent' : theme.dark ? theme.background : theme.muted,
+        },
         style,
       ]}
     >

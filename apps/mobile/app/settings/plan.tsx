@@ -201,7 +201,7 @@ export default function PlanScreen() {
                 </Row>
               ) : elsewhere ? (
                 // Shown, not linked: the app may not send anyone to another way of paying.
-                <Row icon="globe-outline" label="Billed on the Garaj website" chevron={false} />
+                <Row icon="globe-outline" label="Billed on the Garajj website" chevron={false} />
               ) : null}
               <Row icon="briefcase-outline" label="Use">
                 <View style={styles.use}>
@@ -289,7 +289,7 @@ function Hero({
         {next ? `Upgrade to ${PLAN_NAMES[next]}` : `You’re on ${PLAN_NAMES[plan.plan]}`}
       </Text>
       <Text style={[styles.pitch, { color: theme.mutedForeground }]}>
-        {next ? PITCH[next] : 'Everything Garaj does, for every vehicle.'}
+        {next ? PITCH[next] : 'Everything Garajj does, for every vehicle.'}
       </Text>
 
       <View
@@ -469,7 +469,7 @@ function Way({
   if (elsewhere && shown !== current) {
     return (
       <Text style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}>
-        Your plan is billed through the Garaj website — change it there.
+        Your plan is billed through the Garajj website — change it there.
       </Text>
     );
   }

@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import type {
   MaintenancePlan,
   PlannedItem,
@@ -16,7 +16,7 @@ import type {
   Vehicle,
   VehicleEvent,
 } from '@vehicle-os/contracts';
-import { positionsForJob, type EventType } from '@vehicle-os/domain';
+import { positionsForJob } from '@vehicle-os/domain';
 import {
   activityQuery,
   documentsQuery,
@@ -44,10 +44,10 @@ import {
 } from '@/components/timeline';
 import { openAdd } from '@/lib/add-request';
 import { api } from '@/lib/api';
-import { eventEmoji, jobEmoji } from '@/lib/emoji';
+import { jobEmoji } from '@/lib/emoji';
 import { ledgerDate, unitPrice } from '@/lib/ledger';
 import { pad, DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
-import { Chip, Glyph, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
+import { Glyph, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
 import { ease, haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import {
   discard,
@@ -163,16 +163,10 @@ export function ActivityFeed({
   bottom?: number;
 }) {
   const theme = useTheme();
-  const [filter, setFilter] = useState<EventType | null>(null);
   const [showOlder, setShowOlder] = useState(false);
-  const filters = filter ? { eventType: [filter] } : {};
 
-  const activity = useQuery({
-    ...activityQuery(api, vehicle.id, filters),
-    placeholderData: keepPreviousData,
-  });
-  // The unfiltered feed, for the chips' options; the same query as the feed when no filter is on.
-  const everything = useQuery(activityQuery(api, vehicle.id));
+  // No filter chips (user asked): the whole record, always.
+  const activity = useQuery(activityQuery(api, vehicle.id));
 
   /*
    * Older pages after the first. The first page's cursor is in the key: once an entry is added the
@@ -181,8 +175,8 @@ export function ActivityFeed({
    */
   const firstCursor = activity.data?.done.pagination.nextCursor ?? null;
   const older = useInfiniteQuery({
-    queryKey: [...queryKeys.activity(vehicle.id, filters), 'older', firstCursor],
-    queryFn: ({ pageParam }) => api.activity(vehicle.id, { ...filters, cursor: pageParam }),
+    queryKey: [...queryKeys.activity(vehicle.id), 'older', firstCursor],
+    queryFn: ({ pageParam }) => api.activity(vehicle.id, { cursor: pageParam }),
     initialPageParam: firstCursor ?? '',
     getNextPageParam: (page) => page.done.pagination.nextCursor ?? undefined,
     enabled: showOlder && firstCursor !== null,
@@ -245,10 +239,8 @@ export function ActivityFeed({
     const schedules = (planned ?? []).flatMap((item) =>
       item.kind === 'SCHEDULE' ? [item.schedule] : [],
     );
-    return localEvents(writes, vehicle.id, schedules, updatedAt).filter(
-      (event) => !filter || event.eventType === filter,
-    );
-  }, [writes, vehicle.id, planned, updatedAt, filter]);
+    return localEvents(writes, vehicle.id, schedules, updatedAt);
+  }, [writes, vehicle.id, planned, updatedAt]);
   // What this vehicle still has waiting on the network, failed entries aside.
   const waiting = writes.filter(
     (write) =>
@@ -263,7 +255,7 @@ export function ActivityFeed({
    */
   /*
    * The record, derived once per change of what goes into it — not on every render. A pending
-   * write ticking, a filter chip's press or the sync strip would otherwise re-sort, re-group and
+   * write ticking or the sync strip would otherwise re-sort, re-group and
    * re-measure the whole loaded history each time. The rows themselves are memoised below, so an
    * entry that did not change is not drawn again either.
    */
@@ -290,51 +282,11 @@ export function ActivityFeed({
   // Rows numbered down the page, for the entrance stagger across months.
   let row = 0;
 
-  const allDone = everything.data?.done.data;
-  const kinds = useMemo(() => {
-    const counts = new Map<EventType, number>();
-    for (const event of allDone ?? []) {
-      counts.set(event.eventType, (counts.get(event.eventType) ?? 0) + 1);
-    }
-    if (filter && !counts.has(filter)) counts.set(filter, 0);
-    return [...counts].sort((a, b) => b[1] - a[1]);
-  }, [allDone, filter]);
-  // Counts are only honest when the whole record is loaded.
-  const countsComplete = everything.data?.done.pagination.hasMore === false;
-
-  const choose = (next: EventType | null) => {
-    setFilter(next);
-    setShowOlder(false);
-    setOlderPages(1);
-  };
-
   const logFirst = () => openAdd({ vehicleId: vehicle.id });
 
   return (
     <View style={{ flexGrow: 1, gap: spacing.md, paddingBottom: spacing.sm + bottom }}>
       {waiting > 0 ? <SyncStrip count={waiting} /> : null}
-
-      {kinds.length >= 2 || filter ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ marginHorizontal: -spacing.lg }}
-          contentContainerStyle={{ gap: 6, paddingHorizontal: spacing.lg }}
-        >
-          <Chip compact label="All" selected={filter === null} onPress={() => choose(null)} />
-          {kinds.map(([kind, count]) => (
-            <Chip
-              key={kind}
-              compact
-              label={humanise(kind)}
-              selected={filter === kind}
-              onPress={() => choose(filter === kind ? null : kind)}
-              leading={<Glyph size={13}>{eventEmoji(kind)}</Glyph>}
-              count={countsComplete ? count : undefined}
-            />
-          ))}
-        </ScrollView>
-      ) : null}
 
       {activity.isPending ? (
         <LedgerCard>
@@ -360,7 +312,7 @@ export function ActivityFeed({
           <View style={styles.empty}>
             <Glyph size={30}>📝</Glyph>
             <Text style={[typeScale.headline, { color: theme.foreground }]}>
-              {filter ? `No ${humanise(filter).toLowerCase()} yet` : 'Nothing recorded yet'}
+              Nothing recorded yet
             </Text>
             <Text style={[typeScale.label, styles.emptyText, { color: theme.mutedForeground }]}>
               Every service, fill-up, repair, payment and note you add becomes part of this
@@ -847,21 +799,19 @@ const DoneRow = memo(function DoneRow({
     event.title.trim() !== '' && event.title.trim().toLowerCase() !== kind.toLowerCase();
   const unit = event.odometerUnit;
   const when = ledgerDate(event.occurredAt);
-  // A fill's figures, as chips under it: what went in and what one cost.
+  // A fill's litres as a chip under it, what one cost said quietly inside it (user asked).
   const fill = event.eventType === 'FUEL' || event.eventType === 'CHARGE';
   const price = fill ? unitPrice(event.cost, quantity) : null;
-  const facts = [
-    quantity
-      ? {
+  const facts = quantity
+    ? [
+        {
           icon:
             event.eventType === 'CHARGE' ? ('flash-outline' as const) : ('water-outline' as const),
           text: quantity,
-        }
-      : null,
-    price
-      ? { icon: 'pricetag-outline' as const, text: `${formatMoney(price.price)}/${price.per}` }
-      : null,
-  ].filter((fact) => fact !== null);
+          aside: price ? `${formatMoney(price.price)}/${price.per}` : undefined,
+        },
+      ]
+    : [];
 
   return (
     <LedgerRow

@@ -38,6 +38,7 @@ import {
 import { composite } from '@vehicle-os/ui';
 import { TwoWay } from '@/components/add-kit';
 import { api } from '@/lib/api';
+import { LegalLinks } from '@/lib/legal';
 import { pad } from '@/lib/format';
 import { haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { PlanBadge, PlanPass } from '@/lib/plan-kit';
@@ -235,7 +236,7 @@ function billedOf(way: StoreOffer): string {
  * The upgrade (GAPS §10, §17): one screen that decides, instead of a pointer to settings.
  *
  * Laid out as a store paywall reads: the brand's mark on a copper sky across the top, with the
- * close and Restore over it; under it, on a sheet, why it opened (small, in copper), "Get Garaj
+ * close and Restore over it; under it, on a sheet, why it opened (small, in copper), "Get Garajj
  * Plus" and its trial, what the plan adds a line each, the ways to pay as cards — the chosen one
  * ringed in copper, the yearly one flagged with what it saves — and one copper button that says
  * what happens next, with the terms under it.
@@ -399,8 +400,8 @@ export default function UpgradeScreen() {
         : phase === 'slow'
           ? ['Payment received', 'Your plan hasn’t updated yet. It can take a minute.']
           : !chosen
-            ? ['You’re on the largest plan', 'Everything Garaj does is already yours.']
-            : [`Get Garaj ${PLAN_NAMES[chosen]}`, null];
+            ? ['You’re on the largest plan', 'Everything Garajj does is already yours.']
+            : [`Get Garajj ${PLAN_NAMES[chosen]}`, null];
 
   // The trial the store gives on the chosen way: its flag, its button and its promise.
   const trial = choosing && !elsewhere ? (offer?.trial ?? null) : null;
@@ -660,7 +661,7 @@ export default function UpgradeScreen() {
 
           {elsewhere && phase === 'choose' ? (
             <Text style={[styles.subtitle, { color: theme.mutedForeground }]}>
-              Your plan is billed through the Garaj website. Change it there, signed in to this
+              Your plan is billed through the Garajj website. Change it there, signed in to this
               account.
             </Text>
           ) : null}
@@ -720,7 +721,11 @@ export default function UpgradeScreen() {
         ) : null}
 
         {choosing && !elsewhere ? (
-          <Text style={[styles.fine, { color: theme.mutedForeground }]}>{footnote}</Text>
+          <>
+            <Text style={[styles.fine, { color: theme.mutedForeground }]}>{footnote}</Text>
+            {/* Beside every purchase, as the stores ask (Apple 3.1.2). */}
+            <LegalLinks pages={['terms', 'privacy']} />
+          </>
         ) : null}
       </View>
 

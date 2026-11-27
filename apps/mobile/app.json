@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Garaj",
+    "name": "Garajj",
     "slug": "vehicle-os",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -11,13 +11,13 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.garajjos",
+      "bundleIdentifier": "xyz.fayzan.garajj",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "app.garajjos",
+      "package": "xyz.fayzan.garajj",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
@@ -36,8 +36,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Garaj uses your photos to attach receipts, documents and pictures of your vehicles.",
-          "cameraPermission": "Garaj uses the camera to photograph receipts, documents and your vehicles.",
+          "photosPermission": "Garajj uses your photos to attach receipts, documents and pictures of your vehicles.",
+          "cameraPermission": "Garajj uses the camera to photograph receipts, documents and your vehicles.",
           "microphonePermission": false
         }
       ],

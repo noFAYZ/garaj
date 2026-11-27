@@ -12,18 +12,22 @@ Nothing from either pass is committed yet.
 - [ ] **Production API URL.** With no `extra.apiUrl` in `apps/mobile/app.json`, the app falls
       back to the dev machine's LAN address on port 3001 (`lib/api.ts`). A store build must set
       `extra.apiUrl` to the deployed API (https), or every request goes nowhere.
-- [x] **Bundle id.** `app.garajjos` since 2026-11-22 (iOS `bundleIdentifier`, Android
-      `package`). It cannot change after the first upload to either store, and Play's products
-      and RevenueCat's Play app are tied to it.
+- [x] **Bundle id.** `xyz.fayzan.garajj` since 2026-11-27, was `app.garajjos` (iOS
+      `bundleIdentifier`, Android `package`). It cannot change after the first upload to either
+      store, and Play's products and RevenueCat's Play app are tied to it.
 - [ ] **Push on Android needs Firebase.** Expo's push tokens on Android come through Firebase
       Cloud Messaging, and there is no `google-services.json`: a store build registers no phone,
       so no reminder ever arrives (it is reported to crash reporting, not shown). Create a
       Firebase project, add the Android app under the final package name, put the file in
       `apps/mobile/`, set `"googleServicesFile": "./google-services.json"` under `android` in
       `app.json`, and upload the FCM V1 service-account key to EAS (`eas credentials`).
-- [ ] **Contact address** on the privacy and deletion pages: `CONTACT_EMAIL` in
-      `apps/landing/src/components/legal-page.tsx` is `support@garaj.app`. Make it a mailbox
-      someone reads, and have the privacy page read by whoever answers for it.
+- [ ] **Contact address** on the privacy, terms, support and deletion pages: `CONTACT_EMAIL` in
+      `apps/landing/src/site.ts` is `support@fayzan.xyz`. Make it a mailbox someone reads, and
+      have the policies read by whoever answers for them.
+- [ ] **Host the site at `https://garajj.fayzan.xyz`** (a DNS record for the subdomain, then
+      deploy `apps/landing`). The store listings need its `/privacy`, `/terms`, `/support` and
+      `/delete-account` URLs live, and the app links to them (`SITE_URL` in
+      `apps/mobile/lib/legal.tsx`; the landing's default in `apps/landing/next.config.mjs`).
 
 ## Store billing (RevenueCat → Google Play) — set up in the dashboards
 

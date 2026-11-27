@@ -193,7 +193,7 @@ async function prepare(
 
 export class CameraDeniedError extends Error {
   constructor() {
-    super('Garaj needs the camera. Allow it in Settings, or upload instead.');
+    super('Garajj needs the camera. Allow it in Settings, or upload instead.');
     this.name = 'CameraDeniedError';
   }
 }

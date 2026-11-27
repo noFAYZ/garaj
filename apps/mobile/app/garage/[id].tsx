@@ -1008,7 +1008,7 @@ function AddSheet({
   };
 
   return (
-    <MenuSheet title="Add someone" message="They need a Garaj account already." onClose={onClose}>
+    <MenuSheet title="Add someone" message="They need a Garajj account already." onClose={onClose}>
       <Field
         label="Email"
         value={email}

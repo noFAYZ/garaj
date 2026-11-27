@@ -1,9 +1,7 @@
 /*
- * The landing page's motion and texture — all CSS, all on tokens.
- *
- * One idea runs through it: a vehicle's whole life, kept in one place. The product swings in beside
- * the headline, a pile of receipts sorts itself into a logbook as you scroll, one window answers three questions, and the page ends on a push-start button whose tach
- * revs under the pointer.
+ * The landing page's texture and motion — all CSS, all on tokens, and borrowed from the app: its
+ * grained copper ground, its leaf-cornered cards, its mono figures over small tracked labels. The
+ * app's screens sit in iPhone frames drawn here to the real proportions.
  *
  * Every moving part is gated on the reader allowing motion — the OS setting and the app's own
  * `data-reduce-motion` — and every one has a still state that says the same thing. Scroll-driven
@@ -21,215 +19,419 @@ html[data-reduce-motion] {
 }
 
 /* ── Ground ─────────────────────────────────────────────────────────────────────────────────────
- * Engineering paper behind the hero, the product's greeting ground at page scale: dots in the
- * strong border token, fading out before the edges so nothing frames it.
+ * The app's backdrop, at page scale. Film grain over the whole page — the app's own tile, at the
+ * app's strength — under the content; and the copper light (a wash from the top, a bloom high on
+ * the right, amber on the left) only where a section asks for it with `.copper-ground`.
  */
-.landing-ground {
-  background-image: radial-gradient(var(--color-border-strong) 1px, transparent 1.25px);
-  background-size: 22px 22px;
-  mask-image: radial-gradient(ellipse 70% 60% at 50% 32%, #000 18%, transparent 72%);
-  opacity: 0.6;
+.grain-page {
+  position: relative;
+  isolation: isolate;
 }
 
-/* ── Headline drum ──────────────────────────────────────────────────────────────────────────────
- * "Every vehicle." rolls once through every type Garaj knows — on a real drum, each word turning
- * up from below and over the top — and comes to rest on "vehicle". The other words are
- * pseudo-content, so the heading's text for search engines and screen readers is only ever "Every
- * vehicle. Its whole story." They still size the drum, as wide as its widest word from the first
- * paint: nothing around it moves.
+.grain-page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url('../assets/grain.png');
+  background-size: 128px 128px;
+  opacity: 0.09;
+}
+
+[data-theme='dark'] .grain-page::before {
+  opacity: 0.06;
+}
+
+.copper-ground {
+  --wash: 20%;
+  --bloom: 32%;
+  --amber: 18%;
+  background:
+    radial-gradient(
+      ellipse 60% 70% at 100% 0%,
+      color-mix(in oklch, var(--color-primary) var(--bloom), transparent),
+      color-mix(in oklch, var(--color-primary) calc(var(--bloom) / 3), transparent) 45%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 45% 55% at 0% 12%,
+      color-mix(in oklch, var(--color-warning) var(--amber), transparent),
+      transparent 100%
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklch, var(--color-primary) var(--wash), transparent),
+      color-mix(in oklch, var(--color-primary) calc(var(--wash) / 3), transparent) 32%,
+      transparent 62%
+    );
+}
+
+[data-theme='dark'] .copper-ground {
+  --wash: 26%;
+  --bloom: 40%;
+  --amber: 14%;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────────────────────────────
+ * The app's leaf: the top-left and bottom-right corners wide, the other two tight. Containers
+ * only; controls keep symmetric corners. And its card: white and lifted by day, a hairline edge
+ * over the ground by night.
  */
-.drum {
-  display: inline-grid;
-  overflow: clip;
-  perspective: 4em;
-  /* Room for ascenders and descenders inside the clip, given back so the line box is unchanged. */
-  padding-block: 0.12em 0.16em;
-  margin-block: -0.12em -0.16em;
+@utility leaf-lg {
+  border-radius: 32px 12px 32px 12px;
 }
 
-.drum > * {
-  grid-area: 1 / 1;
-  /* The drum's axle sits behind the type, so a word turns around it rather than on its face. */
-  transform-origin: 50% 50% -0.55em;
-  backface-visibility: hidden;
+@utility leaf-md {
+  border-radius: 24px 10px 24px 10px;
 }
 
-.drum > [data-word] {
-  opacity: 0;
+@utility leaf-sm {
+  border-radius: 18px 7px 18px 7px;
 }
 
-.drum > [data-word]::before {
-  content: attr(data-word);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .drum > .drum-home {
-    /* Out with the first word, back in after the last: ten 1.05s beats and one turn. */
-    animation: drum-home 10.85s cubic-bezier(0.3, 0.7, 0.2, 1) 1.6s both;
+@layer components {
+  .app-card {
+    background: var(--color-card);
+    border: 1px solid color-mix(in oklch, var(--color-foreground) 7%, transparent);
+    box-shadow: 0 6px 18px -6px color-mix(in oklch, var(--color-shadow) 55%, transparent);
   }
 
-  .drum > [data-word] {
-    animation: drum-pass 1.4s cubic-bezier(0.3, 0.7, 0.2, 1) both;
-    animation-delay: calc(1.6s + (var(--i) - 1) * 1.05s);
+  [data-theme='dark'] .app-card {
+    background: color-mix(in oklch, var(--color-card) 88%, transparent);
+    border-color: color-mix(in oklch, var(--color-foreground) 9%, transparent);
+    box-shadow: none;
   }
-}
 
-@keyframes drum-home {
-  0% {
-    opacity: 1;
-    transform: rotateX(0deg);
+  /* The recommended plan: opaque, so its tab (`.plan-tab`) can paint over the border it grows from. */
+  .plan-pick,
+  [data-theme='dark'] .plan-pick {
+    --fill: var(--color-card);
+    background: var(--fill);
+    border: 2px solid var(--color-primary);
   }
-  3.2% {
-    opacity: 0;
-    transform: rotateX(90deg);
-  }
-  3.3%,
-  96.8% {
-    opacity: 0;
-    transform: rotateX(-90deg);
-  }
-  100% {
-    opacity: 1;
-    transform: rotateX(0deg);
+
+  /* A slice of a screen laid on a card: its own corners, a soft lift. */
+  .shot-panel {
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--color-foreground) 8%, transparent),
+      0 24px 48px -24px color-mix(in oklch, var(--color-shadow) 90%, transparent);
   }
 }
 
-@keyframes drum-pass {
-  0% {
-    opacity: 0;
-    transform: rotateX(-90deg);
+/* ── iPhone ─────────────────────────────────────────────────────────────────────────────────────
+ * An iPhone 15 Pro drawn to its proportions, every measure a share of its width (`cqw`): a 0.95
+ * titanium ring and a 3.05 black border round a 92-wide screen at 393:852, corners concentric
+ * (16.9 → 15.95 → 12.9). The island is 126 × 37pt, 11pt down; the status bar 54pt; the home
+ * indicator 134 × 5pt, 8pt up. 1pt of screen is 92 / 393 = 0.2341cqw.
+ */
+@layer components {
+  .iphone {
+    position: relative;
+    container-type: inline-size;
+    aspect-ratio: 100 / 207.45;
   }
-  25%,
-  75% {
-    opacity: 1;
-    transform: rotateX(0deg);
+
+  .iphone-body {
+    position: absolute;
+    inset: 0;
+    padding: 0.95cqw;
+    border-radius: 16.9cqw;
+    background: linear-gradient(
+      140deg,
+      #e3ded6 0%,
+      #9c968d 18%,
+      #cfc9c0 40%,
+      #8a847b 64%,
+      #d8d2c9 86%,
+      #a39d94 100%
+    );
+    box-shadow:
+      inset 0 0 0 0.15cqw rgb(255 255 255 / 0.35),
+      0 0 0 0.12cqw rgb(0 0 0 / 0.25),
+      0 2.5cqw 5cqw -1.5cqw rgb(0 0 0 / 0.35),
+      0 14cqw 28cqw -10cqw color-mix(in oklch, var(--color-shadow) 100%, transparent);
   }
-  100% {
-    opacity: 0;
-    transform: rotateX(90deg);
+
+  .iphone-bezel {
+    height: 100%;
+    padding: 3.05cqw;
+    border-radius: 15.95cqw;
+    background: #050505;
+    box-shadow: inset 0 0 0 0.3cqw #1d1d1f;
+  }
+
+  .iphone-screen {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 12.9cqw;
+    background: #000;
+  }
+
+  .iphone-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  .iphone-shot {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+  }
+
+  .iphone-island {
+    position: absolute;
+    top: 2.58cqw;
+    left: 50%;
+    width: 29.5cqw;
+    height: 8.74cqw;
+    translate: -50% 0;
+    border-radius: 99cqw;
+    background: #000;
+  }
+
+  /* The ears either side of the island: the time on the left, the radios and battery on the right. */
+  .iphone-status {
+    position: absolute;
+    inset: 0 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 29.5cqw 1fr;
+    align-items: center;
+    height: 13.9cqw;
+    padding-inline: 1.5cqw 1.9cqw;
+  }
+
+  .iphone-time {
+    justify-self: center;
+    font-family: -apple-system, 'SF Pro Text', 'Albert Sans', var(--font-sans);
+    font-size: 3.98cqw;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .iphone-icons {
+    grid-column: 3;
+    justify-self: center;
+    width: 18.3cqw;
+    height: auto;
+  }
+
+  .iphone-home {
+    position: absolute;
+    bottom: 1.87cqw;
+    left: 50%;
+    width: 31.37cqw;
+    height: 1.17cqw;
+    translate: -50% 0;
+    border-radius: 99cqw;
+  }
+
+  /* The buttons stand 0.6 proud of the ring: action and volume on the left, side button right. */
+  .iphone-btn {
+    position: absolute;
+    width: 1.2cqw;
+    background: linear-gradient(90deg, #7d776f, #d8d2c9 45%, #8f897f);
+  }
+
+  .iphone-action,
+  .iphone-vol-up,
+  .iphone-vol-down {
+    left: -0.6cqw;
+    border-radius: 0.6cqw 0 0 0.6cqw;
+  }
+
+  .iphone-power {
+    right: -0.6cqw;
+    border-radius: 0 0.6cqw 0.6cqw 0;
+  }
+
+  .iphone-action {
+    top: 15.6%;
+    height: 3.7%;
+  }
+
+  .iphone-vol-up {
+    top: 22.8%;
+    height: 6.6%;
+  }
+
+  .iphone-vol-down {
+    top: 30.6%;
+    height: 6.6%;
+  }
+
+  .iphone-power {
+    top: 25.4%;
+    height: 10.4%;
   }
 }
 
 /* ── Hero ───────────────────────────────────────────────────────────────────────────────────────
- * The product beside the headline, turned a few degrees toward it — the window and the phone on one
- * plane — and facing the reader under the pointer. It swings in on arrival; the phone, in front,
- * pops in after it and drifts up a little faster as the page scrolls. Without motion it simply
- * rests, turned; on a phone, where it sits under the headline, it faces you.
+ * Three phones dealt onto the table: the vehicle in front, its parts and what is due either side,
+ * leaning out. Then the figures beside them pop in, quick and settled, and stay put: a card that
+ * bobs forever moves its text by fractions of a pixel, which reads as a shimmer, not as life.
+ * Everything moves on `transform` and `opacity` only, so it stays on the compositor.
  */
-@media (min-width: 64rem) {
-  .hero-stage {
-    transform: perspective(2200px) rotateY(-12deg) rotateX(4deg);
-    transform-origin: 20% 50%;
-    transition: transform 900ms var(--ease-out-quint);
-  }
+.deal-left {
+  rotate: -8deg;
+}
 
-  @media (hover: hover) {
-    .hero-stage:hover {
-      transform: perspective(2200px) rotateY(0deg) rotateX(0deg);
-    }
-  }
+.deal-right {
+  rotate: 8deg;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .hero-stage {
-    animation: hero-arrive 1200ms var(--ease-out-quint) 150ms backwards;
+  .deal-left,
+  .deal-right,
+  .deal-center {
+    animation: deal 750ms var(--ease-out-quint) var(--delay, 0ms) backwards;
   }
 
-  .hero-pop {
-    animation: hero-pop 800ms var(--ease-out-quint) backwards;
-    animation-delay: var(--delay, 650ms);
-  }
-}
-
-@supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
-    .hero-drift {
-      animation: hero-drift linear both;
-      animation-timeline: view();
-      animation-range: entry 0% exit 100%;
-    }
+  .float-chip {
+    animation: chip-in 480ms cubic-bezier(0.2, 0.9, 0.25, 1.12) calc(520ms + var(--delay, 0ms))
+      backwards;
   }
 }
 
-@keyframes hero-arrive {
+@keyframes deal {
   from {
     opacity: 0;
-    transform: perspective(2200px) rotateY(-26deg) rotateX(10deg) translateY(36px);
+    rotate: 0deg;
+    translate: 0 10%;
   }
 }
 
-@keyframes hero-pop {
+@keyframes chip-in {
   from {
     opacity: 0;
-    translate: 0 24px;
-    scale: 0.94;
+    transform: translate3d(0, 14px, 0) scale(0.94);
   }
 }
 
-@keyframes hero-drift {
-  to {
-    translate: 0 var(--drift, -60px);
-  }
-}
-
-/* ── Trip meter ─────────────────────────────────────────────────────────────────────────────────
- * The header's trip: tenths of a kilometre, driven by how far down the page you are. No script —
- * the scroll position animates an integer, and counters print it. Where scroll timelines are not
- * supported it is not shown at all, rather than stuck on zero.
+/* ── Light and dark ─────────────────────────────────────────────────────────────────────────────
+ * One phone, both themes: the dark screen cut at a line that sweeps until it is dragged.
  */
-@property --trip {
-  syntax: '<integer>';
+@property --split {
+  syntax: '<percentage>';
   inherits: true;
-  initial-value: 0;
+  initial-value: 50%;
 }
 
-@property --trip-km {
-  syntax: '<integer>';
-  inherits: false;
-  initial-value: 0;
+.split-dark {
+  clip-path: inset(0 0 0 var(--split));
 }
 
-@property --trip-tenth {
-  syntax: '<integer>';
-  inherits: false;
-  initial-value: 0;
+.split-line {
+  position: absolute;
+  inset-block: 0;
+  left: var(--split);
+  width: 0.5cqw;
+  translate: -50% 0;
+  background: var(--color-primary);
+  box-shadow: 0 0 3cqw var(--color-primary);
 }
 
-@counter-style trip-pad {
-  system: extends decimal;
-  pad: 3 '0';
-}
-
-/* Its breakpoint lives here, not in utilities: this unlayered rule would beat Tailwind's `hidden`. */
-.trip {
-  display: none;
-}
-
-@supports (animation-timeline: scroll()) and (width: calc(mod(7px, 2px))) {
-  /* A number that runs as you scroll is still motion: it sits out a request for less. */
-  @media (min-width: 80rem) and (prefers-reduced-motion: no-preference) {
-    .trip {
-      display: inline-flex;
-    }
-  }
-
-  .trip {
-    animation: trip linear both;
-    animation-timeline: scroll(root);
-  }
-
-  .trip-reading::before {
-    --trip-km: round(down, var(--trip) / 10, 1);
-    --trip-tenth: mod(var(--trip), 10);
-    counter-reset: km var(--trip-km) tenth var(--trip-tenth);
-    content: counter(km, trip-pad) '.' counter(tenth);
+@media (prefers-reduced-motion: no-preference) {
+  .split-auto {
+    animation: split-sweep 5s ease-in-out infinite alternate;
   }
 }
 
-@keyframes trip {
+@keyframes split-sweep {
+  from {
+    --split: 24%;
+  }
   to {
-    --trip: 742;
+    --split: 76%;
   }
+}
+
+.split-range {
+  accent-color: var(--color-primary);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────────────────────────
+ * A slab of frosted glass in the app's leaf shape. At the top of the page it is barely there;
+ * scrolling the first 80px frosts it, rims it and lifts it off the page. Without scroll-driven
+ * animation it is simply frosted.
+ */
+.site-bar {
+  border: 1px solid color-mix(in oklch, var(--color-foreground) 8%, transparent);
+  border-radius: 26px 12px 26px 12px;
+  background: color-mix(in oklch, var(--color-card) 72%, transparent);
+  box-shadow: 0 12px 32px -18px color-mix(in oklch, var(--color-shadow) 90%, transparent);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+}
+
+@supports (animation-timeline: scroll()) {
+  .site-bar {
+    animation: bar-frost linear both;
+    animation-timeline: scroll(root);
+    animation-range: 0 80px;
+  }
+}
+
+@keyframes bar-frost {
+  from {
+    border-color: color-mix(in oklch, var(--color-foreground) 5%, transparent);
+    background: color-mix(in oklch, var(--color-card) 38%, transparent);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* ── Plans ──────────────────────────────────────────────────────────────────────────────────────
+ * The recommended plan's tab grows out of its card's top border, as the app's paywall draws it:
+ * the border runs up its sides and turns back into the card's edge through two concave fillets,
+ * each a quarter-ring drawn by one radial gradient (the ring in the border's colour, the card's
+ * fill outside it), so the tab and the card are one outline.
+ */
+.plan-tab {
+  --r: 12px;
+  --b: 2px;
+  position: absolute;
+  bottom: 100%;
+  /* Centred, so both fillets land on the straight run of the border, clear of the leaf corners. */
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  white-space: nowrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 5px;
+  border: var(--b) solid var(--color-primary);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: var(--fill);
+  color: var(--color-primary);
+}
+
+.plan-tab::before,
+.plan-tab::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: var(--r);
+  height: var(--r);
+  --ring:
+    transparent calc(var(--r) - var(--b) - 0.5px),
+    var(--color-primary) calc(var(--r) - var(--b) + 0.5px),
+    var(--color-primary) calc(var(--r) - 0.5px), var(--fill) calc(var(--r) + 0.5px);
+}
+
+.plan-tab::before {
+  right: calc(100% + var(--b));
+  background: radial-gradient(circle at 0 0, var(--ring));
+}
+
+.plan-tab::after {
+  left: calc(100% + var(--b));
+  background: radial-gradient(circle at 100% 0, var(--ring));
 }
 
 /* ── Bay lines ──────────────────────────────────────────────────────────────────────────────────
@@ -263,17 +465,11 @@ html[data-reduce-motion] {
       animation-range: entry 0% cover 35%;
     }
 
-    /* The two phones open like a hand of cards as they come into view. */
-    .fan-left {
-      animation: fan-left linear both;
+    /* What a feature card holds rises a little further into it as the card scrolls up. */
+    .tile-rise {
+      animation: tile-rise linear both;
       animation-timeline: view();
-      animation-range: entry 5% cover 45%;
-    }
-
-    .fan-right {
-      animation: fan-right linear both;
-      animation-timeline: view();
-      animation-range: entry 5% cover 45%;
+      animation-range: entry 10% cover 55%;
     }
 
     /* The footer's wordmark, rising letter by letter out of the floor. */
@@ -298,407 +494,15 @@ html[data-reduce-motion] {
   }
 }
 
-@keyframes fan-left {
+@keyframes tile-rise {
   from {
-    rotate: 0deg;
-    translate: 18% 4%;
-  }
-}
-
-@keyframes fan-right {
-  from {
-    rotate: 0deg;
-    translate: -18% -4%;
+    translate: 0 10%;
   }
 }
 
 @keyframes wordmark-rise {
   from {
     translate: 0 45%;
-    opacity: 0;
-  }
-}
-
-/* ── The glovebox, sorted ───────────────────────────────────────────────────────────────────────
- * Five receipts lie in a heap — rotated, overlapping, torn paper — and as the stage scrolls up to
- * the middle of the screen each one flies to its line in the logbook, its paper falls away to
- * the clean row underneath, and the dates, the rail and the month headings arrive last. Driven by
- * the stage's own view timeline, so it plays forwards and backwards with the scroll.
- *
- * `--px`, `--py`, `--pr` are each receipt's place in the heap, relative to its line.
- */
-.receipt {
-  /* A torn top and bottom edge: two rows of teeth cut by conic gradients. */
-  --tooth: 9px;
-  mask:
-    conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / var(--tooth) 51%
-      repeat-x,
-    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / var(--tooth)
-      51% repeat-x;
-}
-
-@supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
-    .sort-stage {
-      view-timeline: --sort block;
-    }
-
-    .sort-item {
-      animation: sort-in linear both;
-      animation-timeline: --sort;
-      animation-range: cover calc(6% + var(--i) * 2.5%) cover calc(38% + var(--i) * 2.5%);
-    }
-
-    .sort-paper {
-      animation: paper-off linear both;
-      animation-timeline: --sort;
-      animation-range: cover calc(30% + var(--i) * 2.5%) cover calc(44% + var(--i) * 2.5%);
-    }
-
-    .sort-late {
-      animation: sort-late linear both;
-      animation-timeline: --sort;
-      animation-range: cover 40% cover 52%;
-    }
-  }
-}
-
-@keyframes sort-in {
-  from {
-    translate: var(--px) var(--py);
-    rotate: var(--pr);
-    scale: 0.96;
-  }
-}
-
-@keyframes paper-off {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes sort-late {
-  from {
-    opacity: 0;
-  }
-}
-
-/* Where the heap cannot be scrolled through, there is no heap: the paper is already gone. */
-@supports not (animation-timeline: view()) {
-  .sort-paper {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sort-paper {
-    opacity: 0;
-  }
-}
-
-/* ── Story spotlight ────────────────────────────────────────────────────────────────────────────
- * One lit window over the screenshot, gliding to whatever the step's question is answered by. The
- * rest of the screen dims around it: a shadow the size of the screen, clipped by the frame.
- */
-.spotlight {
-  position: absolute;
-  border-radius: 1rem;
-  pointer-events: none;
-  box-shadow:
-    0 0 0 2px var(--color-ring),
-    0 0 0 200vmax color-mix(in oklab, var(--color-background) 58%, transparent);
-  transition:
-    left 750ms var(--ease-out-quint),
-    top 750ms var(--ease-out-quint),
-    width 750ms var(--ease-out-quint),
-    height 750ms var(--ease-out-quint);
-}
-
-/* The story's slides cross over: the old one sinks and softens as the new one sharpens. */
-.story-slide {
-  transition:
-    opacity 600ms var(--ease-out-quint),
-    translate 700ms var(--ease-out-quint),
-    filter 600ms var(--ease-out-quint);
-}
-
-/* The steps' rail fills as you read down it — only where scroll can drive it; the lit dot says
-   where you are everywhere else. */
-.rail-fill {
-  visibility: hidden;
-}
-
-@supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
-    .rail-fill {
-      visibility: visible;
-      transform-origin: top;
-      animation: rail-fill linear both;
-      animation-timeline: --steps;
-      animation-range: contain 0% contain 100%;
-    }
-
-    .steps {
-      view-timeline: --steps block;
-    }
-  }
-}
-
-@keyframes rail-fill {
-  from {
-    scale: 1 0;
-  }
-}
-
-/* ── Features ───────────────────────────────────────────────────────────────────────────────────
- * Each card demonstrates its one idea, slowly enough to be read and never all at once.
- */
-
-/* Reminders: the newest lands on top and the stack shuffles down, one every three seconds. */
-.notif {
-  translate: 0 calc(var(--slot) * 80px);
-}
-
-/* Four in the loop, three on screen: the fourth waits off the bottom. */
-.notif[data-slot='3'] {
-  opacity: 0;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .notif {
-    animation: notif-cycle 12s var(--ease-out-quint) infinite;
-    animation-delay: calc(var(--slot) * -3s);
-  }
-}
-
-@keyframes notif-cycle {
-  0% {
-    opacity: 0;
-    translate: 0 -30px;
-    scale: 0.95;
-  }
-  4%,
-  25% {
-    opacity: 1;
-    translate: 0 0;
-    scale: 1;
-  }
-  29%,
-  50% {
-    opacity: 0.75;
-    translate: 0 80px;
-    scale: 0.97;
-  }
-  54%,
-  75% {
-    opacity: 0.45;
-    translate: 0 160px;
-    scale: 0.94;
-  }
-  79%,
-  100% {
-    opacity: 0;
-    translate: 0 240px;
-    scale: 0.91;
-  }
-}
-
-/* Whichever comes first: three intervals race; the first to the end turns amber and is due.
-   Clipped rather than scaled, so the bars keep their round ends all the way. */
-.race-bar {
-  clip-path: inset(0 calc(100% - var(--to) * 100%) 0 0 round 9999px);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .race-bar {
-    animation: race 6.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  }
-
-  .race-due {
-    animation: race-due 6.5s linear infinite;
-  }
-
-  .race-due-chip {
-    animation: race-due-chip 6.5s var(--ease-out-quint) infinite;
-  }
-}
-
-@keyframes race {
-  0% {
-    clip-path: inset(0 100% 0 0 round 9999px);
-  }
-  55%,
-  86% {
-    clip-path: inset(0 calc(100% - var(--to) * 100%) 0 0 round 9999px);
-  }
-  96%,
-  100% {
-    clip-path: inset(0 100% 0 0 round 9999px);
-  }
-}
-
-@keyframes race-due {
-  0%,
-  54% {
-    opacity: 0;
-  }
-  56%,
-  86% {
-    opacity: 1;
-  }
-  94%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes race-due-chip {
-  0%,
-  55% {
-    opacity: 0;
-    scale: 0.6;
-  }
-  60%,
-  86% {
-    opacity: 1;
-    scale: 1;
-  }
-  92%,
-  100% {
-    opacity: 0;
-    scale: 0.9;
-  }
-}
-
-/* Health, value and roles draw themselves as their card scrolls in. */
-@supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
-    .scrub-ring {
-      animation: scrub-ring linear both;
-      animation-timeline: view();
-      animation-range: entry 30% cover 50%;
-    }
-
-    .scrub-line {
-      animation: scrub-line linear both;
-      animation-timeline: view();
-      animation-range: entry 30% cover 50%;
-    }
-
-    .scrub-in {
-      animation: scrub-in linear both;
-      animation-timeline: view();
-      animation-range: entry calc(30% + var(--i, 0) * 8%) cover calc(40% + var(--i, 0) * 4%);
-    }
-
-    .scrub-dot {
-      animation: scrub-dot linear both;
-      animation-timeline: view();
-      animation-range: entry calc(20% + var(--i, 0) * 7%) cover calc(30% + var(--i, 0) * 4%);
-    }
-
-    .stamp-thump {
-      animation: stamp-thump linear both;
-      animation-timeline: view();
-      animation-range: entry 60% cover 50%;
-    }
-  }
-}
-
-@keyframes scrub-ring {
-  from {
-    stroke-dashoffset: 100;
-  }
-}
-
-@keyframes scrub-line {
-  from {
-    stroke-dashoffset: 1;
-  }
-}
-
-@keyframes scrub-in {
-  from {
-    opacity: 0;
-    translate: 16px 0;
-  }
-}
-
-@keyframes scrub-dot {
-  from {
-    scale: 0;
-    opacity: 0;
-  }
-}
-
-/* A rubber stamp coming down: large and faint, then hard on the paper. */
-@keyframes stamp-thump {
-  0%,
-  40% {
-    opacity: 0;
-    scale: 1.8;
-  }
-  80% {
-    opacity: 1;
-    scale: 0.94;
-  }
-  100% {
-    opacity: 1;
-    scale: 1;
-  }
-}
-
-/* Your data: the files lift and fan out under the pointer. */
-.file-fan > * {
-  transition:
-    translate 400ms var(--ease-out-quint),
-    rotate 400ms var(--ease-out-quint);
-}
-
-.group:hover .file-fan > :nth-child(1) {
-  translate: -10px -6px;
-  rotate: -6deg;
-}
-
-.group:hover .file-fan > :nth-child(2) {
-  translate: 0 -10px;
-}
-
-.group:hover .file-fan > :nth-child(3) {
-  translate: 10px -6px;
-  rotate: 6deg;
-}
-
-/* A slow belt of the MCP tool names; it stops when the pointer rests on it. */
-.marquee {
-  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .marquee-track {
-    animation: marquee 48s linear infinite;
-  }
-
-  .marquee:hover .marquee-track {
-    animation-play-state: paused;
-  }
-}
-
-@keyframes marquee {
-  to {
-    translate: -50% 0;
-  }
-}
-
-/* The Ask replay's caret. */
-@media (prefers-reduced-motion: no-preference) {
-  .landing-caret {
-    animation: landing-blink 1s steps(1) infinite;
-  }
-}
-
-@keyframes landing-blink {
-  50% {
     opacity: 0;
   }
 }
@@ -781,47 +585,21 @@ html[data-reduce-motion] {
 /* ── The app's own reduce-motion switch, for anything above that the OS query let through. ──── */
 html[data-reduce-motion]
   :is(
-    .drum > *,
-    .hero-stage,
-    .hero-pop,
-    .hero-drift,
+    .deal-left,
+    .deal-right,
+    .deal-center,
+    .float-chip,
+    .site-bar,
+    .split-auto,
     .landing-reveal,
     .bay-line,
-    .fan-left,
-    .fan-right,
-    .wordmark > span,
-    .sort-item,
-    .sort-late,
-    .rail-fill,
-    .notif,
-    .race-bar,
-    .race-due,
-    .race-due-chip,
-    .scrub-ring,
-    .scrub-line,
-    .scrub-in,
-    .scrub-dot,
-    .stamp-thump,
-    .marquee-track,
-    .landing-caret
+    .tile-rise,
+    .wordmark > span
   ) {
   animation: none !important;
 }
 
-html[data-reduce-motion] .drum > [data-word] {
-  opacity: 0;
-}
-
-html[data-reduce-motion] .sort-paper {
-  animation: none !important;
-  opacity: 0;
-}
-
-html[data-reduce-motion] .trip {
-  display: none;
-}
-
-html[data-reduce-motion] :is(.story-slide, .spotlight, .bay, .tach-tick, .hero-stage) {
+html[data-reduce-motion] :is(.bay, .tach-tick) {
   transition: none !important;
 }
 

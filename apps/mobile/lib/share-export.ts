@@ -58,9 +58,9 @@ export async function shareGarageExport(
     `/garages/${garage.id}/export`,
     csv ? { format: 'csv', dataset: choice.dataset } : { format: 'json' },
     {
-      name: `garaj-${slug(garage.name)}-${stamp}${csv ? `-${choice.dataset}` : ''}`,
+      name: `garajj-${slug(garage.name)}-${stamp}${csv ? `-${choice.dataset}` : ''}`,
       kind: csv ? 'csv' : 'json',
-      title: `${garage.name} — Garaj export`,
+      title: `${garage.name} — Garajj export`,
     },
   );
 }

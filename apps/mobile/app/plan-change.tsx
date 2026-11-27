@@ -110,7 +110,7 @@ export default function PlanChangeScreen() {
         {data && !inStore && data.plan !== 'FREE' ? (
           <Empty
             title="Changed where it was bought"
-            description={`Your ${PLAN_NAMES[data.plan]} plan is billed through the Garaj website. Change it there.`}
+            description={`Your ${PLAN_NAMES[data.plan]} plan is billed through the Garajj website. Change it there.`}
           />
         ) : data ? (
           <Empty title="Nothing to change" description={`You are on ${PLAN_NAMES[data.plan]}.`} />

@@ -33,8 +33,9 @@ import { Skeleton } from '@/lib/ui';
 
 type Money = { amountMinor: number; currency: string };
 
-/** The day's column, at the row's left edge. */
-const DAY = 30;
+/** The day's column, at the row's left edge, and its stamp's height: a size under the mark. */
+const DAY = 26;
+const DAY_TALL = 30;
 /**
  * The rail's column, the width of the kind's mark — the notifications' muted ground, made round
  * (user asked: rounded, and the row less spaced).
@@ -46,8 +47,10 @@ const TILE_RADIUS = RING / 2;
 const COLUMN_GAP = 6;
 const LINE = 1.5;
 /** The mark's top inside its row, and so where its middle falls: the air between entries. */
-const RING_TOP = 11;
+const RING_TOP = 15;
 const RING_MID = RING_TOP + RING / 2;
+/** The day's stamp, centred on the mark beside it. */
+const DAY_TOP = RING_TOP + (RING - DAY_TALL) / 2;
 /** Rows reach past the page's gutter by this much, so a pressed row's wash has room round it. */
 const BLEED = spacing.sm;
 
@@ -109,7 +112,10 @@ export function LedgerMonth({ group }: { group: MonthGroup<Dated> }) {
       <Text numberOfLines={1} style={[styles.monthName, { color: theme.foreground }]}>
         {MONTH.format(new Date(year, month - 1, 1)).toUpperCase()}
         {/* Its own weight: the font patch dresses each Text alone. */}
-        <Text style={[styles.monthYear, { color: theme.mutedForeground }]}> {year}</Text>
+        <Text style={[styles.monthYear, { color: theme.mutedForeground }]}>
+          {' '}
+          {String(year).slice(-2)}
+        </Text>
       </Text>
       {total ? (
         <View style={[styles.stamp, { backgroundColor: theme.muted }]}>
@@ -325,10 +331,7 @@ export function LedgerRow({
           <View style={styles.body}>
             <View style={styles.columns}>
               <View style={styles.left}>
-                <Text numberOfLines={1} style={[styles.title, { color: theme.foreground }]}>
-                  {title}
-                </Text>
-                {/* The kind's badge, as its own screen wears it, then what else it records. */}
+                {/* The kind's badge over what it was (user asked), what else it records beside it. */}
                 <View style={styles.facts}>
                   <KindBadge eventType={eventType} />
                   {rest ? (
@@ -337,6 +340,9 @@ export function LedgerRow({
                     </Text>
                   ) : null}
                 </View>
+                <Text numberOfLines={2} style={[styles.title, { color: theme.foreground }]}>
+                  {title}
+                </Text>
               </View>
               {/*
                * The figures, flush right as the web's entries stack them: the cost, set as the
@@ -604,7 +610,7 @@ export function LedgerPlaceholder({ rows = 4 }: { rows?: number }) {
     <View accessibilityRole="progressbar" accessibilityLabel="Loading activity">
       {Array.from({ length: rows }, (_, index) => (
         <View key={index} style={styles.row}>
-          <Skeleton width={DAY} height={RING} radius={8} style={styles.daySkeleton} />
+          <Skeleton width={DAY} height={DAY_TALL} radius={7} style={styles.daySkeleton} />
           <View style={styles.rail}>
             <Skeleton width={RING} height={RING} radius={TILE_RADIUS} style={styles.ring} />
           </View>
@@ -663,7 +669,12 @@ export function FactChips({
   facts,
 }: {
   eventType: EventType;
-  facts: readonly { icon: ComponentProps<typeof Ionicons>['name']; text: string }[];
+  /** `aside`: a figure said in passing inside the chip, after its own — a fill's price per unit. */
+  facts: readonly {
+    icon: ComponentProps<typeof Ionicons>['name'];
+    text: string;
+    aside?: string;
+  }[];
 }) {
   const theme = useTheme();
   const hue = HUE[eventType];
@@ -682,6 +693,14 @@ export function FactChips({
           >
             {fact.text}
           </Text>
+          {fact.aside ? (
+            <Text
+              numberOfLines={1}
+              style={[figure, styles.factChipAside, { color: theme.mutedForeground }]}
+            >
+              {fact.aside}
+            </Text>
+          ) : null}
         </View>
       ))}
     </View>
@@ -711,12 +730,12 @@ const styles = StyleSheet.create({
   monthName: {
     flex: 1,
     minWidth: 0,
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 10,
+    lineHeight: 13,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.2,
   },
-  monthYear: { fontSize: 11, lineHeight: 14, fontWeight: '500', letterSpacing: 0.8 },
+  monthYear: { fontSize: 10, lineHeight: 13, fontWeight: '500', letterSpacing: 0.2 },
   // A badge: a small filled pill round a quiet figure.
   stamp: { height: 18, justifyContent: 'center', paddingHorizontal: 7, borderRadius: 999 },
   stampText: { fontSize: 10.5, lineHeight: 13, fontWeight: '600', letterSpacing: 0 },
@@ -746,17 +765,17 @@ const styles = StyleSheet.create({
   day: {
     alignSelf: 'flex-start',
     width: DAY,
-    height: RING,
-    marginTop: RING_TOP,
+    height: DAY_TALL,
+    marginTop: DAY_TOP,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    borderRadius: 7,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  dayMonth: { fontSize: 7.5, lineHeight: 9, fontWeight: '700', letterSpacing: 0.4 },
-  dayNumber: { fontSize: 13.5, lineHeight: 16, fontWeight: '600', letterSpacing: -0.4 },
+  dayMonth: { fontSize: 6.5, lineHeight: 8, fontWeight: '700', letterSpacing: 0.3 },
+  dayNumber: { fontSize: 12, lineHeight: 14, fontWeight: '600', letterSpacing: -0.4 },
   dayColumn: { width: DAY },
-  daySkeleton: { alignSelf: 'flex-start', marginTop: RING_TOP },
+  daySkeleton: { alignSelf: 'flex-start', marginTop: DAY_TOP },
   facts: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
   peek: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 2 },
   thumb: {
@@ -783,7 +802,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000A6',
   },
   thumbCountText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '700' },
-  note: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '400' },
+  note: { flex: 1, minWidth: 0, fontSize: 11, lineHeight: 15, fontWeight: '400' },
   factChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   factChip: {
     flexDirection: 'row',
@@ -801,6 +820,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: -0.2,
   },
+  // A fill's price per unit, after its litres: a size down and muted, said rather than shown.
+  factChipAside: { flexShrink: 0, fontSize: 9, lineHeight: 14, fontWeight: '500' },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -814,26 +835,26 @@ const styles = StyleSheet.create({
   badgeDot: { width: 4, height: 4, borderRadius: 2 },
   badgeText: { fontSize: 7.5, lineHeight: 10, fontWeight: '700', letterSpacing: 0.4 },
   aside: { fontWeight: '600' },
-  // The two lines (19 + 2 + 16) centred on the tile's middle: RING_MID − 37 ÷ 2.
-  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 18.5 },
+  // The badge line and the title's first (15 + 2 + 17) centred on the mark: RING_MID − 34 ÷ 2.
+  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 17 },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   left: { flex: 1, minWidth: 0, gap: 2 },
   right: { flexShrink: 0, alignItems: 'flex-end', gap: 1 },
-  change: { fontSize: 11, lineHeight: 16, fontWeight: '600', letterSpacing: -0.2 },
+  change: { fontSize: 10, lineHeight: 15, fontWeight: '600', letterSpacing: -0.2 },
   // The dash's next-up line, a size up: a ledger row is read on its own, the dash's at a glance.
   title: {
     minWidth: 0,
-    fontSize: 14,
-    lineHeight: 19,
+    fontSize: 13,
+    lineHeight: 17,
     fontWeight: '600',
     letterSpacing: -0.2,
   },
-  meta: { flexShrink: 1, minWidth: 0, fontSize: 12, lineHeight: 16, fontWeight: '500' },
+  meta: { flexShrink: 1, minWidth: 0, fontSize: 11, lineHeight: 15, fontWeight: '500' },
   // The web's entry amount: `font-mono text-sm font-semibold tabular-nums`.
-  cost: { fontSize: 14, lineHeight: 19, fontWeight: '600', letterSpacing: -0.3 },
+  cost: { fontSize: 13, lineHeight: 17, fontWeight: '600', letterSpacing: -0.3 },
   amount: { flexDirection: 'row', alignItems: 'baseline' },
-  cents: { fontSize: 10.5, lineHeight: 19, fontWeight: '600', letterSpacing: -0.2 },
-  trail: { fontSize: 11, lineHeight: 16, fontWeight: '500', letterSpacing: -0.2 },
+  cents: { fontSize: 10, lineHeight: 17, fontWeight: '600', letterSpacing: -0.2 },
+  trail: { fontSize: 10, lineHeight: 15, fontWeight: '500', letterSpacing: -0.2 },
   trailRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 },
   trailDot: { width: 3, height: 3, borderRadius: 1.5 },
 });

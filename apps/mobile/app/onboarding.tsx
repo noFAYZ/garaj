@@ -298,7 +298,7 @@ function UseStep({
       kicker="Make it yours"
       lead="Who is this"
       rest="garage for?"
-      line="It decides what Garaj puts first. You can change it any time."
+      line="It decides what Garajj puts first. You can change it any time."
       footer={<Button label="Continue" variant="primary" disabled={!ready} onPress={onNext} />}
     >
       <View style={styles.choices} accessibilityRole="radiogroup">
