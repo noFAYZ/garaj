@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import { buttonClass } from '@/components/ui/button-class';
-import { BRAND, NAV, SIGN_IN, SIGN_UP } from '../site';
+import { BRAND, NAV, SIGN_UP } from '../site';
 import logoText from '../assets/logo-text.png';
 import logoTextLight from '../assets/logo-text-light.png';
 import { ThemeToggle } from './theme-toggle';
@@ -13,7 +13,7 @@ import { ThemeToggle } from './theme-toggle';
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 -mb-[4.5rem] h-[4.5rem] px-3 pt-3 sm:px-4">
-      <div className="site-bar relative mx-auto flex h-[3.25rem] max-w-4xl items-center gap-1 pl-4 pr-1.5 sm:pl-5">
+      <div className="site-bar relative mx-auto flex h-[3.25rem] max-w-3xl items-center gap-1 pl-4 pr-1.5 sm:pl-5">
         <a href="/" aria-label={BRAND} className="mr-auto flex shrink-0 items-center rounded-xl">
           <Image src={logoText} alt="" priority className="h-6 w-auto dark:hidden" />
           <Image src={logoTextLight} alt="" priority className="hidden h-6 w-auto dark:block" />
@@ -33,9 +33,7 @@ export function SiteHeader() {
           ))}
         </nav>
         <ThemeToggle />
-        <a href={SIGN_IN} className={buttonClass('ghost', 'md', 'hidden sm:inline-flex')}>
-          Sign in
-        </a>
+
         <a href={SIGN_UP} className={buttonClass('primary', 'md')}>
           Start free
         </a>

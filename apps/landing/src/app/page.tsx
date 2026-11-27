@@ -411,21 +411,20 @@ export default function LandingPage() {
             {STEPS.map((step, i) => (
               <li
                 key={step.screen}
-                className="landing-reveal flex w-[74vw] max-w-[20rem] shrink-0 snap-center flex-col md:w-auto md:max-w-none"
+                className="landing-reveal flex w-[74vw] max-w-[20rem] shrink-0 snap-center flex-col md:w-auto md:max-w-none text-center"
               >
                 <Phone
                   screen={step.screen}
                   sizes="(min-width: 768px) 240px, 60vw"
                   className="mx-auto w-[78%] max-w-[15rem]"
                 />
-                <div className="mt-9 flex items-center gap-3">
-                  <span className="font-mono text-sm font-semibold text-primary">{pad(i + 1)}</span>
-                  <span aria-hidden="true" className="bay-line flex-1" />
-                </div>
-                <h3 className="mt-4 text-[1.4rem] font-bold tracking-[-0.025em]">{step.title}</h3>
-                <p className="mt-1.5 text-pretty text-[15px] leading-relaxed text-muted-foreground">
-                  {step.line}
-                </p>
+
+                <span className="mt-9 font-mono text-4xl font-semibold text-primary text-center">
+                  {pad(i + 1)}
+                </span>
+
+                <h3 className="mt-4 text-[1.6rem] font-bold tracking-[-0.025em]">{step.title}</h3>
+                <p className="mt-1.5 text-pretty text-[17px]  text-muted-foreground">{step.line}</p>
               </li>
             ))}
           </ol>
