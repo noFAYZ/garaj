@@ -1,6 +1,6 @@
 # API, worker and migrations: one image, run three ways on Cloud Run (scripts/deploy-gcp.sh).
 FROM node:26-slim
-RUN npm install -g pnpm@11.12.0
+RUN npm install -g pnpm@11.29.0
 ENV CI=true
 WORKDIR /app
 COPY . .
