@@ -8,6 +8,7 @@ try {
 }
 
 const root = resolve(import.meta.dirname, '../..');
+const dev = process.env.NODE_ENV !== 'production';
 
 /*
  * The marketing site, apart from the product so it can ship, cache and be indexed on its own.
@@ -28,12 +29,15 @@ const nextConfig = {
   outputFileTracingRoot: root,
   transpilePackages: ['@vehicle-os/domain', '@vehicle-os/ui'],
   env: {
-    // Where "Start free" and "Sign in" go: the product, on its own origin.
-    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
+    // Where "Start free" and "Sign in" go: the product, on its own origin. The dev servers by
+    // default; a production build without it has no product to send people to yet (site.ts).
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? (dev ? 'http://localhost:3000' : ''),
     // Its own public address: canonical URL, sitemap, and the base for the link-preview image.
-    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3003',
+    // Production's by default, so a deploy that forgets the variable still points search engines
+    // at the real site rather than at localhost.
+    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://garajj.fayzan.xyz',
     // The developer docs (apps/docs), for the MCP card and the footer — the same variable as web's.
-    NEXT_PUBLIC_DOCS_URL: process.env.NEXT_PUBLIC_DOCS_URL ?? 'http://localhost:3004',
+    NEXT_PUBLIC_DOCS_URL: process.env.NEXT_PUBLIC_DOCS_URL ?? (dev ? 'http://localhost:3004' : ''),
   },
 };
 
