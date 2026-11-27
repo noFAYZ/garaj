@@ -56,6 +56,7 @@ import { getCurrentUser } from '../../../users/application/queries/get-current-u
 import { updateUserPreferences } from '../../../users/application/commands/update-user-preferences';
 import { serializeUser } from '../../../users/http/serializers/user-serializer';
 import { daysFrom, insightsRoutes, windowStart } from './insights.routes';
+import { emailPreviews } from '../../../notifications/application/services/email-templates';
 
 const {
   users,
@@ -247,6 +248,11 @@ export const adminRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
   };
 
   // --- Overview -------------------------------------------------------------
+
+  // Every email the product sends, rendered with sample content, for the console's Emails page.
+  fastify.get('/emails', { schema: { tags: ['admin'] } }, async () => ({
+    data: emailPreviews(env().AUTH_URL, env().WEB_URL),
+  }));
 
   fastify.get('/overview', { schema: { tags: ['admin'] } }, async () => {
     const config = env();

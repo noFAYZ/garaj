@@ -21,6 +21,7 @@ import errorHandler from './plugins/error-handler';
 import databasePlugin from './plugins/database';
 import redisPlugin from './plugins/redis';
 import authPlugin from './plugins/auth';
+import accountPages from './plugins/account-pages';
 import actorContext from './plugins/actor-context';
 import requestContext from './plugins/request-context';
 import security from './plugins/security';
@@ -168,6 +169,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(storagePlugin, { storage: options.storage });
   await app.register(aiPlugin, { ai: options.ai });
   await app.register(authPlugin);
+  await app.register(accountPages, { prefix: '/account' });
   await app.register(actorContext);
   await app.register(planAccess);
   await app.register(vehicleAccess);

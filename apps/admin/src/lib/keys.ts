@@ -15,4 +15,5 @@ export const GO_TO: Record<string, { section: string; label: string }> = {
   g: { section: 'garages', label: 'Garages' },
   v: { section: 'vehicles', label: 'Vehicles' },
   f: { section: 'settings', label: 'Settings' },
+  e: { section: 'emails', label: 'Emails' },
 };
