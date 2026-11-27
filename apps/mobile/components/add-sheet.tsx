@@ -34,7 +34,7 @@ import { api } from '@/lib/api';
 import { confirmDiscard } from '@/lib/discard';
 import { fileParams, pickPhoto, type PickedFile } from '@/lib/file-picker';
 import { Glyph } from '@/lib/instrument';
-import { ease, haptic, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { ease, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 import { DialogHost } from '@/lib/dialog';
 
@@ -259,7 +259,6 @@ export function AddSheet({
       onPanResponderMove: (_event, gesture) => drop.setValue(Math.max(0, gesture.dy)),
       onPanResponderRelease: (_event, gesture) => {
         if (gesture.dy > 110 || gesture.vy > 1.1) {
-          haptic.light();
           dismissRef.current();
         } else {
           settle();
@@ -273,7 +272,6 @@ export function AddSheet({
     try {
       const picked = await pickPhoto(source);
       if (picked) {
-        haptic.success();
         setFile(picked);
       }
     } catch (caught) {
@@ -634,7 +632,6 @@ function Tiles({ tiles, columns }: { tiles: readonly Tile[]; columns: 2 | 3 }) {
         <Rise key={tile.key} index={index + 2} style={columns === 3 ? styles.third : styles.half}>
           <PressableScale
             onPress={() => {
-              haptic.selection();
               tile.onPress();
             }}
             accessibilityRole="button"
@@ -681,7 +678,6 @@ function DueCard({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onLog();
       }}
       accessibilityRole="button"

@@ -90,12 +90,3 @@ export function useOwnPlanGoverns(garageId?: string): boolean {
 }
 
 /** Each paid feature's glyph. Its name and one-line description are `ENTITLEMENT_COPY`. */
-export const FEATURE_ICON: Record<
-  Entitlement,
-  'document-text' | 'cash' | 'speedometer' | 'people'
-> = {
-  'passport.share': 'document-text',
-  'income.track': 'cash',
-  'mileage.report': 'speedometer',
-  'driver.assign': 'people',
-};

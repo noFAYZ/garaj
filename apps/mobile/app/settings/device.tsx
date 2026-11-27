@@ -11,7 +11,7 @@ import { unreadCountQuery } from '@vehicle-os/api-client/react';
 import { Group, Row, SettingsPage } from '@/components/settings-kit';
 import { pad } from '@/lib/format';
 import { api, API_URL } from '@/lib/api';
-import { haptic, Rise } from '@/lib/motion';
+import { Rise } from '@/lib/motion';
 import { flush, pendingCount } from '@/lib/offline';
 import { registerForPush } from '@/lib/push';
 import { spacing, typeScale, useTheme, leaf } from '@/lib/theme';
@@ -47,7 +47,6 @@ export default function DeviceScreen() {
   );
 
   const send = () => {
-    haptic.selection();
     setSyncing(true);
     void flush()
       .then(read)

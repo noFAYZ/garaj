@@ -13,7 +13,7 @@ import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg'
 import { composite } from '@vehicle-os/ui';
 import { AddGlyph } from '@/components/add-sheet';
 import { Glyph, Icon, type IconName } from '@/lib/instrument';
-import { ease, haptic, PressableScale, spring, useReduceMotion } from '@/lib/motion';
+import { ease, PressableScale, spring, useReduceMotion } from '@/lib/motion';
 import { leaf, LEAF, lift, radius, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 import { Key } from '@/lib/ui';
 
@@ -294,7 +294,6 @@ export function Dock({
   const washFill = composite(theme.primarySoft, theme.popover);
 
   const pressKey = () => {
-    haptic.light();
     if (actions && actions.length > 0) setFanned(true);
     else add.onPress();
   };
@@ -306,7 +305,6 @@ export function Dock({
         key={item.key}
         onPress={() => {
           if (focused) return;
-          haptic.selection();
           onSelect(item.key);
         }}
         accessibilityRole="tab"
@@ -452,7 +450,6 @@ export function Dock({
           onClose={() => setFanned(false)}
           onPick={(action) => {
             setFanned(false);
-            haptic.selection();
             action.onPress();
           }}
         />

@@ -30,7 +30,7 @@ import { DateField } from '@/lib/date-picker';
 import { useDiscardGuard } from '@/lib/discard';
 import { humanise, toMinorUnits } from '@/lib/format';
 import { Eyebrow, FigureInput, Panel, PanelCell, Segmented } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { enqueue, flush } from '@/lib/offline';
 import { ListPicker } from '@/lib/pickers';
 import { radius, spacing, typeScale, useTheme } from '@/lib/theme';
@@ -84,7 +84,6 @@ export default function EditVehicleScreen() {
       void flush();
     },
     onSuccess: () => {
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: ['vehicles'] });
       release();
       router.back();
@@ -434,7 +433,6 @@ function SpecCells({
         <PanelCell key={field.key} label={field.label}>
           <PressableScale
             onPress={() => {
-              haptic.selection();
               onPick(field);
             }}
             accessibilityRole="button"

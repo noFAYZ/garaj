@@ -226,7 +226,7 @@ export function PlanPass({
       style={[
         styles.pass,
         paid
-          ? { backgroundColor: theme.primary, ...styles.passLift }
+          ? { backgroundColor: theme.primary }
           : { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.borderStrong },
         style,
       ]}
@@ -384,13 +384,6 @@ const styles = StyleSheet.create({
   dotBox: { width: 6, height: 6 },
   dot: { width: 6, height: 6, borderRadius: 999 },
   pass: { ...leaf('md'), overflow: 'hidden' },
-  passLift: {
-    shadowColor: '#000',
-    shadowOpacity: 0.22,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
-  },
   lines: {
     position: 'absolute',
     right: -24,

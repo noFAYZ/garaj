@@ -2,22 +2,26 @@ import { Ionicons } from '@expo/vector-icons';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type TextInputInstance,
+  type TextInputProps,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   DISTANCE_UNITS,
   VEHICLE_TYPES,
   isKnownCurrency,
+  specFieldMap,
   supports,
   validateSpecs,
   type DistanceUnit,
@@ -37,7 +41,6 @@ import {
   asVin,
   digitsOnly,
   domainForMake,
-  dropExtra,
   extraChips,
   splitDraft,
   typeForMake,
@@ -45,7 +48,6 @@ import {
   type VehicleExtras,
 } from '@vehicle-os/ui';
 import { newId } from '@vehicle-os/utils';
-import { Fact, Line, Rail } from '@/components/add-kit';
 import { BrandLogo } from '@/components/brand-logo';
 import { api } from '@/lib/api';
 import { useDiscardGuard } from '@/lib/discard';
@@ -58,10 +60,10 @@ import {
   type PickedFile,
 } from '@/lib/file-picker';
 import { humanise, toMinorUnits } from '@/lib/format';
-import { Eyebrow, Glyph, Panel, PanelCell, Segmented } from '@/lib/instrument';
-import { haptic, Odometer, Pop, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { Glyph } from '@/lib/instrument';
+import { ease, Pop, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
-import { figure, lift, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
+import { figure, radius, rimmed, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 import { RoundKey } from '@/components/onboarding-kit';
 import { useOwnPlanGoverns, usePlan } from '@/lib/upgrade';
@@ -74,7 +76,8 @@ const TYPE_GLYPH: Record<VehicleType, string> = {
   BICYCLE: '🚲',
   BOAT: '🚤',
   ATV: '🏁',
-  TRAILER: '🛻',
+  // A hitch, not 🛻: that one is a pickup truck, and a pickup is a car.
+  TRAILER: '🔗',
   VAN: '🚐',
   RV: '🚌',
   OTHER: '🔧',
@@ -83,8 +86,63 @@ const TYPE_GLYPH: Record<VehicleType, string> = {
 /** `humanise` turns every enum into a word, which prints the acronyms as "Atv" and "Rv". */
 const typeLabel = (type: VehicleType) => (type === 'ATV' || type === 'RV' ? type : humanise(type));
 
-/** A plate is a physical thing: the same cream and ink whichever theme the phone is in. */
-const PLATE = { ground: '#F3EFE6', ink: '#17130E', hint: 'rgba(23,19,14,0.28)' } as const;
+/** A chosen spec as it reads: the short codes (AWD, CVT, 4WD) as they are, the rest as words. */
+const optionWord = (value: string) => (/^[A-Z0-9]{2,4}$/.test(value) ? value : humanise(value));
+
+type IoniconName = keyof typeof Ionicons.glyphMap;
+
+/** What each found fact wears: the extras by name, the specs by key. Anything new gets ⓘ. */
+const FACT_ICON: Readonly<Record<string, IoniconName>> = {
+  vin: 'barcode-outline',
+  variant: 'pricetag-outline',
+  color: 'color-palette-outline',
+  purchase: 'receipt-outline',
+  engineHours: 'time-outline',
+  engineCode: 'code-slash-outline',
+  displacementCc: 'cog-outline',
+  powerHp: 'flash-outline',
+  cylinders: 'grid-outline',
+  oilType: 'water-outline',
+  oilCapacityL: 'water-outline',
+  fuelType: 'flame-outline',
+  tankCapacityL: 'beaker-outline',
+  batteryCapacityKwh: 'battery-charging-outline',
+  rangeKm: 'navigate-outline',
+  chargePortType: 'flash-outline',
+  batteryType: 'battery-full-outline',
+  batteryVoltage: 'flash-outline',
+  transmissionType: 'git-branch-outline',
+  gears: 'layers-outline',
+  drivetrain: 'sync-outline',
+  registrationCountry: 'flag-outline',
+  insurancePolicyNumber: 'shield-checkmark-outline',
+  frontTireSize: 'ellipse-outline',
+  rearTireSize: 'ellipse-outline',
+  tirePressureFront: 'speedometer-outline',
+  tirePressureRear: 'speedometer-outline',
+  chainSize: 'link-outline',
+  frontSprocket: 'link-outline',
+  rearSprocket: 'link-outline',
+  groupset: 'settings-outline',
+  hullType: 'boat-outline',
+  hullMaterial: 'boat-outline',
+  lengthM: 'resize-outline',
+  beamM: 'resize-outline',
+  draftM: 'resize-outline',
+  marina: 'location-outline',
+  berth: 'location-outline',
+  trailerMake: 'cube-outline',
+  trailerCapacityKg: 'cube-outline',
+};
+
+/** One fact found for the vehicle. */
+interface Found {
+  readonly key: string;
+  readonly icon: IoniconName;
+  readonly label: string;
+  readonly value: string;
+  readonly mono?: boolean;
+}
 
 const MAX_ODOMETER = 100_000_000;
 /** Enough to show it from every side; more is a gallery job for the vehicle's own page. */
@@ -98,14 +156,16 @@ const EMPTY: VehicleAnswers = { name: '', make: '', model: '', year: '', plate: 
 /**
  * A new vehicle: five questions, or one sentence — the web's dialog, on a screen.
  *
- * Top to bottom, as on the web: the vehicle itself — its photo badge, its name typed onto the card,
- * what it is and which garage it goes into — then one line, then the five answers as one panel:
- * make, model and year, the registration typed onto a plate, the reading rolled onto the
- * odometer's own drums. The type follows the make (a Ducati is a motorcycle) until it is chosen.
+ * One screen's height, no scrolling, on a small phone (360×640): Log it's head (the garage it goes
+ * into under the title), the vehicle as a card (its face, the maker's mark filling it, and its
+ * name), what it is, then the questions as the sign-in form's panel — the line, make, model and
+ * year, the plate beside the reading and its unit — and Log it's foot: the photo's key and the one
+ * action. The type follows the make (a Ducati is a motorcycle) until it is chosen.
  *
  * The line takes a description and reads it into the panel, or a VIN and decodes it. What either
- * finds that the panel has no question for — the VIN, the colour, the price paid, the factory specs
- * — goes with the vehicle as chips that can be dropped; everything else is on the vehicle's page.
+ * finds that the panel has no question for — the VIN, the trim, the colour, the price paid, every
+ * factory spec — goes with the vehicle, folded under the panel until opened, each fact with its
+ * icon; "Leave these out" drops it. Everything else is on the vehicle's page.
  *
  * The unit is asked, not assumed: a vehicle recorded in the wrong one is wrong at the one moment
  * the answer is unrecoverable, and every figure derived from it afterwards is out by 1.6.
@@ -120,7 +180,7 @@ export default function AddVehicleScreen() {
   const params = useLocalSearchParams<FileParams & { garageId?: string; then?: string }>();
   const [arrived] = useState(() => fromParams(params));
   const [photos, setPhotos] = useState<PickedFile[]>(() => (arrived ? [arrived] : []));
-  const [sheet, setSheet] = useState<'photos' | 'garage' | null>(null);
+  const [sheet, setSheet] = useState<'photos' | 'garage' | 'type' | null>(null);
   const [photoBusy, setPhotoBusy] = useState<'camera' | 'library' | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const cover = photos[0] ?? null;
@@ -132,7 +192,7 @@ export default function AddVehicleScreen() {
   const [answers, setAnswers] = useState<VehicleAnswers>(EMPTY);
   const [chosenType, setChosenType] = useState<VehicleType | null>(null);
   const [extras, setExtras] = useState<VehicleExtras>({});
-  // What the line or a VIN filled, and no hand has touched since: marked ✦ until it is.
+  // What the line or a VIN filled, and no hand has touched since: a copper dot until it is.
   const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
   const [line, setLine] = useState('');
   const [filled, setFilled] = useState<{
@@ -141,6 +201,10 @@ export default function AddVehicleScreen() {
     decoded?: boolean;
   } | null>(null);
   const [makeFocused, setMakeFocused] = useState(false);
+  const nameField = useRef<TextInputInstance>(null);
+  const [naming, setNaming] = useState(false);
+  const lineField = useRef<TextInputInstance>(null);
+  const [lineFocused, setLineFocused] = useState(false);
   // The unit chosen on You, until this vehicle is told otherwise.
   const profile = useProfile();
   const [chosenUnit, setChosenUnit] = useState<DistanceUnit | null>(null);
@@ -176,7 +240,15 @@ export default function AddVehicleScreen() {
       return next;
     });
   };
-  const mark = (label: string, key: string) => (marked.has(key) ? `${label} ✦` : label);
+  // Chosen by a hand: the dot a make or the line put on it goes.
+  const chooseType = (type: VehicleType) => {
+    setChosenType(type);
+    setMarked((now) => {
+      const next = new Set(now);
+      next.delete('type');
+      return next;
+    });
+  };
 
   const lookUp = useMutation({
     mutationFn: (vehicle: LookUpVehicle) => api.ai.lookUpVehicle(vehicle),
@@ -212,7 +284,6 @@ export default function AddVehicleScreen() {
     },
     meta: { toast: false },
     onSuccess: (outcome) => {
-      haptic.success();
       if (outcome.from === 'vin') return applyVin(outcome.result);
       const { answers: said, type, unit: saidUnit, extras: found } = splitDraft(outcome.draft);
       // The line is the person's own words, so what it says replaces what was there.
@@ -356,7 +427,6 @@ export default function AddVehicleScreen() {
         queryClient.setQueryData(queryKeys.plan(), vehicle.plan);
         return;
       }
-      haptic.success();
       void queryClient.invalidateQueries({ queryKey: queryKeys.vehicles() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
       // Straight into it: the next thing anyone does is record something against it — unless a
@@ -371,8 +441,6 @@ export default function AddVehicleScreen() {
   const derived = [answers.year, answers.make.trim(), answers.model.trim()]
     .filter(Boolean)
     .join(' ');
-  // The maker's mark once the make is one the logo list knows; the kind of vehicle until then.
-  const branded = !cover && domainForMake(answers.make.trim()) !== null;
   const canRead = vin !== null || line.trim().length >= 3 || cover !== null;
   const chips = extraChips(extras);
   // The makes that start with what is typed, while it is typed: the web's list, as a rail.
@@ -392,7 +460,6 @@ export default function AddVehicleScreen() {
     try {
       const picked = await pickPhotos(source, MAX_PHOTOS - photos.length);
       if (picked.length) {
-        haptic.success();
         setPhotos((current) => [...current, ...picked].slice(0, MAX_PHOTOS));
       }
     } catch (error) {
@@ -409,21 +476,64 @@ export default function AddVehicleScreen() {
     (create.isError ? (create.error as Error).message : undefined);
   const lineSaid = read.isPending
     ? vin
-      ? 'Decoding the VIN…'
+      ? 'Decoding…'
       : 'Reading…'
     : read.isError
       ? read.error instanceof ApiError && read.error.status === 503
-        ? 'GarajjAI is not on here. Paste a VIN, or fill it in below.'
-        : 'Could not read that just now — it needs signal. Fill it in below.'
+        ? 'GarajjAI is off here. Fill it in yourself.'
+        : 'Needs signal. Fill it in yourself.'
       : filled
         ? filled.from === 'vin' && !filled.decoded
-          ? 'Not in the VIN database — usually a VIN from outside the US. Kept with it.'
+          ? 'Not in the VIN database. Kept with it.'
           : filled.count === 0
-            ? filled.from === 'vin'
-              ? 'Decoded; the answers already there were kept.'
-              : 'Nothing to fill from that. Try a make, model and year.'
-            : `✦ ${filled.count} ${filled.from === 'vin' ? 'from the VIN' : 'read'} — check before adding`
+            ? 'Nothing new to fill.'
+            : null
         : null;
+
+  /*
+   * What a VIN, a description or a look-up found that the answers have no question for. A spec this
+   * type has no field for is left off: the save drops it too (`validateSpecs`), so the list shows
+   * only what is kept.
+   */
+  const specFields = specFieldMap(vehicleType);
+  const found: Found[] = [];
+  const fact = (key: string, label: string, value: string, mono = false) =>
+    found.push({ key, icon: FACT_ICON[key] ?? 'information-circle-outline', label, value, mono });
+  if (extras.vin) fact('vin', 'VIN', extras.vin, true);
+  if (extras.variant) fact('variant', 'Trim', extras.variant);
+  if (extras.color) fact('color', 'Color', extras.color);
+  for (const chip of chips) {
+    if (chip.key === 'purchase') fact('purchase', 'Bought', chip.label.replace(/^Bought /, ''));
+    if (chip.key === 'engineHours') fact('engineHours', 'Engine hours', chip.label, true);
+  }
+  for (const [key, value] of Object.entries(extras.specs ?? {})) {
+    const field = specFields.get(key);
+    if (!field) continue;
+    const said =
+      field.kind === 'select'
+        ? optionWord(String(value))
+        : typeof value === 'number'
+          ? value.toLocaleString()
+          : String(value);
+    fact(
+      key,
+      field.label,
+      field.unit ? `${said} ${field.unit}` : said,
+      field.kind === 'number' || field.kind === 'integer',
+    );
+  }
+  // Under the VIN: what is under way or went wrong. What it filled wears the dot.
+  const status = [lineSaid, lookUp.isPending ? 'Looking up its specs…' : null]
+    .filter(Boolean)
+    .join(' · ');
+  const model = answers.model.trim();
+  const action = `Add ${
+    vehicleType === 'OTHER'
+      ? 'vehicle'
+      : vehicleType === 'ATV' || vehicleType === 'RV'
+        ? vehicleType
+        : humanise(vehicleType).toLowerCase()
+  }${model ? ` · ${model}` : ''}`;
 
   /*
    * Every way into this screen — the add sheet, a photo's destination list, a deep link — ends
@@ -449,289 +559,303 @@ export default function AddVehicleScreen() {
   }, [wall, router]);
   if (wall) return <View style={{ flex: 1, backgroundColor: 'transparent' }} />;
 
+  // Where it parks: a choice when there is more than one garage, a word when not.
+  const garageLine = (
+    <>
+      {list.length > 1 ? (
+        <PressableScale
+          onPress={() => {
+            setSheet('garage');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={garage ? `Garage: ${garage.name}. Change` : 'Choose a garage'}
+          hitSlop={8}
+          scaleTo={0.96}
+          style={styles.parks}
+        >
+          <Ionicons
+            name="home-outline"
+            size={12}
+            color={garage ? theme.mutedForeground : theme.primary}
+          />
+          <Text
+            numberOfLines={1}
+            style={[
+              typeScale.caption,
+              {
+                flexShrink: 1,
+                color: garage ? theme.mutedForeground : theme.primary,
+                fontWeight: garage ? '400' : '600',
+              },
+            ]}
+          >
+            {garage?.name ?? 'Choose a garage'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={garage ? theme.mutedForeground : theme.primary}
+          />
+        </PressableScale>
+      ) : garage ? (
+        <View style={styles.parks}>
+          <Ionicons name="home-outline" size={12} color={theme.mutedForeground} />
+          <Text
+            numberOfLines={1}
+            style={[typeScale.caption, { flexShrink: 1, color: theme.mutedForeground }]}
+          >
+            {garage.name}
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ flex: 1, backgroundColor: 'transparent' }}
     >
-      {/* No navigator bar: the page's own, as Settings and the setup draw it. */}
+      {/* No navigator bar: the page's own. */}
       <Stack.Screen options={{ headerShown: false }} />
+
+      {/* The head: the key out, what this is and where it parks; what it is, at the right. */}
+      <View style={[styles.bar, { paddingTop: insets.top + spacing.sm }]}>
+        <RoundKey icon="close" label="Close" onPress={() => router.back()} />
+        <View style={styles.heading}>
+          <Text
+            accessibilityRole="header"
+            numberOfLines={1}
+            style={[styles.title, { color: theme.foreground }]}
+          >
+            Add vehicle
+          </Text>
+          {garageLine}
+        </View>
+        <PressableScale
+          onPress={() => {
+            setSheet('type');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`What it is: ${typeLabel(vehicleType)}${
+            marked.has('type') ? ', filled for you' : ''
+          }. Change`}
+          hitSlop={6}
+          scaleTo={0.95}
+          style={[
+            styles.typePick,
+            { backgroundColor: theme.cardRaised, borderColor: theme.hairline },
+          ]}
+        >
+          <Glyph size={18}>{TYPE_GLYPH[vehicleType]}</Glyph>
+          <Text numberOfLines={1} style={[typeScale.label, { color: theme.foreground }]}>
+            {typeLabel(vehicleType)}
+          </Text>
+          {marked.has('type') ? <AutoDot /> : null}
+          <Ionicons name="chevron-down" size={14} color={theme.mutedForeground} />
+        </PressableScale>
+      </View>
+
       <ScrollView
-        contentContainerStyle={[styles.page, { paddingTop: insets.top + spacing.sm }]}
+        contentContainerStyle={styles.stage}
         keyboardShouldPersistTaps="handled"
         alwaysBounceVertical={false}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.top}>
-          <RoundKey icon="close" label="Close" onPress={() => router.back()} />
-          <Text accessibilityRole="header" style={[styles.title, { color: theme.foreground }]}>
-            Add a vehicle
-          </Text>
-        </View>
-        {/* The vehicle itself: its badge, its name, what it is and where it goes. */}
-        <Rise>
-          <View
-            style={[
-              styles.card,
-              { backgroundColor: theme.cardRaised },
-              rimmed(theme),
-              lift(theme, 'low'),
-            ]}
+        {/*
+         * Who it is: its face as an icon in the middle of the screen, the name under it. The face
+         * is whatever is known best (a photo, the maker's mark, what kind of vehicle) and changes
+         * as the answers come in; the name is the year, make and model until it is given one.
+         */}
+        <Rise style={styles.who}>
+          <Medallion
+            cover={cover}
+            make={answers.make.trim()}
+            glyph={TYPE_GLYPH[vehicleType]}
+            busy={read.isPending || lookUp.isPending}
+            count={photos.length}
+            onPress={() => {
+              setSheet('photos');
+            }}
+          />
+          <Pressable
+            onPress={() => nameField.current?.focus()}
+            accessible={false}
+            style={styles.naming}
           >
-            {/* The badge is where photos are added: a press opens them. */}
-            <PressableScale
-              onPress={() => {
-                haptic.selection();
-                setSheet('photos');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={
-                photos.length
-                  ? `${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}, change`
-                  : 'Add photos'
-              }
-              scaleTo={0.92}
-            >
-              {/* Keyed by what it shows, so a change of face pops in rather than swapping. */}
-              <Pop
-                key={
-                  cover
-                    ? cover.uri
-                    : branded
-                      ? `make:${answers.make.trim().toLowerCase()}`
-                      : vehicleType
-                }
-                style={[styles.badge, { backgroundColor: theme.muted }]}
-              >
-                {cover ? (
-                  <Image
-                    source={{ uri: cover.uri }}
-                    style={StyleSheet.absoluteFill}
-                    contentFit="cover"
-                    accessibilityIgnoresInvertColors
-                  />
-                ) : branded ? (
-                  <BrandLogo make={answers.make.trim()} size={42} />
-                ) : (
-                  <Glyph size={34}>{TYPE_GLYPH[vehicleType]}</Glyph>
-                )}
-              </Pop>
-              <View
-                style={[
-                  styles.badgeTag,
-                  { backgroundColor: theme.foreground, borderColor: theme.cardRaised },
-                ]}
-              >
-                {photos.length > 1 ? (
-                  <Text style={[figure, styles.badgeCount, { color: theme.background }]}>
-                    {photos.length}
-                  </Text>
-                ) : (
-                  <Ionicons
-                    name={photos.length ? 'images' : 'camera'}
-                    size={12}
-                    color={theme.background}
-                  />
-                )}
-              </View>
-            </PressableScale>
-
-            <View style={{ flex: 1, minWidth: 0, gap: spacing.sm }}>
-              {/*
-               * Its name, typed onto the card. Left empty it is called by its year, make and
-               * model — which is what the empty field shows, so the default is never a surprise.
-               */}
+            <View style={styles.nameField}>
+              {/* Sizes the field to its words; never seen. */}
+              <Text numberOfLines={1} style={[styles.name, styles.nameSizer]}>
+                {answers.name || derived || 'New vehicle'}
+              </Text>
               <TextInput
+                ref={nameField}
                 value={answers.name}
                 onChangeText={(text) => set('name', text)}
+                onFocus={() => setNaming(true)}
+                onBlur={() => setNaming(false)}
                 placeholder={derived || 'New vehicle'}
                 placeholderTextColor={derived ? theme.mutedForeground : theme.placeholder}
                 maxLength={120}
                 autoCorrect={false}
+                returnKeyType="done"
                 accessibilityLabel="Name"
                 accessibilityHint="Optional. Without one it is called by its year, make and model."
-                style={[typeScale.display, styles.name, { color: theme.foreground }]}
+                style={[styles.name, styles.nameInput, { color: theme.foreground }]}
               />
-              {/* Where it parks: a choice when there is more than one garage, a word when not. */}
-              {list.length > 1 ? (
-                <View style={styles.chips}>
-                  <Fact
-                    icon="home-outline"
-                    label={garage?.name ?? 'Which garage?'}
-                    selected={!garage}
-                    onPress={() => setSheet('garage')}
-                  />
-                </View>
-              ) : garage ? (
-                <View style={styles.parks}>
-                  <Ionicons name="home-outline" size={12} color={theme.mutedForeground} />
-                  <Text
-                    numberOfLines={1}
-                    style={[typeScale.caption, { flex: 1, color: theme.mutedForeground }]}
-                  >
-                    {garage.name}
-                  </Text>
-                </View>
-              ) : null}
             </View>
-          </View>
+            <Ionicons
+              name="pencil"
+              size={14}
+              color={naming ? theme.primary : theme.mutedForeground}
+            />
+          </Pressable>
         </Rise>
 
-        {/*
-         * What it is, in the open rather than behind a chip: the first thing decided, and the
-         * badge above changes with it. A make or the line below may pick it — marked ✦.
-         */}
-        <Rise index={1}>
-          <Rail
-            label="What is it"
-            inset={spacing.md}
-            items={VEHICLE_TYPES.map((type) => ({
-              key: type,
-              label: typeLabel(type),
-              glyph: TYPE_GLYPH[type],
-              selected: type === vehicleType,
-              marked: type === vehicleType && marked.has('type'),
-              onPress: () => {
-                setChosenType(type);
-                setMarked((now) => {
-                  const next = new Set(now);
-                  next.delete('type');
-                  return next;
-                });
-              },
-            }))}
-          />
-        </Rise>
-
-        {/* The line: a description to read, or a VIN to decode — the button says which. */}
-        <Rise index={2} style={{ gap: 6 }}>
-          <Line
-            value={line}
-            onChangeText={(text) => {
-              setLine(text);
-              if (read.isError) read.reset();
-            }}
-            lit={filled !== null}
-            placeholder="2019 911 Carrera S, 42k km — or the VIN"
-            accessibilityLabel="Describe the vehicle, or paste its VIN"
-            autoCapitalize="none"
-            returnKeyType={vin ? 'search' : 'done'}
-            onSubmitEditing={() => canRead && !read.isPending && read.mutate()}
+        {/* The VIN on its own: decoding it can fill everything under it. */}
+        <Rise index={1} style={styles.vinBlock}>
+          <Cell
+            label="VIN"
+            focused={lineFocused}
+            onPress={() => lineField.current?.focus()}
             trailing={
               canRead ? (
                 <Button
                   label={vin ? 'Decode' : 'Fill'}
+                  icon={vin ? 'barcode-outline' : 'color-wand-outline'}
                   variant="primary"
                   size="sm"
+                  pill
                   loading={read.isPending}
                   onPress={() => read.mutate()}
                 />
               ) : null
             }
-          />
-          {lineSaid || lookUp.isPending ? (
+          >
+            <TextInput
+              ref={lineField}
+              value={line}
+              onChangeText={(text) => {
+                setLine(text);
+                if (read.isError) read.reset();
+              }}
+              onFocus={() => setLineFocused(true)}
+              onBlur={() => setLineFocused(false)}
+              placeholder="Paste it, or describe the vehicle"
+              placeholderTextColor={theme.placeholder}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={200}
+              returnKeyType={vin ? 'search' : 'done'}
+              onSubmitEditing={() => canRead && !read.isPending && read.mutate()}
+              accessibilityLabel="VIN, or a description of the vehicle"
+              style={[
+                typeScale.headline,
+                vin ? figure : null,
+                styles.cellInput,
+                { color: theme.foreground },
+              ]}
+            />
+          </Cell>
+          {status ? (
             <Text
               accessibilityLiveRegion="polite"
+              numberOfLines={1}
               style={[
                 typeScale.caption,
-                styles.said,
+                styles.note,
                 { color: read.isError ? theme.destructive : theme.mutedForeground },
               ]}
             >
-              {[lineSaid, lookUp.isPending ? 'Looking up its specs…' : null]
-                .filter(Boolean)
-                .join(' · ')}
+              {status}
             </Text>
-          ) : null}
-          {chips.length ? (
-            <View style={styles.chips}>
-              {chips.map((chip) => (
-                <Fact
-                  key={chip.key}
-                  icon={chip.key === 'specs' ? 'globe-outline' : 'sparkles-outline'}
-                  label={chip.label}
-                  onRemove={() => setExtras((now) => dropExtra(now, chip.key))}
-                />
-              ))}
-            </View>
           ) : null}
         </Rise>
 
-        {/* The five answers, as one panel: what it is, then the plate and the reading on it. */}
-        <Rise index={3}>
-          <Panel>
-            {/* Paired by width: make and model, then the four-digit year beside the plate. */}
-            <View style={styles.row}>
-              <TextCell
-                label={mark('Make', 'make')}
-                value={answers.make}
-                onChangeText={(text) => set('make', text)}
-                onFocus={() => setMakeFocused(true)}
-                onBlur={() => setMakeFocused(false)}
-                placeholder="Mazda"
-                autoCapitalize="words"
-                grow={1.1}
-              />
-              <TextCell
-                label={mark('Model', 'model')}
-                value={answers.model}
-                onChangeText={(text) => set('model', text)}
-                placeholder="MX-5"
-                grow={1}
-              />
-            </View>
-            <View style={styles.row}>
-              <TextCell
-                label={mark('Year', 'year')}
-                value={answers.year}
-                onChangeText={(text) => set('year', digitsOnly(text, 4))}
-                placeholder={String(NEXT_YEAR - 1)}
-                keyboardType="number-pad"
-                mono
-                grow={0.7}
-              />
-              {/* The registration, typed onto the plate itself. */}
-              <View style={{ flex: 1.7, minWidth: 0 }}>
-                <PanelCell label={mark('Plate', 'plate')}>
-                  <View style={styles.plate}>
-                    <View style={[styles.plateBand, { backgroundColor: PLATE.ink }]}>
-                      <Ionicons name="flag" size={10} color={PLATE.ground} />
-                    </View>
-                    <TextInput
-                      value={answers.plate}
-                      onChangeText={(text) => set('plate', text.toUpperCase())}
-                      placeholder="AB12 CDE"
-                      placeholderTextColor={PLATE.hint}
-                      autoCapitalize="characters"
-                      autoCorrect={false}
-                      maxLength={12}
-                      accessibilityLabel="Number plate"
-                      style={[figure, styles.plateInput]}
-                    />
+        {/*
+         * The answers, each a field of its own: make, model and year, then the plate and the reading.
+         * A copper dot beside a label: filled for you, not yet touched.
+         */}
+        <Rise index={2} style={styles.fields}>
+          <View style={styles.row}>
+            <TextCell
+              label="Make"
+              auto={marked.has('make')}
+              grow={1.3}
+              lead={
+                domainForMake(answers.make.trim()) ? (
+                  <View style={styles.makeMark}>
+                    <BrandLogo make={answers.make.trim()} size={18} />
                   </View>
-                </PanelCell>
-              </View>
-            </View>
-
+                ) : null
+              }
+              value={answers.make}
+              onChangeText={(text) => set('make', text)}
+              onFocus={() => setMakeFocused(true)}
+              onBlur={() => setMakeFocused(false)}
+              placeholder="Mazda"
+              autoCapitalize="words"
+            />
+            <TextCell
+              label="Model"
+              auto={marked.has('model')}
+              grow={1.15}
+              value={answers.model}
+              onChangeText={(text) => set('model', text)}
+              placeholder="MX-5"
+            />
+            <TextCell
+              label="Year"
+              auto={marked.has('year')}
+              grow={0.85}
+              invalid={yearOff}
+              value={answers.year}
+              onChangeText={(text) => set('year', digitsOnly(text, 4))}
+              placeholder={String(NEXT_YEAR - 1)}
+              keyboardType="number-pad"
+              mono={answers.year !== ''}
+            />
+          </View>
+          <View style={styles.row}>
+            <TextCell
+              label="Plate"
+              auto={marked.has('plate')}
+              grow={1}
+              value={answers.plate}
+              onChangeText={(text) => set('plate', text.toUpperCase())}
+              placeholder="AB12 CDE"
+              autoCapitalize="characters"
+              maxLength={12}
+              mono={answers.plate !== ''}
+              plate
+            />
             <OdometerCell
-              label={mark('Odometer', 'odometer')}
+              label="Odometer"
+              auto={marked.has('odometer')}
               value={answers.odometer}
               onChange={(text) => set('odometer', text)}
+              invalid={Boolean(odometerError)}
               unit={unit}
               onUnit={setChosenUnit}
             />
-          </Panel>
+          </View>
         </Rise>
+
+        {found.length ? (
+          <Rise index={3}>
+            <FoundFacts
+              title={filled?.from === 'vin' ? 'Decoded from the VIN' : 'Found for you'}
+              icon={filled?.from === 'vin' ? 'barcode-outline' : 'document-text-outline'}
+              facts={found}
+              onClear={() => setExtras({})}
+            />
+          </Rise>
+        ) : null}
       </ScrollView>
 
       {/* Pinned: the one way forward is always on screen, keyboard or not. */}
       <View
-        style={[
-          styles.footer,
-          {
-            paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xs,
-          },
-        ]}
+        style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xs }]}
       >
         {/* The makes that start with what is typed, over the keyboard where the thumb is. */}
         {suggestions.length ? (
@@ -746,13 +870,15 @@ export default function AddVehicleScreen() {
               <PressableScale
                 key={option.name}
                 onPress={() => {
-                  haptic.selection();
                   set('make', option.name);
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={option.name}
                 scaleTo={0.94}
-                style={[styles.suggestion, { backgroundColor: theme.muted }]}
+                style={[
+                  styles.suggestion,
+                  { backgroundColor: theme.cardRaised, borderColor: theme.hairline },
+                ]}
               >
                 <BrandLogo make={option.name} size={18} />
                 <Text style={[typeScale.label, { color: theme.foreground }]}>{option.name}</Text>
@@ -764,16 +890,18 @@ export default function AddVehicleScreen() {
           <Text
             accessibilityRole="alert"
             numberOfLines={2}
-            style={[typeScale.caption, { color: theme.destructive }]}
+            style={[typeScale.caption, styles.centred, { color: theme.destructive }]}
           >
             {problem}
           </Text>
         ) : null}
-        {/* The button reads the type back: what the make or the line decided is the last look. */}
+        {/* The button reads back what is being added: the type, and the model once there is one. */}
         <Button
-          label={`Add ${vehicleType === 'OTHER' ? 'vehicle' : typeLabel(vehicleType).toLowerCase()}`}
-          variant="primary"
+          label={action}
           icon="add"
+          variant="primary"
+          size="lg"
+          pill
           loading={create.isPending}
           busyLabel={checking ? 'Checking your plan…' : 'Adding…'}
           disabled={!chosenGarage || yearOff || Boolean(odometerError)}
@@ -818,7 +946,6 @@ export default function AddVehicleScreen() {
                   key={shot.uri}
                   onPress={() => {
                     if (index === 0) return;
-                    haptic.selection();
                     setPhotos((current) => [shot, ...current.filter((other) => other !== shot)]);
                   }}
                   accessibilityRole="button"
@@ -839,19 +966,13 @@ export default function AddVehicleScreen() {
                   />
                   {index === 0 ? (
                     <View style={[styles.coverTag, { backgroundColor: theme.primary }]}>
-                      <Text
-                        style={[
-                          typeScale.caption,
-                          { fontSize: 10, fontWeight: '700', color: theme.primaryForeground },
-                        ]}
-                      >
+                      <Text style={[styles.coverWord, { color: theme.primaryForeground }]}>
                         COVER
                       </Text>
                     </View>
                   ) : null}
                   <PressableScale
                     onPress={() => {
-                      haptic.selection();
                       setPhotos((current) => current.filter((other) => other !== shot));
                     }}
                     accessibilityRole="button"
@@ -891,221 +1012,657 @@ export default function AddVehicleScreen() {
           onClose={() => setSheet(null)}
         />
       ) : null}
+
+      {sheet === 'type' ? (
+        <MenuSheet title="What is it" onClose={() => setSheet(null)}>
+          <View style={styles.typeGrid}>
+            {VEHICLE_TYPES.map((type) => {
+              const on = type === vehicleType;
+              return (
+                <PressableScale
+                  key={type}
+                  onPress={() => {
+                    chooseType(type);
+                    setSheet(null);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={typeLabel(type)}
+                  scaleTo={0.95}
+                  style={[
+                    styles.typeTile,
+                    on
+                      ? { backgroundColor: theme.primarySoft, borderColor: theme.primary }
+                      : { backgroundColor: theme.muted, borderColor: 'transparent' },
+                  ]}
+                >
+                  <Glyph size={26}>{TYPE_GLYPH[type]}</Glyph>
+                  <Text numberOfLines={1} style={[typeScale.label, { color: theme.foreground }]}>
+                    {typeLabel(type)}
+                  </Text>
+                </PressableScale>
+              );
+            })}
+          </View>
+        </MenuSheet>
+      ) : null}
     </KeyboardAvoidingView>
   );
 }
 
+/** The face's size, and the rings it sits in. */
+const FACE = 72;
+const RING_IN = 94;
+const RING_OUT = 116;
+
 /**
- * The odometer, as a cell that looks like one: the reading on the drums it will be shown on, lit
- * copper with a blinking caret while it is typed into, and km or mi beside it. Empty, it says so in
- * words — six zeros would read as a reading of zero, and zero is a reading.
- *
- * The keyboard's field is invisible over the drums, so a press anywhere on them is a press on the
- * field and every digit typed rolls into place.
+ * The vehicle's face, as an app icon in the middle of the head: its cover photo, else the maker's
+ * mark filling the tile, else what kind of vehicle it is. It sits in two quiet rings, and while a
+ * VIN or a description is being read a copper ring breathes out of it: the one moment the screen
+ * is working for the person. Its key is the camera; pressed, the photos.
  */
-function OdometerCell({
-  label,
-  value,
-  onChange,
-  unit,
-  onUnit,
+function Medallion({
+  cover,
+  make,
+  glyph,
+  busy,
+  count,
+  onPress,
 }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  unit: DistanceUnit;
-  onUnit: (unit: DistanceUnit) => void;
+  cover: PickedFile | null;
+  make: string;
+  glyph: string;
+  busy: boolean;
+  count: number;
+  onPress: () => void;
 }) {
   const theme = useTheme();
-  const [focused, setFocused] = useState(false);
-  const reading = value ? Number(value) : null;
+  const reduce = useReduceMotion();
+  const [pulse] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (!busy || reduce) {
+      pulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 1300,
+        easing: ease.out,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [busy, reduce, pulse]);
+  const branded = !cover && domainForMake(make) !== null;
+  const ring = (size: number) => ({
+    width: size,
+    height: size,
+    top: (FACE - size) / 2,
+    left: (FACE - size) / 2,
+    borderRadius: size * 0.3,
+  });
 
   return (
-    <View style={[styles.odometer, { backgroundColor: theme.cardRaised }]}>
-      <View style={styles.odometerDisplay}>
-        <Eyebrow style={focused ? { color: theme.primary } : undefined}>
-          {label}
-          {reading === null && !focused ? ' · optional' : ''}
-        </Eyebrow>
-        <View style={styles.odometerDigits}>
-          {reading === null && !focused ? (
-            <Text style={[typeScale.headline, { color: theme.placeholder }]}>
-              Tap to enter the reading
-            </Text>
+    <View style={styles.face}>
+      <View
+        pointerEvents="none"
+        style={[styles.ring, ring(RING_OUT), { borderColor: theme.hairline }]}
+      />
+      <View
+        pointerEvents="none"
+        style={[styles.ring, ring(RING_IN), { borderColor: theme.borderStrong, opacity: 0.45 }]}
+      />
+      {busy && !reduce ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.ring,
+            ring(RING_IN),
+            {
+              borderWidth: 2,
+              borderColor: theme.primary,
+              opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.9, 0] }),
+              transform: [
+                { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.35] }) },
+              ],
+            },
+          ]}
+        />
+      ) : null}
+      <PressableScale
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={
+          count ? `${count} ${count === 1 ? 'photo' : 'photos'}, change` : 'Add photos'
+        }
+        scaleTo={0.94}
+        style={[
+          styles.faceTile,
+          { backgroundColor: branded || cover ? '#ffffff' : theme.cardRaised },
+          rimmed(theme),
+        ]}
+      >
+        {/* Keyed by what it shows, so a change of face pops in rather than swapping. */}
+        <Pop
+          key={cover ? cover.uri : branded ? `make:${make.toLowerCase()}` : glyph}
+          style={styles.faceClip}
+        >
+          {cover ? (
+            <Image
+              source={{ uri: cover.uri }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              accessibilityIgnoresInvertColors
+            />
+          ) : branded ? (
+            <BrandLogo make={make} size={FACE} />
           ) : (
-            <>
-              <Odometer value={reading ?? 0} digits={6} size={20} />
-              {focused ? <Caret /> : null}
-            </>
+            <Glyph size={34}>{glyph}</Glyph>
+          )}
+        </Pop>
+        {/* Inside the tile: Android draws an elevated tile over a sibling that comes after it. */}
+        <View
+          pointerEvents="none"
+          style={[
+            styles.faceKey,
+            { backgroundColor: theme.foreground, borderColor: theme.background },
+          ]}
+        >
+          {count > 1 ? (
+            <Text style={[figure, styles.faceCount, { color: theme.background }]}>{count}</Text>
+          ) : (
+            <Ionicons name="camera" size={13} color={theme.background} />
           )}
         </View>
-        <TextInput
-          value={value}
-          onChangeText={(text) => onChange(digitsOnly(text, 10))}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          keyboardType="number-pad"
-          caretHidden
-          contextMenuHidden
-          selectionColor="transparent"
-          underlineColorAndroid="transparent"
-          accessibilityLabel={`Odometer reading in ${unit === 'MI' ? 'miles' : 'kilometres'}`}
-          accessibilityHint="Optional. Leave it blank if you do not know it yet."
-          style={[StyleSheet.absoluteFill, { color: 'transparent' }]}
-        />
-      </View>
-      {reading !== null ? (
-        <PressableScale
-          onPress={() => {
-            haptic.selection();
-            onChange('');
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Clear the reading"
-          hitSlop={8}
-          scaleTo={0.85}
-          style={[styles.odometerClear, { backgroundColor: theme.muted }]}
-        >
-          <Ionicons name="close" size={14} color={theme.mutedForeground} />
-        </PressableScale>
-      ) : null}
-      <View style={{ width: 104 }}>
-        <Segmented
-          value={unit}
-          options={DISTANCE_UNITS.map((option) => ({
-            value: option,
-            label: option === 'MI' ? 'mi' : 'km',
-          }))}
-          onChange={onUnit}
-        />
-      </View>
+      </PressableScale>
     </View>
   );
 }
 
-/** A text caret, blinking at the system's rate; steady when motion is reduced. */
-function Caret() {
+/** Filled for you and not yet touched: a copper dot, beside a label or a note. */
+function AutoDot() {
   const theme = useTheme();
-  const reduce = useReduceMotion();
-  const [blink] = useState(() => new Animated.Value(1));
-  useEffect(() => {
-    if (reduce) return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(blink, { toValue: 0, duration: 0, delay: 530, useNativeDriver: true }),
-        Animated.timing(blink, { toValue: 1, duration: 0, delay: 530, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [blink, reduce]);
+  return <View style={[styles.autoDot, { backgroundColor: theme.primary }]} />;
+}
+
+/**
+ * A field of its own: a white card with a hairline, a small label over what is typed, a copper edge
+ * while it is typed in (red while what it holds cannot be saved), and a copper dot beside the label
+ * when it was filled for you. A press anywhere on it is a press on its field; `trailing` sits beside
+ * the words, the field's full height.
+ */
+function Cell({
+  label,
+  focused,
+  auto = false,
+  invalid = false,
+  grow,
+  onPress,
+  trailing,
+  children,
+}: {
+  label: string;
+  focused: boolean;
+  auto?: boolean;
+  invalid?: boolean;
+  /** Its share of a row; absent, a row of its own. */
+  grow?: number;
+  onPress: () => void;
+  trailing?: ReactNode;
+  children: ReactNode;
+}) {
+  const theme = useTheme();
   return (
-    <Animated.View style={[styles.caret, { backgroundColor: theme.primary, opacity: blink }]} />
+    <Pressable
+      onPress={onPress}
+      accessible={false}
+      style={[
+        styles.cell,
+        grow === undefined ? null : { flex: grow },
+        {
+          backgroundColor: theme.cardRaised,
+          borderColor: invalid ? theme.destructive : focused ? theme.primary : theme.hairline,
+        },
+      ]}
+    >
+      <View style={styles.cellBody}>
+        <View style={styles.cellLabel}>
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.label,
+              {
+                color: invalid
+                  ? theme.destructive
+                  : focused
+                    ? theme.primary
+                    : theme.mutedForeground,
+              },
+            ]}
+          >
+            {label}
+          </Text>
+          {auto ? <AutoDot /> : null}
+        </View>
+        <View style={styles.cellLine}>{children}</View>
+      </View>
+      {trailing}
+    </Pressable>
   );
 }
 
-/** A plain text answer in a panel cell, the label as its eyebrow; `grow` is its share of the row. */
+/** A word or a figure typed into a cell, with what it is ahead of it (the maker's mark). */
 function TextCell({
   label,
+  auto,
   grow,
+  invalid,
   mono = false,
+  plate = false,
+  lead,
   ...props
-}: React.ComponentProps<typeof TextInput> & { label: string; grow: number; mono?: boolean }) {
+}: TextInputProps & {
+  label: string;
+  auto?: boolean;
+  grow: number;
+  invalid?: boolean;
+  mono?: boolean;
+  /** Spaced like a plate. */
+  plate?: boolean;
+  lead?: ReactNode;
+}) {
+  const theme = useTheme();
+  const field = useRef<TextInputInstance>(null);
+  const [focused, setFocused] = useState(false);
+  return (
+    <Cell
+      label={label}
+      focused={focused}
+      auto={auto}
+      invalid={invalid}
+      grow={grow}
+      onPress={() => field.current?.focus()}
+    >
+      {lead}
+      <TextInput
+        ref={field}
+        placeholderTextColor={theme.placeholder}
+        accessibilityLabel={auto ? `${label}, filled for you` : label}
+        autoCorrect={false}
+        maxLength={120}
+        returnKeyType="done"
+        {...props}
+        onFocus={(event) => {
+          setFocused(true);
+          props.onFocus?.(event);
+        }}
+        onBlur={(event) => {
+          setFocused(false);
+          props.onBlur?.(event);
+        }}
+        style={[
+          typeScale.headline,
+          mono ? figure : null,
+          plate && mono ? styles.plateWords : null,
+          styles.cellInput,
+          { color: theme.foreground },
+        ]}
+      />
+    </Cell>
+  );
+}
+
+/** The reading, typed as a number and grouped as it is typed, with km and mi beside it. */
+function OdometerCell({
+  label,
+  auto,
+  value,
+  onChange,
+  invalid,
+  unit,
+  onUnit,
+}: {
+  label: string;
+  auto?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  invalid: boolean;
+  unit: DistanceUnit;
+  onUnit: (unit: DistanceUnit) => void;
+}) {
+  const theme = useTheme();
+  const field = useRef<TextInputInstance>(null);
+  const [focused, setFocused] = useState(false);
+  return (
+    <Cell
+      label={label}
+      focused={focused}
+      auto={auto}
+      invalid={invalid}
+      grow={1.45}
+      onPress={() => field.current?.focus()}
+      trailing={<UnitSwitch unit={unit} onUnit={onUnit} />}
+    >
+      <TextInput
+        ref={field}
+        value={value ? Number(value).toLocaleString() : ''}
+        onChangeText={(text) => onChange(digitsOnly(text, 10))}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        placeholder="0"
+        placeholderTextColor={theme.placeholder}
+        keyboardType="number-pad"
+        returnKeyType="done"
+        accessibilityLabel={`Odometer reading in ${unit === 'MI' ? 'miles' : 'kilometres'}`}
+        accessibilityHint="Optional. Leave it blank if you do not know it yet."
+        style={[
+          typeScale.headline,
+          value ? figure : null,
+          styles.cellInput,
+          { color: theme.foreground },
+        ]}
+      />
+    </Cell>
+  );
+}
+
+/** km and mi, both in view: the unit is asked, not assumed. */
+function UnitSwitch({
+  unit,
+  onUnit,
+}: {
+  unit: DistanceUnit;
+  onUnit: (unit: DistanceUnit) => void;
+}) {
   const theme = useTheme();
   return (
-    <View style={{ flex: grow, minWidth: 0 }}>
-      <PanelCell label={label}>
-        <TextInput
-          placeholderTextColor={theme.placeholder}
-          accessibilityLabel={label.replace(' ✦', '')}
-          autoCorrect={false}
-          maxLength={120}
-          style={[
-            typeScale.headline,
-            mono ? figure : null,
-            { color: theme.foreground, paddingVertical: 4, paddingHorizontal: 0 },
-          ]}
-          {...props}
+    <View style={[styles.units, { backgroundColor: theme.muted }]}>
+      {DISTANCE_UNITS.map((option) => {
+        const on = option === unit;
+        return (
+          <PressableScale
+            key={option}
+            onPress={() => {
+              onUnit(option);
+            }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: on }}
+            accessibilityLabel={option === 'MI' ? 'Miles' : 'Kilometres'}
+            hitSlop={{ top: 10, bottom: 10 }}
+            scaleTo={0.9}
+            style={[styles.unit, on ? { backgroundColor: theme.primary } : null]}
+          >
+            <Text
+              style={[
+                styles.unitWord,
+                { color: on ? theme.primaryForeground : theme.mutedForeground },
+              ]}
+            >
+              {option === 'MI' ? 'mi' : 'km'}
+            </Text>
+          </PressableScale>
+        );
+      })}
+    </View>
+  );
+}
+
+/**
+ * What was found that the questions have no question for, folded away: one row saying where it came
+ * from and the first of it, opening onto every fact — its icon, a small label, the value. All of it
+ * is saved with the vehicle; "Leave these out" drops it.
+ */
+function FoundFacts({
+  title,
+  icon,
+  facts,
+  onClear,
+}: {
+  title: string;
+  icon: IoniconName;
+  facts: readonly Found[];
+  onClear: () => void;
+}) {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  const first = facts
+    // Values that say what they are on their own: 2,999 cc, Gasoline — not a bare 6.
+    .filter((fact) => fact.key !== 'vin' && /[a-z]/i.test(fact.value))
+    .slice(0, 3)
+    .map((fact) => fact.value);
+  return (
+    <View
+      style={[styles.found, { backgroundColor: theme.cardRaised, borderColor: theme.hairline }]}
+    >
+      <PressableScale
+        onPress={() => {
+          setOpen(!open);
+        }}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`${title}: ${facts.length} details`}
+        scaleTo={0.98}
+        style={styles.foundHead}
+      >
+        <Ionicons name={icon} size={22} color={theme.primary} />
+        <View style={styles.foundWords}>
+          <Text numberOfLines={1} style={[styles.foundTitle, { color: theme.foreground }]}>
+            {title}
+          </Text>
+          <Text numberOfLines={1} style={[typeScale.caption, { color: theme.mutedForeground }]}>
+            {[`${facts.length} details`, ...first].join(' · ')}
+          </Text>
+        </View>
+        <Ionicons
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={theme.mutedForeground}
         />
-      </PanelCell>
+      </PressableScale>
+      {open ? (
+        <Rise style={[styles.foundBody, { borderTopColor: theme.hairline }]}>
+          <View style={styles.facts}>
+            {facts.map((fact) => (
+              <View
+                key={fact.key}
+                accessible
+                accessibilityLabel={`${fact.label}: ${fact.value}`}
+                // Two to a row; the VIN, seventeen characters, on one of its own.
+                style={[styles.fact, { width: fact.key === 'vin' ? '100%' : '50%' }]}
+              >
+                <Ionicons name={fact.icon} size={17} color={theme.primary} />
+                <View style={styles.factWords}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.factLabel, { color: theme.mutedForeground }]}
+                  >
+                    {fact.label}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.factValue,
+                      fact.mono ? figure : null,
+                      { color: theme.foreground },
+                    ]}
+                  >
+                    {fact.value}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+          <PressableScale
+            onPress={() => {
+              onClear();
+            }}
+            accessibilityRole="button"
+            hitSlop={8}
+            scaleTo={0.95}
+            style={styles.leaveOut}
+          >
+            <Ionicons name="close-circle-outline" size={14} color={theme.mutedForeground} />
+            <Text
+              style={[typeScale.caption, styles.leaveOutWord, { color: theme.mutedForeground }]}
+            >
+              Leave these out
+            </Text>
+          </PressableScale>
+        </Rise>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { padding: spacing.md, paddingTop: spacing.sm, gap: spacing.md },
-  card: {
+  bar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    ...leaf('lg'),
-    padding: spacing.md + 2,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
   },
-  badge: {
-    overflow: 'hidden',
-    width: 64,
-    height: 64,
-    ...leaf('sm'),
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  name: { fontSize: 22, lineHeight: 28, padding: 0, margin: 0, letterSpacing: -0.4 },
-  parks: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
-  said: { paddingHorizontal: 4 },
-  badgeTag: {
-    position: 'absolute',
-    right: -4,
-    bottom: -4,
-    minWidth: 24,
-    height: 24,
-    paddingHorizontal: 4,
-    borderRadius: 999,
-    borderWidth: 2.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeCount: { fontSize: 11, fontWeight: '700' },
-  row: { flexDirection: 'row', gap: StyleSheet.hairlineWidth },
-  plate: {
+  heading: { flex: 1, minWidth: 0, gap: 1 },
+  title: { fontSize: 18, lineHeight: 23, fontWeight: '700', letterSpacing: -0.45 },
+  parks: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' },
+  typePick: {
+    height: 38,
     flexDirection: 'row',
-    alignItems: 'stretch',
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: PLATE.ink,
-    backgroundColor: PLATE.ground,
-    overflow: 'hidden',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  plateBand: { width: 18, alignItems: 'center', justifyContent: 'center' },
-  plateInput: {
+  // What is on the screen sits in the middle of what is left of it.
+  stage: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.md + 2,
+  },
+  who: { alignItems: 'center', gap: spacing.sm + 2 },
+  // Room for the rings, which are drawn outside it.
+  face: { width: FACE, height: FACE, marginVertical: (RING_OUT - FACE) / 2 - 6 },
+  ring: { position: 'absolute', borderWidth: 1, borderCurve: 'continuous' },
+  faceTile: {
+    width: FACE,
+    height: FACE,
+    borderRadius: FACE * 0.3,
+    borderCurve: 'continuous',
+  },
+  faceClip: {
     flex: 1,
-    paddingVertical: 0,
-    paddingHorizontal: spacing.sm,
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    color: PLATE.ink,
+    borderRadius: FACE * 0.3,
+    borderCurve: 'continuous',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  odometer: {
+  faceKey: {
+    position: 'absolute',
+    right: -6,
+    bottom: -6,
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 5,
+    borderRadius: 14,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceCount: { fontSize: 12, fontWeight: '700' },
+  naming: {
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  nameField: { flexShrink: 1, minWidth: 0, justifyContent: 'center' },
+  name: {
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: '700',
+    letterSpacing: -0.6,
+    includeFontPadding: false,
+  },
+  // A little over, so the caret has room after the last letter.
+  nameSizer: { opacity: 0, paddingRight: 3 },
+  nameInput: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    padding: 0,
+    margin: 0,
+    textAlignVertical: 'center',
+  },
+  centred: { textAlign: 'center' },
+  vinBlock: { gap: 6 },
+  note: { paddingHorizontal: 6 },
+  fields: { gap: spacing.sm },
+  row: { flexDirection: 'row', gap: spacing.sm },
+  cell: {
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    paddingVertical: spacing.md,
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.md,
+    paddingLeft: 13,
+    paddingRight: 10,
+    paddingTop: 9,
+    paddingBottom: 8,
+    borderRadius: radius.xl,
+    borderCurve: 'continuous',
+    borderWidth: 1,
   },
-  odometerDisplay: { flex: 1, minWidth: 0, gap: 6 },
-  odometerDigits: { flexDirection: 'row', alignItems: 'center', height: 28 },
-  odometerClear: {
-    width: 26,
-    height: 26,
-    borderRadius: 999,
+  cellBody: { flex: 1, minWidth: 0, gap: 2 },
+  cellLabel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  // Small and barely tracked: the field reads as its value, not its caption.
+  label: { fontSize: 10.5, lineHeight: 13, fontWeight: '600', letterSpacing: 0.3 },
+  cellLine: { minHeight: 26, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  cellInput: { flex: 1, minWidth: 0, paddingVertical: 2, paddingHorizontal: 0, margin: 0 },
+  autoDot: { width: 5, height: 5, borderRadius: 2.5 },
+  makeMark: { width: 18, height: 18, borderRadius: 5, overflow: 'hidden' },
+  plateWords: { fontWeight: '700', letterSpacing: 1.5 },
+  units: { flexDirection: 'row', padding: 2, gap: 2, borderRadius: 10 },
+  unit: {
+    minWidth: 30,
+    height: 28,
+    paddingHorizontal: 6,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  caret: { width: 2, height: 22, borderRadius: 1, marginLeft: 3 },
+  unitWord: { fontSize: 12.5, lineHeight: 16, fontWeight: '600' },
+  found: { ...leaf('md'), overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
+  foundHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  foundWords: { flex: 1, minWidth: 0, gap: 1 },
+  foundTitle: { fontSize: 14, lineHeight: 18, fontWeight: '600', letterSpacing: -0.15 },
+  foundBody: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+  },
+  facts: { flexDirection: 'row', flexWrap: 'wrap', rowGap: spacing.md },
+  fact: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingRight: spacing.sm },
+  factWords: { flex: 1, minWidth: 0 },
+  factLabel: { fontSize: 11, lineHeight: 14 },
+  factValue: { fontSize: 14, lineHeight: 19, fontWeight: '600', letterSpacing: -0.2 },
+  leaveOut: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start' },
+  leaveOutWord: { fontWeight: '600' },
+  footer: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   suggestions: { gap: 6, paddingHorizontal: spacing.md },
   suggestion: {
     height: 36,
@@ -1114,6 +1671,7 @@ const styles = StyleSheet.create({
     gap: 7,
     paddingHorizontal: 12,
     borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   shots: { gap: spacing.sm, paddingVertical: 2 },
   shot: {
@@ -1131,6 +1689,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 1,
   },
+  coverWord: { fontSize: 10, lineHeight: 14, fontWeight: '700' },
   shotRemove: {
     position: 'absolute',
     top: 4,
@@ -1141,8 +1700,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  footer: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
-  // Part of the page, scrolling away with it.
-  top: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingBottom: spacing.xs },
-  title: { fontSize: 20, lineHeight: 26, fontWeight: '700', letterSpacing: -0.5 },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  typeTile: {
+    width: '31.5%',
+    height: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+  },
 });

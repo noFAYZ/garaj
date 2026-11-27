@@ -34,7 +34,7 @@ import { VehicleHero, VehicleHeroSkeleton, VehicleTopBar } from '@/components/ve
 import { api } from '@/lib/api';
 import { enqueue, flush } from '@/lib/offline';
 import { fileParams, pickPhoto } from '@/lib/file-picker';
-import { haptic, useScrollY } from '@/lib/motion';
+import { useScrollY } from '@/lib/motion';
 import { MenuSheet } from '@/lib/pickers';
 import { spacing, useTheme } from '@/lib/theme';
 import { dialog, FAILED } from '@/lib/dialog';
@@ -188,7 +188,6 @@ export default function VehicleScreen() {
     // Queued: archiving is a decision made at the vehicle, often where it is parked.
     void enqueue({ kind: 'vehicle-archive', vehicleId: id })
       .then(() => {
-        haptic.success();
         void flush();
         void queryClient.invalidateQueries({ queryKey: ['vehicles'] });
         void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
@@ -206,7 +205,6 @@ export default function VehicleScreen() {
    */
   const [menu, setMenu] = useState<'actions' | null>(null);
   const openMenu = () => {
-    haptic.selection();
     setMenu('actions');
   };
   const name = data?.displayName ?? 'this vehicle';

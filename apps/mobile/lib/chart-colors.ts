@@ -1,4 +1,3 @@
-import { healthBand } from '@vehicle-os/ui';
 import { useTheme } from './theme';
 
 /*
@@ -23,11 +22,6 @@ export const STATUS = {
 export type StatusKey = keyof typeof STATUS;
 
 /** A health score's band — the shared thresholds, not a copy — as a status colour's key. */
-export function healthStatus(score: number): StatusKey {
-  const band = healthBand(score);
-  return band === 'success' ? 'good' : band === 'warning' ? 'warning' : 'critical';
-}
-
 export function useChartColors() {
   const theme = useTheme();
   return {

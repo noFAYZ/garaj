@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { haptic, PressableScale } from './motion';
+import { PressableScale } from './motion';
 import { lift, radius, rimmed, spacing, typeScale, useTheme } from './theme';
 
 export interface MenuOption {
@@ -118,7 +118,6 @@ export function MenuSheet({
                   <PressableScale
                     key={option.label}
                     onPress={() => {
-                      haptic.selection();
                       option.onPress();
                     }}
                     accessibilityRole="button"
@@ -154,32 +153,6 @@ export function MenuSheet({
         </KeyboardAvoidingView>
       </Pressable>
     </Modal>
-  );
-}
-
-/**
- * A calendar day, stepped a day at a time.
- *
- * No picker dependency: the days people log are today, yesterday or a few back, and the quick
- * chips beside this cover the common jumps. `min`/`max` bound it, so a done item cannot be dated
- * in the future and a due date cannot be in the past.
- */
-export function SavedNotice({ text }: { text: string }) {
-  const theme = useTheme();
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-        backgroundColor: theme.card,
-        borderRadius: radius.md,
-        padding: spacing.md,
-      }}
-    >
-      <Ionicons name="checkmark-circle" size={22} color={theme.success} />
-      <Text style={[typeScale.body, { color: theme.foreground, flex: 1 }]}>{text}</Text>
-    </View>
   );
 }
 
@@ -302,7 +275,7 @@ export function ListPicker({
                 value={query}
                 onChangeText={setQuery}
                 placeholder={placeholder}
-                placeholderTextColor={theme.mutedForeground}
+                placeholderTextColor={theme.placeholder}
                 accessibilityLabel={placeholder}
                 autoCorrect={false}
                 autoCapitalize="none"
@@ -329,7 +302,6 @@ export function ListPicker({
                 return (
                   <PressableScale
                     onPress={() => {
-                      haptic.selection();
                       onChange(item.value);
                       onClose();
                     }}

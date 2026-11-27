@@ -33,11 +33,11 @@ import { api } from '@/lib/api';
 import { formatMoney, toMinorUnits } from '@/lib/format';
 import { Chip, Glyph, Headline, Segmented } from '@/lib/instrument';
 import { CURRENCIES } from '@/lib/locale-options';
-import { haptic, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
+import { PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import { regionDefaults } from '@/lib/onboarding';
 import { ListPicker } from '@/lib/pickers';
 import { askForPush } from '@/lib/push';
-import { figure, leaf, lift, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { figure, leaf, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 import { Button } from '@/lib/ui';
 import { useProfile } from '@/lib/vehicle-units';
 
@@ -69,7 +69,7 @@ export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const profile = useProfile();
-  const update = useProfileUpdate({ quiet: true });
+  const update = useProfileUpdate();
   const guess = useMemo(regionDefaults, []);
 
   const [step, setStep] = useState<Step>('use');
@@ -90,7 +90,6 @@ export default function OnboardingScreen() {
   };
   const back = () => {
     if (at === 0 || step === 'done') return false;
-    haptic.selection();
     go(STEPS[at - 1]!);
     return true;
   };
@@ -444,7 +443,6 @@ function UnitsStep({
           options={CURRENCIES}
           placeholder="Search currencies"
           onChange={(next) => {
-            haptic.selection();
             onCurrency(next);
             setPicking(false);
           }}
@@ -496,7 +494,6 @@ function GarageStep({
   const create = useMutation({
     mutationFn: () => api.garages.create({ name: trimmed, defaultCurrency: currency }),
     onSuccess: (garage) => {
-      haptic.success();
       onCreated(garage);
     },
   });
@@ -583,14 +580,7 @@ function GaragePreview({
 }) {
   const theme = useTheme();
   return (
-    <View
-      style={[
-        styles.garage,
-        { backgroundColor: theme.cardRaised },
-        rimmed(theme),
-        lift(theme, 'low'),
-      ]}
-    >
+    <View style={[styles.garage, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
       <View style={[styles.floor, { backgroundColor: theme.muted }]}>
         {Array.from({ length: 4 }, (_, bay) => (
           <View
@@ -681,19 +671,13 @@ function OpenBay({ onAdd }: { onAdd: () => void }) {
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onAdd();
       }}
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
       accessibilityRole="button"
       accessibilityLabel="Add a vehicle to bay one"
       scaleTo={0.98}
-      style={[
-        styles.openBay,
-        { backgroundColor: theme.cardRaised },
-        rimmed(theme),
-        lift(theme, 'low'),
-      ]}
+      style={[styles.openBay, { backgroundColor: theme.cardRaised }, rimmed(theme)]}
     >
       {width ? (
         <>
@@ -725,12 +709,7 @@ function ParkedBay({ vehicle }: { vehicle: Vehicle }) {
   return (
     <View
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      style={[
-        styles.parked,
-        { backgroundColor: theme.cardRaised },
-        rimmed(theme),
-        lift(theme, 'low'),
-      ]}
+      style={[styles.parked, { backgroundColor: theme.cardRaised }, rimmed(theme)]}
     >
       {width ? (
         <BayStage
@@ -790,7 +769,6 @@ function RemindersStep({
     await askForPush();
     const now = await Notifications.getPermissionsAsync().catch(() => null);
     setAsking(false);
-    if (now?.granted) haptic.success();
     onDone(Boolean(now?.granted));
   };
 
@@ -845,11 +823,9 @@ function Notice({
       Animated.delay(260 + index * 420),
       Animated.spring(drop, { toValue: 1, speed: 11, bounciness: 8, useNativeDriver: true }),
     ]);
-    const timer = setTimeout(haptic.selection, 300 + index * 420);
     run.start();
     return () => {
       run.stop();
-      clearTimeout(timer);
     };
   }, [drop, index, reduce]);
   return (
@@ -858,7 +834,6 @@ function Notice({
         styles.notice,
         { backgroundColor: theme.cardRaised },
         rimmed(theme),
-        lift(theme, 'low'),
         {
           opacity: drop,
           transform: [
@@ -935,13 +910,6 @@ function DoneStep({
     },
     { done: reminders, text: reminders ? 'Reminders on' : 'Reminders off — turn on in Settings' },
   ];
-
-  useEffect(() => {
-    const timer = setTimeout(haptic.success, 300 + lines.length * 140);
-    return () => clearTimeout(timer);
-    // Once, on arrival.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <View style={[styles.done, { paddingTop: insets.top + spacing.xxl }]}>

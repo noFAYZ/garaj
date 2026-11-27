@@ -30,7 +30,7 @@ import { fileParams, pickPhoto } from '@/lib/file-picker';
 import { DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
 import { Segmented } from '@/lib/instrument';
 import { economy, sincePrevious, spendWindow, unitPrice } from '@/lib/ledger';
-import { haptic, Odometer, Pop, PressableScale, Rise } from '@/lib/motion';
+import { Odometer, Pop, PressableScale, Rise } from '@/lib/motion';
 import { cardSurface, figure, radius, spacing, typeScale, useTheme, leaf } from '@/lib/theme';
 import { Empty, Skeleton } from '@/lib/ui';
 import { dialog, FAILED } from '@/lib/dialog';
@@ -180,7 +180,6 @@ export default function EventScreen() {
     );
 
   const remove = () => {
-    haptic.selection();
     dialog(`Delete "${title || 'this entry'}"?`, 'Its cost leaves the totals too.', [
       { text: 'Keep it', style: 'cancel' },
       {
@@ -190,7 +189,6 @@ export default function EventScreen() {
           void api.events
             .remove(vehicleId, id)
             .then(() => {
-              haptic.success();
               refresh();
               router.back();
             })
@@ -226,7 +224,6 @@ export default function EventScreen() {
 
   // Another entry of the kind, from its bar or the last one's date: the screen turns to it in place.
   const open = (next: string) => {
-    haptic.selection();
     router.setParams({ id: next });
     scroller.current?.scrollTo({ y: 0, animated: true });
   };
@@ -963,7 +960,6 @@ function DocumentLine({ document, vehicleId }: { document: VehicleDocument; vehi
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         router.push({
           pathname: '/document/[id]',
           params: { id: document.id, vehicleId, title: document.title },

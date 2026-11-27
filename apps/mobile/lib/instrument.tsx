@@ -14,7 +14,7 @@ import {
 import { parse, SvgAst, type JsxAST } from 'react-native-svg';
 import { EMOJI_ART } from './emoji-art';
 import { ICON_ART, type IconName } from './icon-art';
-import { haptic, PressableScale, Pulse, spring, useReduceMotion } from './motion';
+import { PressableScale, Pulse, spring, useReduceMotion } from './motion';
 import { Skeleton } from './ui';
 import { figure, radius, spacing, typeScale, useTheme, leaf } from './theme';
 
@@ -150,7 +150,6 @@ export function Chip({
   return (
     <PressableScale
       onPress={() => {
-        if (!selected) haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -285,7 +284,6 @@ export function Segmented<T extends string>({
           <PressableScale
             key={option.value}
             onPress={() => {
-              if (!selected) haptic.selection();
               onChange(option.value);
             }}
             accessibilityRole="button"

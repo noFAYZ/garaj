@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Animated, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ease, haptic, PressableScale, useReduceMotion } from './motion';
+import { ease, PressableScale, useReduceMotion } from './motion';
 import { lift, radius, rimmed, spacing, useTheme } from './theme';
 
 /*
@@ -81,7 +81,6 @@ export function DialogHost() {
 
   useEffect(() => {
     if (!request) return;
-    if (destructive) haptic.warning();
     if (reduce) return enter.setValue(1);
     enter.setValue(0);
     Animated.spring(enter, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 5 }).start();
@@ -208,7 +207,6 @@ export function DialogHost() {
               <PressableScale
                 key={button.text}
                 onPress={() => {
-                  haptic.selection();
                   answer(button);
                 }}
                 accessibilityRole="button"

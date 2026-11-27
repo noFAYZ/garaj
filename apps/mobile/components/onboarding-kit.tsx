@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ease, haptic, PressableScale, useReduceMotion } from '@/lib/motion';
-import { figure, leaf, lift, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
+import { ease, PressableScale, useReduceMotion } from '@/lib/motion';
+import { figure, leaf, rimmed, spacing, typeScale, useTheme } from '@/lib/theme';
 
 /*
  * The parts every first-run screen is made of, so the welcome and the garage setup read as one
@@ -148,7 +148,6 @@ export function RoundKey({
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -177,7 +176,6 @@ export function TextKey({ label, onPress }: { label: string; onPress: () => void
   return (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -228,7 +226,6 @@ export function ChoiceCard({
   return (
     <PressableScale
       onPress={() => {
-        if (!selected) haptic.selection();
         onPress();
       }}
       accessibilityRole="radio"
@@ -239,7 +236,7 @@ export function ChoiceCard({
         styles.choice,
         selected
           ? { backgroundColor: theme.primarySoft }
-          : [{ backgroundColor: theme.cardRaised }, lift(theme, 'low')],
+          : [{ backgroundColor: theme.cardRaised }, rimmed(theme)],
         style,
       ]}
     >

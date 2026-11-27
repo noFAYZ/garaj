@@ -27,3 +27,6 @@ test-results/
 # Agent skills: not part of the app, and their directory links cannot be copied on Windows.
 .claude/
 .agents/
+
+# Store listing artwork: not part of the app.
+apps/mobile/store/

@@ -19,7 +19,7 @@ import { BrandLogo } from '@/components/brand-logo';
 import { kindOf } from '@/components/vehicle-hero';
 import { pad, formatMoney, humanise } from '@/lib/format';
 import { SectionLink } from '@/lib/instrument';
-import { ease, haptic, PressableScale, Pulse, useReduceMotion } from '@/lib/motion';
+import { ease, PressableScale, Pulse, useReduceMotion } from '@/lib/motion';
 import {
   figure,
   radius,
@@ -122,9 +122,6 @@ export function Showroom({
         flick(1, 120),
       ]),
     ]);
-    // Felt with it: the tink as the tube first catches, the thunk as it holds.
-    const tink = setTimeout(haptic.selection, 560);
-    const hold = setTimeout(haptic.light, 1030);
     reveal.start(({ finished }) => {
       if (!finished) return;
       opened = true;
@@ -132,8 +129,6 @@ export function Showroom({
     });
     return () => {
       reveal.stop();
-      clearTimeout(tink);
-      clearTimeout(hold);
     };
   }, [revealed, door, light]);
 
@@ -145,7 +140,6 @@ export function Showroom({
           const next = Math.round(event.nativeEvent.contentOffset.x / snap);
           if (next === landed.current || next < 0 || next >= count) return;
           landed.current = next;
-          haptic.selection();
           setPage(next);
         },
       }),
@@ -354,14 +348,14 @@ function Bay({
         <View style={styles.info}>
           <View style={styles.nameRow}>
             {photo && vehicle.make ? (
-              // Round (user asked): logo.dev's squares, clipped to a coin on the card.
+              // Round (user asked): logo.dev's squares, filling the coin edge to edge, clipped to it.
               <View
                 style={[
                   styles.logo,
                   { backgroundColor: theme.cardRaised, borderColor: theme.border },
                 ]}
               >
-                <BrandLogo make={vehicle.make} size={LOGO - 6} />
+                <BrandLogo make={vehicle.make} size={LOGO} />
               </View>
             ) : null}
             <Text numberOfLines={1} style={[styles.name, { color: theme.foreground }]}>
@@ -582,11 +576,6 @@ export const bayCard = (theme: Theme) =>
         backgroundColor: theme.cardRaised,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.hairline,
-        shadowColor: theme.shadow,
-        shadowOpacity: 0.1,
-        shadowRadius: 18,
-        shadowOffset: { width: 0, height: 8 },
-        elevation: 5,
       };
 
 const styles = StyleSheet.create({

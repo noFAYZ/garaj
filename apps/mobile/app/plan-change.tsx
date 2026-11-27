@@ -12,7 +12,7 @@ import {
   PLAN_RANK,
 } from '@vehicle-os/domain';
 import { Eyebrow } from '@/lib/instrument';
-import { haptic, PressableScale, Rise } from '@/lib/motion';
+import { PressableScale, Rise } from '@/lib/motion';
 import { LimitLedger, PlanBadge } from '@/lib/plan-kit';
 import {
   buy,
@@ -78,8 +78,7 @@ export default function PlanChangeScreen() {
       }
       return true;
     },
-    onSuccess: async (changed) => {
-      if (changed) haptic.success();
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.plan() });
       router.back();
     },
@@ -217,7 +216,6 @@ export default function PlanChangeScreen() {
         ) : null}
         <PressableScale
           onPress={() => {
-            haptic.selection();
             change.mutate();
           }}
           disabled={change.isPending || (!cancel && !target)}

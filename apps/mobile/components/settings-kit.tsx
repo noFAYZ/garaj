@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryKeys } from '@vehicle-os/api-client/react';
 import type { Garage, UpdateUserProfile, UserProfile } from '@vehicle-os/contracts';
 import { deleteAccount, signOut } from '@/lib/auth';
-import { haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
+import { Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import { dialog } from '@/lib/dialog';
 import { flagUrl } from '@/lib/locale-options';
 import { clearQueue, enqueue, flush, pendingCount } from '@/lib/offline';
@@ -287,7 +287,7 @@ export function ChoiceList({
             value={query}
             onChangeText={setQuery}
             placeholder={placeholder}
-            placeholderTextColor={theme.mutedForeground}
+            placeholderTextColor={theme.placeholder}
             autoCorrect={false}
             autoCapitalize="none"
             returnKeyType="search"
@@ -320,7 +320,6 @@ export function ChoiceList({
               <PressableScale
                 key={option.value}
                 onPress={() => {
-                  haptic.selection();
                   onPick(option.value);
                 }}
                 accessibilityRole="radio"
@@ -478,7 +477,6 @@ export function Row({
   return onPress ? (
     <PressableScale
       onPress={() => {
-        haptic.selection();
         onPress();
       }}
       accessibilityRole="button"
@@ -532,7 +530,6 @@ function Lean({ on }: { on: boolean }) {
  * The same question from the settings root and from Account.
  */
 export async function askToSignOut(leave: () => Promise<void>): Promise<void> {
-  haptic.selection();
   const waiting = await pendingCount();
   dialog(
     'Sign out?',
@@ -588,10 +585,8 @@ export function useSignOut() {
  * one set on a train sticks), and put back if the server refuses. Changing the currency moves the
  * garages this person owns with it — a garage's currency is what its totals are quoted in; shared
  * garages belong to someone else and keep theirs.
- *
- * `quiet` drops the saved buzz, for a switch that already ticked under the thumb: one feel a press.
  */
-export function useProfileUpdate({ quiet = false }: { quiet?: boolean } = {}) {
+export function useProfileUpdate() {
   const queryClient = useQueryClient();
 
   const adoptCurrency = async (currency: string) => {
@@ -626,7 +621,6 @@ export function useProfileUpdate({ quiet = false }: { quiet?: boolean } = {}) {
       if (context?.previous) queryClient.setQueryData(['me'], context.previous);
     },
     onSuccess: async (_next, body) => {
-      if (!quiet) haptic.success();
       // The queue returns only the fields sent, not the profile: merge, never replace.
       queryClient.setQueryData<UserProfile>(['me'], (current) =>
         current ? { ...current, ...body } : current,

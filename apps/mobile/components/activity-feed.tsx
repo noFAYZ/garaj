@@ -48,7 +48,7 @@ import { jobEmoji } from '@/lib/emoji';
 import { ledgerDate, unitPrice } from '@/lib/ledger';
 import { pad, DATE_LOCALE, formatDistance, formatMoney, humanise } from '@/lib/format';
 import { Glyph, StatusDot, ToneChip, type Tone } from '@/lib/instrument';
-import { ease, haptic, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
+import { ease, Pop, PressableScale, Pulse, Rise, useReduceMotion } from '@/lib/motion';
 import {
   discard,
   enqueue,
@@ -699,7 +699,6 @@ function TaskRow({ task, vehicleId }: { task: Task; vehicleId: string }) {
     },
     onMutate: () => {
       setTicked(true);
-      haptic.success();
     },
     onError: () => setTicked(false),
     onSettled: () => {
@@ -1018,7 +1017,6 @@ export function VehiclePlanned({ vehicle }: { vehicle: Vehicle }) {
               size="sm"
               icon="chevron-down"
               onPress={() => {
-                haptic.selection();
                 setShowAllLater(true);
               }}
             />

@@ -63,7 +63,6 @@ import { api } from '@/lib/api';
 import { Eyebrow, Glyph, Segmented } from '@/lib/instrument';
 import {
   Gauge,
-  haptic,
   Odometer,
   PressableScale,
   Rise,
@@ -1117,7 +1116,6 @@ function Distance({
         onPress={
           onLog
             ? () => {
-                haptic.selection();
                 onLog();
               }
             : undefined
@@ -1214,7 +1212,6 @@ function ReportTabs({ value, onChange }: { value: ReportTab; onChange: (tab: Rep
               }}
               onPress={() => {
                 if (selected) return;
-                haptic.selection();
                 onChange(item.value);
               }}
               accessibilityRole="tab"
@@ -1443,7 +1440,6 @@ function Entries({ rows }: { rows: readonly LedgerRow[] }) {
     <Card>
       <PressableScale
         onPress={() => {
-          haptic.selection();
           setOpen((shown) => !shown);
         }}
         accessibilityRole="button"
