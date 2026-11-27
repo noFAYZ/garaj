@@ -107,7 +107,7 @@ export default function SignInScreen() {
             source={scheme === 'light' ? logoText : logoTextLight}
             style={styles.logo}
             contentFit="contain"
-            accessibilityLabel="Garaj"
+            accessibilityLabel="Garajj"
           />
           <View style={{ gap: spacing.sm }}>
             <Text style={[typeScale.display, styles.headline, { color: theme.foreground }]}>
@@ -246,7 +246,7 @@ export default function SignInScreen() {
 
 /**
  * A reset link, for the address typed in. Always the same answer, whether or not it has an
- * account — a different one would tell anyone holding the phone who uses Garaj.
+ * account — a different one would tell anyone holding the phone who uses Garajj.
  */
 function forgot(email: string) {
   if (!email.includes('@')) {
@@ -267,7 +267,7 @@ function forgot(email: string) {
             .then(() =>
               dialog(
                 'Check your email',
-                `If ${email} has a Garaj account, a link to choose a new password is on its way. It works for an hour.`,
+                `If ${email} has a Garajj account, a link to choose a new password is on its way. It works for an hour.`,
                 [],
                 { icon: 'mail-outline' },
               ),
@@ -349,7 +349,7 @@ function Ambient() {
 
 const styles = StyleSheet.create({
   page: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: spacing.xl, gap: spacing.xxl },
-  logo: { width: 132, height: 37 },
+  logo: { width: 139, height: 37 },
   headline: { fontSize: 34, lineHeight: 38, letterSpacing: -1.3 },
   panel: {
     ...leaf('md'),

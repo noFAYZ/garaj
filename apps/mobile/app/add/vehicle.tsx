@@ -413,7 +413,7 @@ export default function AddVehicleScreen() {
       : 'Reading…'
     : read.isError
       ? read.error instanceof ApiError && read.error.status === 503
-        ? 'GarajAI is not on here. Paste a VIN, or fill it in below.'
+        ? 'GarajjAI is not on here. Paste a VIN, or fill it in below.'
         : 'Could not read that just now — it needs signal. Fill it in below.'
       : filled
         ? filled.from === 'vin' && !filled.decoded

@@ -52,7 +52,7 @@ async function post(path: string, body: unknown, headers: Record<string, string>
     if (controller.signal.aborted) {
       throw new Error('The server took too long to answer. Check your connection.');
     }
-    throw new Error('Could not reach Garaj. Check your connection and try again.', {
+    throw new Error('Could not reach Garajj. Check your connection and try again.', {
       cause: error,
     });
   } finally {
@@ -104,7 +104,7 @@ export async function signUp(input: Credentials & { name: string }): Promise<voi
 /**
  * Asks for a reset link. The email opens the web app's reset page — the phone has no page to set a
  * password on — and the answer is the same whether or not the address has an account, so this can
- * never tell anyone who uses Garaj.
+ * never tell anyone who uses Garajj.
  */
 export async function requestPasswordReset(email: string): Promise<void> {
   const response = await post('/request-password-reset', { email });

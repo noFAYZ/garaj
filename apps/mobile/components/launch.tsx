@@ -43,7 +43,7 @@ const TYRE = { x: (220 + 534) / 2, y: (352 + 677) / 2 };
 const STREAKS_FROM = 471;
 /** The tyre and streaks together, in the splash icon's canvas and in the wordmark's. */
 const GROUP = { x0: 220, x1: 804, y0: 352, y1: 677 };
-const LOCKUP = { width: 1500, x0: 910, x1: 1498, y0: 49, y1: 375, top: 49, bottom: 410 };
+const LOCKUP = { width: 1587, x0: 997, x1: 1585, y0: 49, y1: 375, top: 49, bottom: 410 };
 /** The letters' crops in the wordmark's canvas: their left edges and widths, one shared band. */
 const BAND = { top: 40, height: 376 };
 const LETTERS = [
@@ -52,9 +52,11 @@ const LETTERS = [
   { key: 'r', left: 502, width: 95 },
   { key: 'a2', left: 614, width: 190 },
   { key: 'j', left: 814, width: 77 },
+  // Garajj: the same j again, 87 along — the wordmark's own spacing.
+  { key: 'j2', left: 901, width: 77 },
 ] as const;
 const ART = {
-  light: { tyre, G: letterG, a1: letterA, r: letterR, a2: letterA, j: letterJ },
+  light: { tyre, G: letterG, a1: letterA, r: letterR, a2: letterA, j: letterJ, j2: letterJ },
   dark: {
     tyre: tyreDark,
     G: letterGLight,
@@ -62,6 +64,7 @@ const ART = {
     r: letterRLight,
     a2: letterALight,
     j: letterJLight,
+    j2: letterJLight,
   },
 };
 /** The logo's own red, for the glow the rev throws behind the tyre. */

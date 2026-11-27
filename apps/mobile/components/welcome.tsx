@@ -26,7 +26,7 @@ import { figure, leaf, lift, rimmed, spacing, useTheme, type Theme } from '@/lib
 import { Button } from '@/lib/ui';
 
 /*
- * The welcome: three things Garaj does, each shown working rather than described — a bay whose
+ * The welcome: three things Garajj does, each shown working rather than described — a bay whose
  * light flickers on as a vehicle rolls in; a line typed the way a person says it, picked apart by
  * the app's own quick-entry parser as it is typed; and a gauge running up to a service that falls
  * due, its reminder dropping in. One idea a screen, each with its own small moment.
@@ -50,7 +50,7 @@ const SCENES = [
     kicker: '02 · Logging',
     lead: 'Log it like',
     rest: "you'd say it.",
-    line: 'Type one line. Garaj picks out the litres, the price and the odometer.',
+    line: 'Type one line. Garajj picks out the litres, the price and the odometer.',
   },
   {
     key: 'ahead',
@@ -115,7 +115,7 @@ export function Welcome({ onFinish }: { onFinish: (mode: Mode) => void }) {
           source={scheme === 'light' ? logoText : logoTextLight}
           style={styles.logo}
           contentFit="contain"
-          accessibilityLabel="Garaj"
+          accessibilityLabel="Garajj"
         />
         <TextKey label="Sign in" onPress={() => finish('sign-in')} />
       </View>
@@ -549,7 +549,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     minHeight: 44,
   },
-  logo: { width: 104, height: 29 },
+  logo: { width: 109, height: 29 },
   pager: { flex: 1 },
   scene: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.lg },
   stage: { ...leaf('lg'), overflow: 'hidden' },

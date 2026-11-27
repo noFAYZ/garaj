@@ -31,6 +31,7 @@ import {
 } from '@/components/settings-kit';
 import { api } from '@/lib/api';
 import { setAppearance, useAppearance } from '@/lib/appearance';
+import { LegalLinks } from '@/lib/legal';
 import { Segmented } from '@/lib/instrument';
 import { deviceTimeZone } from '@/lib/locale-options';
 import { haptic, PressableScale, Rise, useNow } from '@/lib/motion';
@@ -258,10 +259,11 @@ export default function SettingsScreen() {
           />
           <Text
             style={[figure, styles.version, { color: theme.mutedForeground }]}
-            accessibilityLabel={`Garaj version ${Constants.expoConfig?.version ?? ''}`}
+            accessibilityLabel={`Garajj version ${Constants.expoConfig?.version ?? ''}`}
           >
             v{Constants.expoConfig?.version}
           </Text>
+          <LegalLinks pages={['privacy', 'terms', 'support']} />
         </Rise>
       </ScrollView>
     </View>

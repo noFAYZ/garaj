@@ -194,8 +194,8 @@ export function VehicleHero({
 
   return (
     <View style={styles.hero}>
-      {/* The lift on a wrapper: a shadow on the view that clips its corners is clipped with them. */}
-      <View style={[styles.stageSlot, { backgroundColor: theme.background }, lift(theme, 'low')]}>
+      {/* No card (user asked): no fill, shadow or rim — the vehicle stands on the page itself. */}
+      <View style={styles.stageSlot}>
         <PressableScale
           onPress={openStage}
           onLongPress={frames.length > 0 ? onAddPhoto : undefined}
@@ -214,7 +214,7 @@ export function VehicleHero({
             .filter(Boolean)
             .join('. ')}
           accessibilityHint={frames.length > 0 && onAddPhoto ? 'Hold to add another' : undefined}
-          // A card on the page now, so it gives a little under the thumb like the rest.
+          // Gives a little under the thumb like the rest.
           scaleTo={0.985}
         >
           <BayStage
@@ -228,7 +228,7 @@ export function VehicleHero({
             inset={stage.top}
             number={bay}
             plain
-            style={[styles.stage, rimmed(theme)]}
+            style={styles.stage}
           >
             {/* Over a photo, the status bar and the bar's controls need a darker sky to sit on. */}
             {cover && !cover.isCutout ? <Sky height={stage.top + BAR + 24} /> : null}
