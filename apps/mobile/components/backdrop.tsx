@@ -19,8 +19,11 @@ import { useTheme } from '@/lib/theme';
  * Not on a low-end phone (`LITE`): four screen-sized gradients and a screen of blended grain, drawn
  * again for every screen in a push, are more than its GPU has to spare. The page colour stands in.
  */
+// ponytail: off while testing the app without it (user asked); true brings it back.
+const PAINTED = false;
+
 export function Backdrop() {
-  if (LITE) return null;
+  if (LITE || !PAINTED) return null;
   return <Painted />;
 }
 

@@ -123,9 +123,13 @@ export function AddGlyph({
   }, [open, reduce, turn]);
 
   const rotate = turn.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] });
+  // Two rounded bars: heavier and crisper than the icon font's hairline +.
+  const bar = { position: 'absolute', backgroundColor: color, borderRadius: 2 } as const;
+  const stroke = Math.round(size * 0.14 * 2) / 2;
   return (
-    <Animated.View style={{ transform: [{ rotate }] }}>
-      <Ionicons name="add" size={size} color={color} />
+    <Animated.View style={{ width: size, height: size, transform: [{ rotate }] }}>
+      <View style={[bar, { left: 0, right: 0, top: (size - stroke) / 2, height: stroke }]} />
+      <View style={[bar, { top: 0, bottom: 0, left: (size - stroke) / 2, width: stroke }]} />
     </Animated.View>
   );
 }

@@ -200,7 +200,7 @@ export default function VehiclesScreen() {
               ))}
             </View>
           ) : filtered ? (
-            <View style={[styles.empty, { backgroundColor: theme.card }, rimmed(theme)]}>
+            <View style={[styles.empty, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
               <Text style={[typeScale.title, { color: theme.foreground }]}>No matches</Text>
               <Text
                 style={[typeScale.caption, { color: theme.mutedForeground, textAlign: 'center' }]}
@@ -219,7 +219,7 @@ export default function VehiclesScreen() {
               />
             </View>
           ) : (
-            <View style={[styles.empty, { backgroundColor: theme.card }, rimmed(theme)]}>
+            <View style={[styles.empty, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
               <ToneTile tone="neutral" size={64}>
                 <Ionicons name="car-sport" size={30} color={theme.foreground} />
               </ToneTile>

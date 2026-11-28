@@ -37,7 +37,6 @@ import {
   fillQuantity,
   type Filed,
   KindIcon,
-  LedgerCard,
   LedgerMonth,
   LedgerPlaceholder,
   LedgerRow,
@@ -289,11 +288,11 @@ export function ActivityFeed({
       {waiting > 0 ? <SyncStrip count={waiting} /> : null}
 
       {activity.isPending ? (
-        <LedgerCard>
+        <View>
           <LedgerPlaceholder />
-        </LedgerCard>
+        </View>
       ) : activity.isError && !activity.data ? (
-        <LedgerCard>
+        <View>
           <View style={styles.empty}>
             <Glyph size={28}>📡</Glyph>
             <Text style={[typeScale.headline, { color: theme.foreground }]}>
@@ -306,9 +305,9 @@ export function ActivityFeed({
             </Text>
             <Button label="Try again" onPress={() => void activity.refetch()} />
           </View>
-        </LedgerCard>
+        </View>
       ) : done.length === 0 ? (
-        <LedgerCard>
+        <View>
           <View style={styles.empty}>
             <Glyph size={30}>📝</Glyph>
             <Text style={[typeScale.headline, { color: theme.foreground }]}>
@@ -320,14 +319,14 @@ export function ActivityFeed({
             </Text>
             <Button label="Log the first entry" icon="add" variant="primary" onPress={logFirst} />
           </View>
-        </LedgerCard>
+        </View>
       ) : (
         <View style={{ gap: spacing.md, opacity: activity.isPlaceholderData ? 0.6 : 1 }}>
-          {/* Each month on a card of its own under its heading, as Home's recent activity sits. */}
+          {/* Each month under its heading, straight on the page: no card, the content's full width (user asked). */}
           {groups.map((group) => (
             <View key={group.key} style={styles.month}>
               <LedgerMonth group={group} />
-              <LedgerCard>
+              <View>
                 {group.items.map((event, place) => (
                   <DoneRow
                     key={event.id}
@@ -340,7 +339,7 @@ export function ActivityFeed({
                     index={row++}
                   />
                 ))}
-              </LedgerCard>
+              </View>
             </View>
           ))}
 

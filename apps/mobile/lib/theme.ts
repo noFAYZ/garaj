@@ -1,5 +1,5 @@
 import { composite, DARK_TOKENS, LIGHT_TOKENS, oklchToHex, toNativeTokens } from '@vehicle-os/ui';
-import { StyleSheet, type TextStyle, type ViewStyle } from 'react-native';
+import type { TextStyle, ViewStyle } from 'react-native';
 import { useScheme } from './appearance';
 
 /**
@@ -14,18 +14,18 @@ import { useScheme } from './appearance';
 const SHARED_DARK = toNativeTokens(DARK_TOKENS);
 const SHARED_LIGHT = toNativeTokens(LIGHT_TOKENS);
 
-/** The web's resting card is the card at half strength over the page; it lifts to full on hover. */
-const resting = (tokens: typeof DARK_TOKENS | typeof LIGHT_TOKENS) =>
-  composite(tokens.card.replace(')', ' / 0.5)'), tokens.background);
+/** A card at rest: the card at `strength` over the page (the web's `bg-card/50` by default). */
+const resting = (tokens: typeof DARK_TOKENS | typeof LIGHT_TOKENS, strength = 0.5) =>
+  composite(tokens.card.replace(')', ` / ${strength})`), tokens.background);
 
 const DARK = {
   ...SHARED_DARK,
-  /** A card at rest on the page — `bg-card/50`. */
-  card: resting(DARK_TOKENS),
+  /** A card on the page, as the landing draws one by night: the card at 88% over the page. */
+  card: resting(DARK_TOKENS, 0.88),
   /** The full card: something lifted, pressed, or floating over the page. */
   cardRaised: SHARED_DARK.card,
-  /** Hairline edges, `ring-1 ring-border` at the web's 76%. */
-  hairline: 'rgba(255,255,255,0.07)',
+  /** Edges, as the landing's: the warm foreground at 9%, not a cold white. */
+  hairline: 'rgba(245,239,231,0.09)',
   /** The light catching the top edge of a dark floating surface. */
   rim: 'rgba(255,255,255,0.14)',
   scrim: 'rgba(0,0,0,0.52)',
@@ -46,12 +46,13 @@ const LIGHT: Theme = {
   // The phone's page is plain white (user asked); the web keeps its warm paper. Resting cards still
   // mix against the paper, so they read as a faint warm tint on the white.
   background: '#ffffff',
-  // Lighter than the web's muted (0.925), to sit softly on the white page (user asked).
-  muted: oklchToHex('oklch(0.96 0.006 78)'),
+  // Lighter than the web's muted (0.925), yet a step under the cards so a tile shows on one.
+  muted: oklchToHex('oklch(0.945 0.008 78)'),
+  // Cards are white on the white page, edged by a hairline, no shadow (user asked); stats, tiles
+  // and resting surfaces keep the faint warm tint.
   card: resting(LIGHT_TOKENS),
-  // Raised surfaces are the page's own solid white (user asked), edged by a hairline; cards cast no shadow.
   cardRaised: '#ffffff',
-  hairline: 'rgba(40,30,20,0.08)',
+  hairline: 'rgba(40,30,20,0.09)',
   rim: 'rgba(255,255,255,0.9)',
   scrim: 'rgba(28,22,16,0.38)',
   // The web's light shadow: warm ink at low strength, never black.
@@ -85,9 +86,10 @@ export const radius = { sm: 7, md: 10, lg: 13, xl: 16, xxl: 20, xxxl: 24, pill: 
  * a card along its edge: its corners are the card's less the inset, so the curves stay concentric.
  */
 export const LEAF = {
-  lg: { wide: 32, tight: 12 },
-  md: { wide: 24, tight: 10 },
-  sm: { wide: 18, tight: 7 },
+  // Softer since 2026-11-28 (user asked), so a card's visible edge does not look lopsided.
+  lg: { wide: 22, tight: 12 },
+  md: { wide: 18, tight: 10 },
+  sm: { wide: 14, tight: 7 },
 } as const;
 export type LeafSize = keyof typeof LEAF;
 
@@ -156,15 +158,8 @@ export const lift = (theme: Theme) => ({
   elevation: 12,
 });
 
-/**
- * A floating surface's edge: in the dark a lit line along the top and a faint ring all round —
- * the web's dialog rim — and in daylight a hairline.
- */
-export const rimmed = (theme: Theme) => ({
-  borderWidth: 1,
-  borderColor: theme.hairline,
-  borderTopColor: theme.dark ? theme.rim : theme.hairline,
-});
+/** A surface's edge: one even hairline, as the landing draws its cards. */
+export const rimmed = (theme: Theme) => ({ borderWidth: 1, borderColor: theme.hairline });
 
 /**
  * A card on a detail page, flat: white by day; at night the resting card with a little of the page
@@ -173,5 +168,5 @@ export const rimmed = (theme: Theme) => ({
 export const cardSurface = (theme: Theme) => ({
   backgroundColor: theme.dark ? `${theme.card}E8` : theme.cardRaised,
   borderColor: theme.hairline,
-  borderWidth: StyleSheet.hairlineWidth,
+  borderWidth: 1,
 });
