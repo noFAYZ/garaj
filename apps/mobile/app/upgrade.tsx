@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -35,12 +35,12 @@ import {
   type PlanLimits,
   type PlanTier,
 } from '@vehicle-os/domain';
-import { composite } from '@vehicle-os/ui';
 import { TwoWay } from '@/components/add-kit';
 import { api } from '@/lib/api';
 import { LegalLinks } from '@/lib/legal';
 import { pad } from '@/lib/format';
 import { PressableScale, Rise, useReduceMotion } from '@/lib/motion';
+import { Bays, PlanCard, PlanCardGhost } from '@/components/plan-card';
 import { PlanBadge, PlanPass } from '@/lib/plan-kit';
 import {
   buy,
@@ -59,7 +59,7 @@ import {
 } from '@/lib/store';
 import { usePlan } from '@/lib/upgrade';
 import { useProfile } from '@/lib/vehicle-units';
-import { figure, leaf, radius, spacing, useTheme, type Theme } from '@/lib/theme';
+import { figure, radius, spacing, useTheme, type Theme } from '@/lib/theme';
 
 type Limit = keyof PlanLimits;
 /** Choosing; bought and waiting for the server to see it; waited too long; upgraded. */
@@ -94,12 +94,6 @@ const CADENCE_NAME: Record<Cadence, string> = {
   annual: 'Yearly',
   lifetime: 'Lifetime',
 };
-
-/** The Recommended tab over a card, and the curve it grows out of the card's edge on. */
-const TAB = 22;
-/** Bays drawn on a plan's card; the rest of its room is a figure after them. */
-const BAYS_SHOWN = 6;
-const FILLET = 8;
 
 /** The cards' order: the yearly one, the best value, first. */
 const SHOWN_ORDER: readonly Cadence[] = ['annual', 'monthly', 'lifetime'];
@@ -168,20 +162,19 @@ function gainsOf(
 }
 
 /** Made-up prices a dev build lays the cards out against, in the person's own currency. */
-const DEMO_PRICES: Record<string, readonly [number, number, number, number]> = {
-  PKR: [1200, 9999, 4500, 39999],
-  INR: [249, 1999, 899, 7499],
-  default: [2.99, 24.99, 9.99, 79.99],
+const DEMO_PRICES: Record<string, readonly [plus: number, business: number]> = {
+  PKR: [1200, 4500],
+  INR: [249, 899],
+  default: [2.99, 9.99],
 };
 
 /**
- * Sample offers — Plus and Business, monthly and yearly — for a dev build whose store has nothing
+ * Sample offers — Plus and Business, monthly (the store sells no yearly) — for a build whose store has nothing
  * to sell (Expo Go, no RevenueCat keys, an empty offering). Never in a release: a price on this
  * screen is the store's or none. They cannot be bought; the screen keeps its button off.
  */
 function demoOffers(currency: string): StoreOffer[] {
-  const [plusMonth, plusYear, businessMonth, businessYear] =
-    DEMO_PRICES[currency] ?? DEMO_PRICES.default!;
+  const [plusMonth, businessMonth] = DEMO_PRICES[currency] ?? DEMO_PRICES.default!;
   let format = (amount: number) => `${currency} ${Math.round(amount)}`;
   try {
     const whole = new Intl.NumberFormat('en-US', {
@@ -209,12 +202,7 @@ function demoOffers(currency: string): StoreOffer[] {
     productId: `demo_${tier}_${cadence}`,
     pkg: null as unknown as StoreOffer['pkg'],
   });
-  return [
-    make('PLUS', 'monthly', plusMonth),
-    make('PLUS', 'annual', plusYear),
-    make('BUSINESS', 'monthly', businessMonth),
-    make('BUSINESS', 'annual', businessYear),
-  ];
+  return [make('PLUS', 'monthly', plusMonth), make('BUSINESS', 'monthly', businessMonth)];
 }
 
 /** What a way of paying comes to, as a card's figure says it: a month where it can. */
@@ -416,19 +404,10 @@ export default function UpgradeScreen() {
     sold(tier).find((way) => way.cadence === 'monthly') ??
     sold(tier)[0] ??
     null;
-  // What yearly saves over twelve months of monthly, for a card's flag and the switch's tag.
-  const savingOf = (tier: PaidTier) => {
-    const yearly = sold(tier).find((way) => way.cadence === 'annual');
-    const month = sold(tier).find((way) => way.cadence === 'monthly');
-    return yearly && month && month.amount > 0
-      ? Math.round((1 - yearly.amount / (month.amount * 12)) * 100)
-      : 0;
-  };
   const tiered = options.length > 1;
   const bothBillings =
     catalogue.some((way) => way.cadence === 'monthly') &&
     catalogue.some((way) => way.cadence === 'annual');
-  const bestSaving = Math.max(0, ...options.map(savingOf));
   // Three points, or two on a short phone, so the whole sheet fits without scrolling.
   const gains = choosing
     ? gainsOf(current, chosen, entitlement ?? limit, height < 720 ? 2 : 3)
@@ -521,12 +500,8 @@ export default function UpgradeScreen() {
           {choosing && !elsewhere ? (
             offersLoading ? (
               <View style={styles.plans}>
-                <View
-                  style={[styles.planCard, styles.planGhost, { backgroundColor: theme.muted }]}
-                />
-                <View
-                  style={[styles.planCard, styles.planGhost, { backgroundColor: theme.muted }]}
-                />
+                <PlanCardGhost />
+                <PlanCardGhost />
               </View>
             ) : tiered || ways.length === 0 ? (
               /*
@@ -544,13 +519,6 @@ export default function UpgradeScreen() {
                       onChange={(on) => setPickedCadence(on ? 'annual' : 'monthly')}
                       said="Pay yearly"
                     />
-                    {bestSaving >= 5 ? (
-                      <View style={[styles.saveTag, { backgroundColor: theme.primarySoft }]}>
-                        <Text style={[styles.saveTagText, { color: theme.primary }]}>
-                          Save up to {bestSaving}%
-                        </Text>
-                      </View>
-                    ) : null}
                   </View>
                 ) : null}
                 <View accessibilityRole="radiogroup" style={styles.plans}>
@@ -575,7 +543,6 @@ export default function UpgradeScreen() {
                         }
                         price={way ? priceOf(way) : null}
                         compare={way?.cadence === 'annual' && month ? month.price : null}
-                        saving={way?.cadence === 'annual' ? savingOf(tier) : 0}
                         said={`${PLAN_NAMES[tier]}, room for ${room} vehicles${
                           way ? `, ${priceOf(way).figure} ${priceOf(way).unit}` : ''
                         }`}
@@ -611,7 +578,6 @@ export default function UpgradeScreen() {
                       }
                       price={priceOf(way)}
                       compare={null}
-                      saving={chosen ? (way.cadence === 'annual' ? savingOf(chosen) : 0) : 0}
                       said={`${CADENCE_NAME[way.cadence]}, ${billedOf(way)}, ${priceOf(way).figure} ${
                         priceOf(way).unit
                       }`}
@@ -996,176 +962,8 @@ function OverKey({
 function GainMark({ gain, theme }: { gain: Gain; theme: Theme }) {
   const color = theme[gain.hue];
   return (
-    <View style={[styles.gainArt, { backgroundColor: `${color}1F` }]}>
-      <Ionicons name={gain.icon} size={19} color={color} />
-    </View>
-  );
-}
-
-/**
- * A plan, or a way to pay, as the app's choice card (onboarding's `ChoiceCard`): raised at rest, the
- * copper wash every chosen thing wears when it is the one, and a radio that springs into a copper
- * check. Its head says which (a plan's own badge), the line under it what it holds, and on the right
- * what it comes to a month — with the month it would have cost struck over it, when yearly saves.
- * What a yearly price saves rides the top edge as a copper flag.
- */
-function PlanCard({
-  head,
-  sub,
-  price,
-  compare,
-  saving,
-  said,
-  selected,
-  tab,
-  onPress,
-}: {
-  head: ReactNode;
-  sub: ReactNode;
-  /** What it comes to; null while the store has no price for it. */
-  price: { figure: string; unit: string } | null;
-  /** The month it would have cost paid monthly, struck over a yearly price. */
-  compare: string | null;
-  saving: number;
-  said: string;
-  selected: boolean;
-  /** A word on a tab grown out of the card's top edge: Recommended. */
-  tab?: string;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const reduce = useReduceMotion();
-  const [check] = useState(() => new Animated.Value(selected ? 1 : 0));
-  /*
-   * The card's face: filled like the app's other cards at rest, the copper wash when chosen — made
-   * opaque over the page, so the tab and the curves it grows out on are one surface with it.
-   */
-  const face = selected ? composite(theme.primarySoft, theme.background) : theme.muted;
-  // Made once: a new interpolation each render re-attaches its native node.
-  const pop = useMemo(
-    () => ({
-      opacity: check,
-      transform: [{ scale: check.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) }],
-    }),
-    [check],
-  );
-  useEffect(() => {
-    const target = selected ? 1 : 0;
-    if (reduce) return check.setValue(target);
-    const animation = Animated.spring(check, {
-      toValue: target,
-      speed: 20,
-      bounciness: 12,
-      useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [check, selected, reduce]);
-
-  return (
-    <PressableScale
-      onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: selected }}
-      accessibilityLabel={`${said}${tab ? `, ${tab.toLowerCase()}` : ''}${
-        saving >= 5 ? `, saves ${saving}%` : ''
-      }`}
-      scaleTo={0.98}
-      style={[
-        styles.planCard,
-        // Room under the flag, so it never sits on the struck price.
-        saving >= 5 ? styles.planFlagged : null,
-        tab ? styles.planTabbed : null,
-        { backgroundColor: face },
-      ]}
-    >
-      {tab ? (
-        // The tab, rising out of the card's top edge on a curve either side, as the dock's key does.
-        <View pointerEvents="none" style={[styles.tab, { backgroundColor: face }]}>
-          <View style={[styles.fillet, styles.filletLeft, { backgroundColor: face }]}>
-            <View
-              style={[
-                styles.filletCut,
-                styles.filletCutLeft,
-                { backgroundColor: theme.background },
-              ]}
-            />
-          </View>
-          <View style={[styles.fillet, styles.filletRight, { backgroundColor: face }]}>
-            <View
-              style={[
-                styles.filletCut,
-                styles.filletCutRight,
-                { backgroundColor: theme.background },
-              ]}
-            />
-          </View>
-          <Ionicons name="sparkles" size={10} color={theme.primary} />
-          <Text style={[styles.tabText, { color: theme.primary }]}>{tab.toUpperCase()}</Text>
-        </View>
-      ) : null}
-      <View style={[styles.radio, { backgroundColor: theme.cardRaised }]}>
-        <Animated.View
-          style={[StyleSheet.absoluteFill, styles.radioOn, { backgroundColor: theme.primary }, pop]}
-        >
-          <Ionicons name="checkmark" size={15} color={theme.primaryForeground} />
-        </Animated.View>
-      </View>
-      <View style={styles.planWords}>
-        {head}
-        {sub}
-      </View>
-      {price ? (
-        <View style={styles.planPrice}>
-          {compare ? (
-            <Text style={[figure, styles.planCompare, { color: theme.mutedForeground }]}>
-              {compare}
-            </Text>
-          ) : null}
-          <Text style={[figure, styles.planFigure, { color: theme.foreground }]}>
-            {price.figure}
-          </Text>
-          <Text style={[styles.planUnit, { color: theme.mutedForeground }]}>{price.unit}</Text>
-        </View>
-      ) : null}
-      {saving >= 5 ? (
-        <View style={[styles.save, { backgroundColor: theme.primary }]}>
-          <Text style={[styles.saveText, { color: theme.primaryForeground }]}>SAVE {saving}%</Text>
-        </View>
-      ) : null}
-    </PressableScale>
-  );
-}
-
-/**
- * A plan's room for vehicles as a row of little bays, the garage's own picture: the ones your
- * vehicles take filled in copper, the rest open. Six at most; a figure after them says the rest.
- */
-function Bays({ room, used }: { room: number; used: number }) {
-  const theme = useTheme();
-  return (
-    <View
-      style={styles.bays}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-    >
-      {Array.from({ length: Math.min(room, BAYS_SHOWN) }, (_, index) => (
-        <View
-          key={index}
-          style={[
-            styles.bay,
-            index < used
-              ? { backgroundColor: theme.primary }
-              : { borderWidth: 1.25, borderColor: theme.borderStrong },
-          ]}
-        />
-      ))}
-      {/* The rest of the room as a figure: six bays, and "+94" for a hundred. */}
-      {room > BAYS_SHOWN ? (
-        <Text style={[figure, styles.planMeta, { color: theme.mutedForeground }]}>
-          +{room - BAYS_SHOWN}
-        </Text>
-      ) : null}
+    <View style={styles.gainArt}>
+      <Ionicons name={gain.icon} size={22} color={color} />
     </View>
   );
 }
@@ -1336,89 +1134,17 @@ const styles = StyleSheet.create({
     color: PICTURE_INK,
   },
   billing: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  saveTag: { height: 24, borderRadius: 999, paddingHorizontal: 10, justifyContent: 'center' },
-  saveTagText: { fontSize: 11.5, lineHeight: 15, fontWeight: '700' },
   gains: { gap: 12 },
   gain: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  gainArt: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  gainArt: { width: 26, alignItems: 'center', justifyContent: 'center' },
   gainWords: { flex: 1, minWidth: 0, gap: 1 },
   gainTitle: { fontSize: 15, lineHeight: 19, fontWeight: '700', letterSpacing: -0.2 },
   gainLine: { fontSize: 12.5, lineHeight: 17 },
   plans: { gap: 10 },
-  planCard: {
-    ...leaf('md'),
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    minHeight: 76,
-    paddingLeft: 14,
-    paddingRight: 16,
-    paddingVertical: 12,
-  },
-  planFlagged: { paddingTop: 20 },
-  planTabbed: { marginTop: TAB },
-  tab: {
-    position: 'absolute',
-    top: -TAB,
-    left: 30,
-    height: TAB,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-  },
-  tabText: { fontSize: 9.5, lineHeight: 12, fontWeight: '800', letterSpacing: 0.7 },
-  // The tab's feet: a square of the face with the page's circle cut from its outer corner.
-  fillet: { position: 'absolute', bottom: 0, width: FILLET, height: FILLET, overflow: 'hidden' },
-  filletLeft: { left: -FILLET },
-  filletRight: { right: -FILLET },
-  filletCut: {
-    position: 'absolute',
-    top: -FILLET,
-    width: FILLET * 2,
-    height: FILLET * 2,
-    borderRadius: FILLET,
-  },
-  filletCutLeft: { left: -FILLET },
-  filletCutRight: { left: 0 },
-  radio: { width: 26, height: 26, borderRadius: 13 },
-  radioOn: { borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   planHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   planSub: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  bays: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  bay: { width: 8, height: 10, borderRadius: 2.5 },
-  planMeta: { fontSize: 11.5, lineHeight: 15, fontWeight: '600', marginLeft: 3 },
-  planCompare: {
-    fontSize: 11,
-    lineHeight: 14,
-    textDecorationLine: 'line-through',
-  },
-  planGhost: { opacity: 0.6 },
-  planWords: { flex: 1, minWidth: 0, gap: 7 },
   planName: { fontSize: 16, lineHeight: 20, fontWeight: '700', letterSpacing: -0.3 },
   planLine: { fontSize: 12, lineHeight: 16 },
-  planPrice: { alignItems: 'flex-end' },
-  planFigure: { fontSize: 17, lineHeight: 21, fontWeight: '700', letterSpacing: -0.4 },
-  planUnit: { fontSize: 11, lineHeight: 14 },
-  // On the card's tight top-right corner, over the price it is about.
-  save: {
-    position: 'absolute',
-    top: -10,
-    right: 14,
-    height: 20,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    justifyContent: 'center',
-  },
-  saveText: { fontSize: 10, lineHeight: 12, fontWeight: '800', letterSpacing: 0.5 },
   step: {
     flexDirection: 'row',
     alignItems: 'center',

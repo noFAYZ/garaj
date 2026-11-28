@@ -9,7 +9,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import type { EventType } from '@vehicle-os/domain';
-import type { MonthGroup } from '@vehicle-os/ui';
+import { composite, type MonthGroup } from '@vehicle-os/ui';
 import { RemoteImage } from '@/components/remote-image';
 import { eventEmoji } from '@/lib/emoji';
 import Svg, { Circle, Rect } from 'react-native-svg';
@@ -17,7 +17,7 @@ import { DATE_LOCALE, formatMoney, humanise } from '@/lib/format';
 import { Glyph } from '@/lib/instrument';
 import { monthSpend, type Dated } from '@/lib/ledger';
 import { ease, PressableScale, Rise, useReduceMotion } from '@/lib/motion';
-import { cardSurface, figure, spacing, useTheme, leaf } from '@/lib/theme';
+import { cardSurface, figure, spacing, useTheme, leaf, type Theme } from '@/lib/theme';
 import { Skeleton } from '@/lib/ui';
 
 /*
@@ -46,9 +46,21 @@ const TILE_RADIUS = RING / 2;
 /** Between a row's columns. */
 const COLUMN_GAP = 6;
 const LINE = 1.5;
-/** The mark's top inside its row, and so where its middle falls: the air between entries. */
-const RING_TOP = 15;
-const RING_MID = RING_TOP + RING / 2;
+/** The body's air above and below; the badge line opens it, the title follows. */
+const BODY_TOP = 18;
+const BODY_BOTTOM = 14;
+/** The badge line's height, and the kind's chip on it. */
+const FACTS = 15;
+const CHIP = 14;
+/**
+ * The chip grows out of the mark's top-right shoulder (user asked: no gap, morphing out of it):
+ * its top a little under the mark's, so the mark hangs from the badge line.
+ */
+const CHIP_DROP = 2;
+const RING_TOP = BODY_TOP + (FACTS - CHIP) / 2 - CHIP_DROP;
+/** How far above the mark's middle the chip runs, and so where its words clear the mark's edge. */
+const CHIP_RISE = RING / 2 - CHIP_DROP - CHIP / 2;
+const CHIP_CLEAR = Math.ceil(Math.sqrt((RING / 2) ** 2 - CHIP_RISE ** 2)) + 5;
 /** The day's stamp, centred on the mark beside it. */
 const DAY_TOP = RING_TOP + (RING - DAY_TALL) / 2;
 /** Rows reach past the page's gutter by this much, so a pressed row's wash has room round it. */
@@ -61,14 +73,12 @@ const WEEKDAY = new Intl.DateTimeFormat(DATE_LOCALE, { weekday: 'short' });
 function Segments({
   top,
   bottom,
-  mid,
   draw,
 }: {
-  /** Drawn from the row above down to `mid`. */
+  /** Drawn from the row above down to the mark's top edge. */
   top: boolean;
-  /** Drawn from `mid` to the row below. */
+  /** Drawn from the mark's bottom edge to the row below: box to box, never behind a mark. */
   bottom: boolean;
-  mid: number;
   /** 0–1: the bottom stretch drawing itself down, as the row arrives. */
   draw?: Animated.Value;
 }) {
@@ -76,14 +86,16 @@ function Segments({
   return (
     <>
       {top ? (
-        <View style={[styles.segment, { top: 0, height: mid, backgroundColor: theme.muted }]} />
+        <View
+          style={[styles.segment, { top: 0, height: RING_TOP, backgroundColor: theme.muted }]}
+        />
       ) : null}
       {bottom ? (
         <Animated.View
           style={[
             styles.segment,
             styles.down,
-            { top: mid, bottom: 0, backgroundColor: theme.muted },
+            { top: RING_TOP + RING, bottom: 0, backgroundColor: theme.muted },
             draw ? { transform: [{ scaleY: draw }] } : null,
           ]}
         />
@@ -134,7 +146,12 @@ export function LedgerMonth({ group }: { group: MonthGroup<Dated> }) {
  */
 export function LedgerCard({ children }: { children: ReactNode }) {
   const theme = useTheme();
-  return <View style={[styles.card, cardSurface(theme)]}>{children}</View>;
+  const surface = cardSurface(theme);
+  return (
+    <Ground.Provider value={composite(surface.backgroundColor, theme.background)}>
+      <View style={[styles.card, surface]}>{children}</View>
+    </Ground.Provider>
+  );
 }
 
 /** The ring's press, shared with its row: pressing an entry tips its glyph. */
@@ -171,6 +188,19 @@ const HUE: Partial<Record<EventType, Hue>> = {
 
 /** The colour an entry's kind wears, as a theme key; none for the neutral kinds. */
 export const kindHue = (eventType: EventType): Hue | undefined => HUE[eventType];
+
+/** What the rows stand on: the page, or the card a `LedgerCard` lays under them. */
+const Ground = createContext<string | null>(null);
+
+/**
+ * The ground a kind's mark and its chip share: its hue at 12% over what the row stands on, made
+ * solid — so the chip can tuck under the mark without a darker overlap, and the road behind a mark
+ * never shows through it. The muted grey without a hue.
+ */
+const kindWash = (theme: Theme, eventType: EventType, ground: string | null) => {
+  const hue = HUE[eventType];
+  return hue ? composite(`${theme[hue]}1F`, ground ?? theme.background) : theme.muted;
+};
 
 /** The kind as its badge says it: the filter's word, the long ones cut to what is read. */
 const KIND_LABEL: Partial<Record<EventType, string>> = {
@@ -324,7 +354,7 @@ export function LedgerRow({
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
           >
-            <Segments top={!leadsDay} bottom={!endsDay} mid={RING_MID} draw={draw} />
+            <Segments top={!leadsDay} bottom={!endsDay} draw={draw} />
             <Ring eventType={eventType} state={state} />
           </View>
           <View style={styles.body}>
@@ -332,7 +362,7 @@ export function LedgerRow({
               <View style={styles.left}>
                 {/* The kind's badge over what it was (user asked), what else it records beside it. */}
                 <View style={styles.facts}>
-                  <KindBadge eventType={eventType} />
+                  <KindBadge eventType={eventType} attached />
                   {rest ? (
                     <Text numberOfLines={1} style={[styles.meta, { color: theme.mutedForeground }]}>
                       {rest}
@@ -539,13 +569,14 @@ function DayBadge({ occurredAt }: { occurredAt: string }) {
 function Ring({ eventType, state }: { eventType: EventType; state?: 'waiting' | 'failed' }) {
   const theme = useTheme();
   const tip = useContext(Tip);
+  const ground = useContext(Ground);
   const edge = state === 'failed' ? theme.destructive : state === 'waiting' ? theme.warning : null;
   return (
     <Animated.View
       style={[
         styles.ring,
         styles.tile,
-        { backgroundColor: theme.muted },
+        { backgroundColor: kindWash(theme, eventType, ground) },
         tip
           ? {
               transform: [
@@ -577,25 +608,37 @@ function Ring({ eventType, state }: { eventType: EventType; state?: 'waiting' | 
 }
 
 /**
- * The kind, as a badge at the head of the second line: a dot of its hue and its name in small
- * tracked capitals, on a wash of the same hue. The words stay in ink — the hue is only the dot
- * and the wash — so the badge reads in both themes at any hue.
+ * The kind, as a badge: a dot of its hue and its name in small tracked capitals, on a wash of the
+ * same hue. The words stay in ink — the hue is only the dot and the wash — so the badge reads in
+ * both themes at any hue. `attached`, it is a row's: it leaves the kind's mark from its side on the
+ * mark's own wash — square where it joins, round where it ends, no edge and no dot (the mark is it).
  */
-export function KindBadge({ eventType }: { eventType: EventType }) {
+export function KindBadge({
+  eventType,
+  attached = false,
+}: {
+  eventType: EventType;
+  attached?: boolean;
+}) {
   const theme = useTheme();
+  const ground = useContext(Ground);
   const hue = HUE[eventType];
   const tint = hue ? theme[hue] : null;
   return (
     <View
       style={[
         styles.badge,
-        {
-          backgroundColor: tint ? `${tint}1F` : theme.muted,
-          borderColor: tint ? `${tint}38` : theme.border,
-        },
+        attached
+          ? [styles.badgeAttached, { backgroundColor: kindWash(theme, eventType, ground) }]
+          : {
+              backgroundColor: kindWash(theme, eventType, ground),
+              borderColor: tint ? `${tint}38` : theme.border,
+            },
       ]}
     >
-      <View style={[styles.badgeDot, { backgroundColor: tint ?? theme.mutedForeground }]} />
+      {attached ? null : (
+        <View style={[styles.badgeDot, { backgroundColor: tint ?? theme.mutedForeground }]} />
+      )}
       <Text numberOfLines={1} style={[styles.badgeText, { color: theme.foreground }]}>
         {kindWord(eventType).toUpperCase()}
       </Text>
@@ -714,7 +757,8 @@ export function fillQuantity(eventType: EventType, note: string | null) {
 }
 
 const styles = StyleSheet.create({
-  rail: { width: RAIL, alignSelf: 'stretch', alignItems: 'center' },
+  // Over the body, so a chip tucked under the mark never paints over its glyph.
+  rail: { width: RAIL, alignSelf: 'stretch', alignItems: 'center', zIndex: 1 },
   segment: { position: 'absolute', left: (RAIL - LINE) / 2, width: LINE },
   down: { transformOrigin: 'top' },
   // A slim strip, the sheet's full width; the label lines up with the days' column.
@@ -831,11 +875,23 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     flexShrink: 0,
   },
+  // Out of the mark's top-right shoulder: it starts under the mark's middle (the column gap and
+  // half the rail taken back), the mark drawn over it, and its words begin past the mark's edge.
+  badgeAttached: {
+    height: CHIP,
+    marginLeft: -(COLUMN_GAP + RAIL / 2),
+    paddingLeft: CHIP_CLEAR,
+    paddingRight: 7,
+    borderWidth: 0,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderTopRightRadius: 7,
+    borderBottomRightRadius: 7,
+  },
   badgeDot: { width: 4, height: 4, borderRadius: 2 },
   badgeText: { fontSize: 7.5, lineHeight: 10, fontWeight: '700', letterSpacing: 0.4 },
   aside: { fontWeight: '600' },
-  // The badge line and the title's first (15 + 2 + 17) centred on the mark: RING_MID − 34 ÷ 2.
-  body: { flex: 1, minWidth: 0, gap: 4, paddingVertical: RING_MID - 17 },
+  body: { flex: 1, minWidth: 0, gap: 4, paddingTop: BODY_TOP, paddingBottom: BODY_BOTTOM },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   left: { flex: 1, minWidth: 0, gap: 2 },
   right: { flexShrink: 0, alignItems: 'flex-end', gap: 1 },
@@ -848,7 +904,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: -0.2,
   },
-  meta: { flexShrink: 1, minWidth: 0, fontSize: 11, lineHeight: 15, fontWeight: '500' },
+  meta: { flexShrink: 1, minWidth: 0, fontSize: 11, lineHeight: FACTS, fontWeight: '500' },
   // The web's entry amount: `font-mono text-sm font-semibold tabular-nums`.
   cost: { fontSize: 13, lineHeight: 17, fontWeight: '600', letterSpacing: -0.3 },
   amount: { flexDirection: 'row', alignItems: 'baseline' },

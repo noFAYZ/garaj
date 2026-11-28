@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import { composite } from '@vehicle-os/ui';
 import { AddGlyph } from '@/components/add-sheet';
 import { Glyph, Icon, type IconName } from '@/lib/instrument';
@@ -84,7 +84,6 @@ const WASH_INSET = 3;
 const WASH_MAX = 76;
 /** Each end of the wash: as wide as its widest corner, the middle stretched between them. */
 const CAP = LEAF.sm.wide;
-const NEEDLE = 16;
 /** Wider than a phone, the slab stops growing and sits centred. */
 const MAX_WIDTH = 520;
 /** The bar above the safe area: the slab and the air over it. */
@@ -146,12 +145,12 @@ export function useDockSpace(): number {
  * screen, the places in a row and the key at the right, where the thumb is.
  *
  * Every place says its name under its icon, always. Where you are sits on a copper wash in the
- * small leaf, a short copper needle on its top edge like a gauge's pointer, and the wash *travels*:
+ * small leaf, and the wash *travels*:
  * its leading edge sets off first and the trailing one follows, so it stretches toward where you
  * are going and gathers itself there. The icon you arrive at pops in, solid and copper.
  *
  * The key is the web's `.key` — a lit top edge, a lip under it, a face that sinks onto the lip —
- * made round, with light falling across its face and a bezel ring like a dial's. Pressed, it deals
+ * made round, solid copper with a bold +. Pressed, it deals
  * what you can add as a hand of cards above it and becomes their ×. Held, it goes straight to the
  * camera. With no `actions`, a press opens the sheet directly.
  *
@@ -287,7 +286,6 @@ export function Dock({
           },
         ],
       },
-      needle: { transform: [{ translateX: Animated.subtract(mid, NEEDLE / 2) }] },
     };
   }, [left, right]);
   // Opaque (the soft copper over the slab), so where the pieces overlap there is no seam.
@@ -380,8 +378,6 @@ export function Dock({
                 stroke={theme.dark ? theme.rim : theme.hairline}
                 strokeWidth={1}
               />
-              {/* A copper glow in the boss, round the key: where it came out of the bar. */}
-              <Circle cx={keyX} cy={KEY_Y} r={KEY / 2 + 3} fill={theme.primary} opacity={0.14} />
             </Svg>
           ) : null}
 
@@ -403,10 +399,6 @@ export function Dock({
                 <Animated.View
                   pointerEvents="none"
                   style={[styles.washEnd, { backgroundColor: washFill }, wash.end]}
-                />
-                <Animated.View
-                  pointerEvents="none"
-                  style={[styles.needle, { backgroundColor: theme.primary }, wash.needle]}
                 />
               </>
             ) : null}
@@ -460,43 +452,10 @@ export function Dock({
   );
 }
 
-/**
- * The key's face: light falling across the copper from above, a bezel ring a little in from its
- * edge like a dial's, and the + (× while what it opened is open).
- */
+/** The key's face: the + (× while what it opened is open), bold on the copper. */
 function KeyFace({ open }: { open: boolean }) {
   const theme = useTheme();
-  const tall = KEY - LIP;
-  return (
-    <>
-      <Svg
-        width={KEY}
-        height={tall}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-      >
-        <Defs>
-          <LinearGradient id="dockKeyLight" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#FFFFFF" stopOpacity={theme.dark ? 0.24 : 0.32} />
-            <Stop offset="0.6" stopColor="#FFFFFF" stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Circle cx={KEY / 2} cy={tall / 2} r={tall / 2} fill="url(#dockKeyLight)" />
-        <Circle
-          cx={KEY / 2}
-          cy={tall / 2}
-          r={tall / 2 - 7}
-          fill="none"
-          stroke={theme.primaryForeground}
-          strokeOpacity={0.2}
-          strokeWidth={1.25}
-        />
-      </Svg>
-      <AddGlyph open={open} color={theme.primaryForeground} size={26} />
-    </>
-  );
+  return <AddGlyph open={open} color={theme.primaryForeground} size={22} />;
 }
 
 /**
@@ -797,16 +756,6 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: LEAF.sm.wide,
     borderCurve: 'continuous',
   },
-  // The pointer on the wash's top edge: where you are, read like a gauge.
-  needle: {
-    position: 'absolute',
-    top: 3,
-    left: 0,
-    width: NEEDLE,
-    height: 3,
-    borderBottomLeftRadius: 2,
-    borderBottomRightRadius: 2,
-  },
   tab: {
     flex: 1,
     minWidth: 0,
@@ -814,8 +763,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    // A little low in the bar, so the needle over the wash has air above the icon.
-    paddingTop: 4,
     paddingHorizontal: 2,
   },
   tabLabel: { ...typeScale.caption, fontSize: 10.5, lineHeight: 13, fontWeight: '600' },

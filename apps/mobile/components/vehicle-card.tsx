@@ -99,7 +99,7 @@ export function VehicleStage({
     <View
       style={[
         styles.badge,
-        { width: logoSize, height: logoSize, backgroundColor: theme.cardRaised },
+        { width: logoSize, height: logoSize, backgroundColor: theme.popover },
         rimmed(theme),
       ]}
     >
@@ -246,7 +246,11 @@ export const VehicleCard = memo(function VehicleCard({
           .join(', ')}
         scaleTo={0.985}
         // Flat: `<Link asChild>` hands its child's style through a Slot, which throws on an array.
-        style={StyleSheet.flatten([styles.card, { backgroundColor: theme.card }, rimmed(theme)])}
+        style={StyleSheet.flatten([
+          styles.card,
+          { backgroundColor: theme.cardRaised },
+          rimmed(theme),
+        ])}
       >
         <VehicleStage
           photo={photo}
@@ -383,7 +387,7 @@ function CardFigure({
 export function VehicleCardSkeleton() {
   const theme = useTheme();
   return (
-    <View style={[styles.card, { backgroundColor: theme.card }, rimmed(theme)]}>
+    <View style={[styles.card, { backgroundColor: theme.cardRaised }, rimmed(theme)]}>
       <Skeleton radius={radius.lg} style={styles.cardStage} />
       <View style={[styles.identity, { paddingVertical: 2 }]}>
         <View style={{ flex: 1, gap: 6 }}>

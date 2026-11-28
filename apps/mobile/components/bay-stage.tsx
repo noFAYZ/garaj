@@ -107,7 +107,7 @@ export function BayStage({
       style={[
         styles.badge,
         { width: tile, height: tile, borderRadius: Math.round(tile * 0.3) },
-        { backgroundColor: theme.cardRaised },
+        { backgroundColor: theme.popover },
         rimmed(theme),
       ]}
     >

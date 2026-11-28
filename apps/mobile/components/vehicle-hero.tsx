@@ -236,11 +236,7 @@ export function VehicleHero({
                 {/* The plate where a car wears it, low on the front: what tells this one apart. */}
                 {plate ? (
                   <View
-                    style={[
-                      styles.plateMount,
-                      { backgroundColor: theme.cardRaised },
-                      rimmed(theme),
-                    ]}
+                    style={[styles.plateMount, { backgroundColor: theme.popover }, rimmed(theme)]}
                   >
                     <Plate value={plate} />
                   </View>
